@@ -15,13 +15,17 @@ CSV files are downloadable for all designs and support upload to:
 - Echo 525 
 - Opentrons OT-2
 
-## Automation Videos
-https://github.com/user-attachments/assets/8da71b3c-c460-4333-b0d5-8505eb7604a5
-
-https://github.com/user-attachments/assets/4bb5604c-7fe9-46a9-9688-6a5c89801a2c
-
 ## HTGAA 2025 Results
 ![2025 Artwork](/static/2025_images/2025_Student_Grid_11x6.png)
+
+## Ginkgo Nebula Automation Videos
+*Source plate being loaded into Echo525*
+
+https://github.com/user-attachments/assets/8da71b3c-c460-4333-b0d5-8505eb7604a5
+
+*Destination OmniTray being loaded into Echo525*
+
+https://github.com/user-attachments/assets/4bb5604c-7fe9-46a9-9688-6a5c89801a2c
 
 ## Website Development
 
