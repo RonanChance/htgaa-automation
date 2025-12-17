@@ -1,7 +1,12 @@
 # Ginkgo Artworks
+
+<img src="./static/facebook-image-1200x630.png" alt="Artworks Logo" width="200" style="border-radius: 5%;">
+
+## Lab Automation Artwork Interface
+
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg) ![Svelte](https://img.shields.io/badge/Svelte-5.0.0-orange) ![SvelteKit](https://img.shields.io/badge/SvelteKit-2.16.0-red) ![DigitalOcean](https://img.shields.io/badge/DigitalOcean-Active-blue) ![PocketBase](https://img.shields.io/badge/PocketBase-v1.14.1-green)
 
-A graphical interface for making fluorescent bacteria patterns with lab automation equipment. Optimized for the Echo 525 acoustic liquid handler on [Ginkgo Nebula](https://www.ginkgo.bio).
+A graphical interface for making fluorescent bacteria artwork with lab automation equipment. Optimized for [Ginkgo Nebula](https://www.ginkgo.bio).
 
 Built for [How To Grow Almost Anything](https://howtogrowalmostanything.notion.site/htgaa25) (HTGAA) at the [MIT Media Lab](https://www.media.mit.edu). 
 
@@ -16,7 +21,7 @@ CSV files are downloadable for all designs and support upload to:
 - Opentrons OT-2
 
 ## HTGAA 2025 Results
-![2025 Artwork](/static/2025_images/2025_Student_Grid_11x6.png)
+<img src="./static/2025_images/2025_Student_Grid_11x6.png" alt="Artworks Logo" width="600" style="border-radius: 5%;">
 
 ## Ginkgo Nebula Automation Videos
 *Source plate being loaded into Echo525*
@@ -31,7 +36,7 @@ https://github.com/user-attachments/assets/4bb5604c-7fe9-46a9-9688-6a5c89801a2c
 
 Feature additions are welcome.
 
-Clone this repository, navigate to the opentrons-art-gui directory and install dependencies with `npm install`. 
+Clone this repository, navigate to the `ginkgo-artworks` directory and install dependencies with `npm install`. 
 
 Then start a development server:
 
