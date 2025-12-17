@@ -16,17 +16,9 @@ CSV files are downloadable for all designs and support upload to:
 - Opentrons OT-2
 
 ## Automation Videos
-<div style="display: flex; gap: 10px;">
-  <a href="https://github.com/user-attachments/assets/4168a4a5-14e4-49a7-a5ec-d5b0fb4fd3d3">
-    <img src="https://github.com/user-attachments/assets/4168a4a5-14e4-49a7-a5ec-d5b0fb4fd3d3" width="150">
-  </a>
-  <a href="https://github.com/user-attachments/assets/8da71b3c-c460-4333-b0d5-8505eb7604a5">
-    <img src="https://github.com/user-attachments/assets/8da71b3c-c460-4333-b0d5-8505eb7604a5" width="150">
-  </a>
-  <a href="https://github.com/user-attachments/assets/4bb5604c-7fe9-46a9-9688-6a5c89801a2c">
-    <img src="https://github.com/user-attachments/assets/4bb5604c-7fe9-46a9-9688-6a5c89801a2c" width="150">
-  </a>
-</div>
+https://github.com/user-attachments/assets/4168a4a5-14e4-49a7-a5ec-d5b0fb4fd3d3
+https://github.com/user-attachments/assets/8da71b3c-c460-4333-b0d5-8505eb7604a5
+https://github.com/user-attachments/assets/4bb5604c-7fe9-46a9-9688-6a5c89801a2c
 
 ## Website Development
 
