@@ -873,6 +873,60 @@ def run(protocol):
         const idx = label.lastIndexOf("_");
         return idx === -1 ? label : label.slice(0, idx);
     }
+
+    let isPainting = false;
+    let lastKey = null;
+    let groupScheduled = false;
+
+    function scheduleGroupByColors() {
+        if (groupScheduled) return;
+        groupScheduled = true;
+
+        requestAnimationFrame(() => {
+            groupByColors();
+            groupScheduled = false;
+        });
+    }
+
+    function paintFromEvent(e) {
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        if (!el || !el.dataset?.key) return;
+
+        // normalize to the renderer's key format: "x, y" (comma + space)
+        const key = el.dataset.key.replace(',', ', ');
+
+        if (key === lastKey) return;
+        lastKey = key;
+
+        if (current_color === 'Erase') {
+            delete point_colors[key];
+        } else {
+            point_colors[key] = current_color;
+        }
+
+        // ensure Svelte notices the update
+        point_colors = point_colors;
+
+        scheduleGroupByColors();
+    }
+
+    function handlePointerDown(e) {
+        isPainting = true;
+        lastKey = null;
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        paintFromEvent(e);
+    }
+
+    function handlePointerMove(e) {
+        if (!isPainting) return;
+        paintFromEvent(e);
+    }
+
+    function handlePointerUp(e) {
+        isPainting = false;
+        lastKey = null;
+        e.currentTarget.releasePointerCapture?.(e.pointerId);
+    }
 </script>
 
 <article class="prose w-full mx-auto mt-5">
@@ -1064,7 +1118,7 @@ def run(protocol):
 <!-- AGAR PLATE -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="mb-2 flex items-center mx-auto w-full max-w-[94vw] sm:max-w-[460px] ${(grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === "Echo1536" || grid_style === "Echo1536Image") ? 'aspect-[3/2] mt-4' : 'aspect-square'} rounded-xl">
-<div class={`relative border border-neutral mx-auto w-full max-w-[90vw] 
+<div class={`touch-none relative border border-neutral mx-auto w-full max-w-[90vw] 
           sm:max-w-[440px]
           ${grid_style === "Echo384" || grid_style === "Echo384Image" || grid_style === "Echo1536" || grid_style === "Echo1536Image"
             ? 'aspect-[128/86] rounded' 
@@ -1078,12 +1132,17 @@ def run(protocol):
             ontouchcancel={() => isDrawing = false}
             draggable="false"
             id="grid-container"
+            onpointerdown={handlePointerDown}
+            onpointermove={handlePointerMove}
+            onpointerup={handlePointerUp}
+            onpointercancel={handlePointerUp}
+            onpointerleave={handlePointerUp}
         >
         {#if grid_style === 'QRCode' && QRCode_text === ''} <div class="flex justify-center items-center h-full opacity-40 text-white">Insert text below</div> {/if}
         
         {#each points as { x, y }}
             <!-- svelte-ignore a11y_mouse_events_have_key_events -->
-            <input type="checkbox" id="dot-{x}-{y}"
+            <input type="checkbox" id="dot-{x}-{y}" data-key={`${x},${y}`}
                 class="checkbox
                     {point_size === 0.25 ? 'w-[3px] h-[3px]' : ''}
                     {point_size === 0.5 ? 'w-[6px] h-[6px]' : ''}
@@ -1114,51 +1173,10 @@ def run(protocol):
                         : (50.5 - y / (radius_mm + 4) * 50) + '%'
                     };
                     transform: translate(-50%, -50%);
-                    background-color: {well_colors[point_colors[`${x}, ${y}`]] 
-                        || old_well_colors[point_colors[`${x}, ${y}`]] 
-                        || 'transparent'};
-                    box-shadow: {point_colors[`${x}, ${y}`]
-                        ? `0 0 2px 1.5px ${well_colors[point_colors[`${x}, ${y}`]] 
-                        || old_well_colors[point_colors[`${x}, ${y}`]] 
-                        || 'transparent'}`
-                        : 'none'};
+                    background-color: {well_colors[point_colors[`${x}, ${y}`]] || old_well_colors[point_colors[`${x}, ${y}`]] || 'transparent'};
+                    border: {well_colors[point_colors[`${x}, ${y}`]] ? `1px solid ${well_colors[point_colors[`${x}, ${y}`]]}` : '1px solid white'};
                     "
                 draggable="false"
-                onmouseover={() => {
-                    if (isDrawing) {
-                        if (current_color === 'Erase') {
-                            delete point_colors[`${x}, ${y}`];
-                        }
-                        else {
-                            point_colors[`${x}, ${y}`] = current_color;
-                        }
-                        groupByColors();
-                    }
-                    current_point = {x, y}
-                    hover_point = point_colors[`${x}, ${y}`]
-                }}
-                ontouchmove={(e) => {
-                    // e.preventDefault(); // Prevent scrolling while drawing
-                    const touch = e.touches[0];
-                    const target = document.elementFromPoint(touch.clientX, touch.clientY);
-                    if (target && target.id.startsWith("dot-")) {
-                        point_colors[`${x}, ${y}`] = current_color;
-                        groupByColors();
-                    }
-                }}
-                onclick={() => {
-                    if (current_color === 'Erase') {
-                        delete point_colors[`${x}, ${y}`];
-                    }
-                    else if (point_colors[`${x}, ${y}`] === current_color) {
-                        delete point_colors[`${x}, ${y}`];
-                        current_point = {};
-                    } else {
-                        point_colors[`${x}, ${y}`] = current_color;
-                        current_point = {x, y}
-                    }
-                    groupByColors();
-                }}
             />
         {/each}
         <!-- TIME ESTIMATION -->
