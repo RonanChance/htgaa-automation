@@ -732,42 +732,66 @@ def run(protocol):
         canvas.width = canvasSize;
         canvas.height = canvasSize;
 
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvasSize, canvasSize);
+
         if (!img) {
-            ctx.fillStyle = "#ffffff";
-            ctx.fillRect(0, 0, canvasSize, canvasSize);
             imageColors = getPixelHexColors(ctx, canvasSize, canvasSize);
             return;
         }
 
-        // TEMP CANVAS
+        const iw = img.naturalWidth;
+        const ih = img.naturalHeight;
+
+        // Decide final scale ONCE (contain)
+        const baseScale = Math.min(
+            canvasSize / iw,
+            canvasSize / ih
+        ) * zoom;
+
+        const drawW = iw * baseScale;
+        const drawH = ih * baseScale;
+
+        // Pixelation resolution
+        const pixelRes = canvasSize + 4 - pixelation;
+        const pxScale = Math.min(
+            pixelRes / drawW,
+            pixelRes / drawH
+        );
+
+        const tempW = Math.round(drawW * pxScale);
+        const tempH = Math.round(drawH * pxScale);
+
+        // TEMP CANVAS (matches image aspect)
         const temp = document.createElement('canvas');
-        const actualPixelation = canvasSize + 4 - pixelation;
-        temp.width = actualPixelation;
-        temp.height = actualPixelation;
+        temp.width = tempW;
+        temp.height = tempH;
         const tctx = temp.getContext('2d');
 
         tctx.fillStyle = "#ffffff";
-        tctx.fillRect(0, 0, temp.width, temp.height);
+        tctx.fillRect(0, 0, tempW, tempH);
 
-        const iw = img.naturalWidth;
-        const ih = img.naturalHeight;
-        const baseScale = Math.min(temp.width / iw, temp.height / ih);
-        const scaledWidth = iw * baseScale * zoom;
-        const scaledHeight = ih * baseScale * zoom;
-
-        // Draw rotated image to temp (no filter)
         tctx.save();
-        tctx.translate(temp.width / 2, temp.height / 2);
+        tctx.translate(tempW / 2, tempH / 2);
         tctx.rotate((rotation * Math.PI) / 180);
-        tctx.drawImage(img, -scaledWidth / 2, -scaledHeight / 2, scaledWidth, scaledHeight);
+        tctx.drawImage(
+            img,
+            -tempW / 2,
+            -tempH / 2,
+            tempW,
+            tempH
+        );
         tctx.restore();
 
+        // Draw temp → final (no aspect math here)
         ctx.imageSmoothingEnabled = false;
 
-        // Draw temp to final canvas
-        ctx.drawImage(temp, 0, 0, canvasSize, canvasSize);
+        const dx = (canvasSize - drawW) / 2;
+        const dy = (canvasSize - drawH) / 2;
 
-        // Apply filters using Uint32Array for speed
+        ctx.drawImage(temp, dx, dy, drawW, drawH);
+
+        // --- Filters ---
         const imageData = ctx.getImageData(0, 0, canvasSize, canvasSize);
         const buf = new Uint32Array(imageData.data.buffer);
 
@@ -778,34 +802,25 @@ def run(protocol):
         for (let i = 0; i < buf.length; i++) {
             let val = buf[i];
 
-            // extract RGBA
-            let r = (val >> 0) & 0xFF;
+            let r = val & 0xFF;
             let g = (val >> 8) & 0xFF;
-            let bl = (val >> 16) & 0xFF;
+            let b = (val >> 16) & 0xFF;
             const a = (val >> 24) & 0xFF;
 
-            // brightness
-            r = r * bFactor;
-            g = g * bFactor;
-            bl = bl * bFactor;
+            r = ((r * bFactor - 128) * cFactor + 128);
+            g = ((g * bFactor - 128) * cFactor + 128);
+            b = ((b * bFactor - 128) * cFactor + 128);
 
-            // contrast
-            r = ((r - 128) * cFactor) + 128;
-            g = ((g - 128) * cFactor) + 128;
-            bl = ((bl - 128) * cFactor) + 128;
-
-            // saturation (linear approx)
-            const lum = 0.299 * r + 0.587 * g + 0.114 * bl;
+            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
             r = lum + (r - lum) * sFactor;
             g = lum + (g - lum) * sFactor;
-            bl = lum + (bl - lum) * sFactor;
+            b = lum + (b - lum) * sFactor;
 
-            // clamp
-            r = Math.max(0, Math.min(255, r));
-            g = Math.max(0, Math.min(255, g));
-            bl = Math.max(0, Math.min(255, bl));
-
-            buf[i] = (a << 24) | (bl << 16) | (g << 8) | r;
+            buf[i] =
+                (a << 24) |
+                (Math.max(0, Math.min(255, b)) << 16) |
+                (Math.max(0, Math.min(255, g)) << 8) |
+                Math.max(0, Math.min(255, r));
         }
 
         ctx.putImageData(imageData, 0, 0);
@@ -813,6 +828,7 @@ def run(protocol):
         pixelatedSrc = canvas.toDataURL();
         imageColors = getPixelHexColors(ctx, canvasSize, canvasSize);
     }
+
 
 
     function formatSeconds(seconds) {

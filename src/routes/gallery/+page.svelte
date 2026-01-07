@@ -8,29 +8,26 @@
     import { well_colors, old_well_colors } from '$lib/proteins.js';
     import { page } from '$app/stores';
 
+    const props = $props();
+    let images = props.data.images;
+
     const filter_list = ['Approved', 'Media Lab', 'Off']
-    const url_prefix = 'https://ginkgo-artworks.nyc3.cdn.digitaloceanspaces.com/'
-    let images_manifest = url_prefix + 'images.txt'
     
-    let filter = $state(3);
+    let filter = $state(-1);
     let record_load_iteration = $state(0);
     let loadingRecords = $state(true);
     let loadedRecords = $state([]);
-    let images = [];
     let container;
     // -1 = Image/Video
     // 0 = HTGAA
     // 3 = SBS
 
-    onMount(async () => {
+    onMount(() => {
         if (browser) {
             if ($page.url.searchParams.get('htgaa')){
                 filter = 0;
             }
             loadGallery();
-            const res = await fetch(images_manifest, { cache: 'no-store' });
-            const text = await res.text();
-            images = text.split('\n').map(line => line.trim()).filter(Boolean).map(filename => url_prefix + 'agar-art/' + filename);
         }
     });
 
@@ -79,8 +76,8 @@
     </a>
     <div class="mx-auto p-4 rounded-box ">
         <div class="tabs tabs-bordered">
-            <input type="radio" name="tab" class="tab" aria-label="Designs" onclick={() => {if ($page.url.searchParams.get('htgaa')){filter = 0} else {filter = 3}; record_load_iteration = 0; loadedRecords = []; loadGallery();}} checked />
-            <input type="radio" name="tab" class="tab" aria-label="Images" onclick={() => {filter = -1;}} />
+            <input type="radio" name="tab" class="tab" aria-label="Images" onclick={() => {filter = -1;}} checked />
+            <input type="radio" name="tab" class="tab" aria-label="Designs" onclick={() => {if ($page.url.searchParams.get('htgaa')){filter = 0} else {filter = 3}; record_load_iteration = 0; loadedRecords = []; loadGallery();}} />
         </div>
     </div>
 </div>

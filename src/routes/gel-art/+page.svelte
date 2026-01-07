@@ -399,7 +399,9 @@
 </script>
 
 <article class="prose w-full mx-auto mt-5">
-    <h2 class="text-center text-neutral">DNA Gel Electrophoresis</h2>
+    <h2 class="flex justify-center items-center gap-2 text-base-content">
+        DNA Gel Interface
+    </h2>
 </article>
 
 <div class="flex flex-row w-full max-w-[100vw] sm:max-w-[490px] mx-auto px-5 pt-3">
@@ -413,7 +415,7 @@
 </div>
 
 <div class="flex flex-col w-full max-w-[90vw] sm:max-w-[525px] mx-auto px-5 pt-5">
-    <div class="flex flex-row mx-auto w-full">
+    <div class="flex flex-row mx-auto w-full rounded-md pt-1 pb-2">
         <div class="flex flex-col flex-1">
             <p class="text-center text-gray-500 invisible pb-[2px] w-[35px] text-xs">L</p>
             <div class="relative h-[275px] flex mt-2 text-right mr-1">
@@ -434,24 +436,24 @@
                     </p>
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <!-- Regular bottom border -->
-                <div class="relative h-[275px] bg-gray-100 {selected_column === column ? 'ring-1 ring-inset ring-gray-700 rounded-sm' : ''}" 
+                <div class="relative h-[275px] bg-gray-600 {selected_column === column ? 'ring-1 ring-inset ring-gray-700 rounded-sm' : ''}" 
                     onclick={() => { selected_column = column; }}>
 
                 <!-- Offset bottom “border” -->
                 {#if stack_mode}
-                    <div class="absolute bottom-[-6px] w-full h-[6px] bg-gray-200 left-[-6px]" style="width: calc(100% + 6px);"></div>
+                    <div class="absolute bottom-[-6px] w-full h-[6px] bg-gray-60 left-[-6px]" style="width: calc(100% + 6px);"></div>
                 {:else}
-                    <div class="absolute bottom-[-3px] w-full h-[3px] bg-gray-200 left-[-3px]" style="width: calc(100% + 3px);"></div>
+                    <div class="absolute bottom-[-3px] w-full h-[3px] bg-gray-60 left-[-3px]" style="width: calc(100% + 3px);"></div>
                 {/if}
 
                 <!-- Offset left “border” (only for first column) -->
                 {#if stack_mode && column + 1 === 1}
-                    <div class="absolute top-0 left-[-6px] h-full w-[6px] bg-gray-200"></div>
+                    <div class="absolute top-0 left-[-6px] h-full w-[6px] bg-gray-60"></div>
                 {:else if column + 1 === 1}
-                    <div class="absolute top-0 left-[-3px] h-full w-[3px] bg-gray-200"></div>
+                    <div class="absolute top-0 left-[-3px] h-full w-[3px] bg-gray-60"></div>
                 {/if}
 
-                <!-- Bands rendering stays unchanged -->
+                <!-- Bands for top layer -->
                 {#if bands[column]?.currentBands?.length > 0}
                     {#each bands[column].currentBands as bp}
                         <div
@@ -605,11 +607,11 @@
     </div>
     <div class="flex flex-row justify-between">
         <div class="pt-3 join">
-            <button class="btn btn-xs rounded bg-gray-100 gap-1 hover:bg-neutral hover:text-white" onclick={() => { if (!uploading) {upload_modal.showModal()}}}>
+            <button class="btn btn-xs sm:btn-xs text-xs rounded-l rounded-r-none bg-neutral-800 hover:bg-neutral-70" onclick={() => { if (!uploading) {upload_modal.showModal()}}}>
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 35 35" version="1.1" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <title>upload1</title> <path d="M29.426 15.535c0 0 0.649-8.743-7.361-9.74-6.865-0.701-8.955 5.679-8.955 5.679s-2.067-1.988-4.872-0.364c-2.511 1.55-2.067 4.388-2.067 4.388s-5.576 1.084-5.576 6.768c0.124 5.677 6.054 5.734 6.054 5.734h9.351v-6h-3l5-5 5 5h-3v6h8.467c0 0 5.52 0.006 6.295-5.395 0.369-5.906-5.336-7.070-5.336-7.070z"></path> </g></svg>
                 Publish
             </button>
-            <button class="join-item btn btn-xs rounded bg-gray-100 gap-1 hover:bg-neutral hover:text-white"
+            <button class="join-item btn btn-xs sm:btn-xs text-xs rounded-r-none bg-neutral-800 hover:bg-neutral-700"
                     onclick={() => { 
                         if (bands[selected_column]) {
                             bands[selected_column] = {
@@ -625,26 +627,26 @@
                 <svg viewBox="0 0 16 16" class="w-3.5 h-3.5 rounded-sm" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path fill-rule="evenodd" clip-rule="evenodd" d="M2 0V16H4V14H12V16H14V0H12V2H4V0H2ZM4 4V7H12V4H4ZM12 12H4V9H12V12Z" fill="currentColor"></path> </g></svg>
                 Ladder
             </button>
-            <button class="join-item btn btn-xs rounded bg-gray-100 gap-1 hover:bg-neutral hover:text-white" onclick={randomizeBands}>
+            <button class="join-item btn btn-xs sm:btn-xs text-xs rounded-r-none bg-neutral-800 hover:bg-neutral-700" onclick={randomizeBands}>
                 <svg class="w-3.5 h-3.5" height="200px" width="200px" version="1.1" id="_x32_" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" xml:space="preserve" fill="currentColor"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <style type="text/css"> .st0{fill:currentColor;} </style> <g> <path class="st0" d="M454.609,111.204L280.557,6.804C272.992,2.268,264.503,0,255.999,0c-8.507,0-16.995,2.268-24.557,6.796 L57.391,111.204c-5.346,3.202-9.917,7.369-13.556,12.192l207.904,124.708c2.622,1.575,5.9,1.575,8.519,0L468.16,123.396 C464.524,118.573,459.951,114.406,454.609,111.204z M157.711,130.313c-10.96,7.611-28.456,7.422-39.081-0.452 c-10.618-7.859-10.342-20.413,0.618-28.031c10.964-7.626,28.46-7.422,39.081,0.438C168.95,110.134,168.674,122.68,157.711,130.313z M274.159,131.021c-10.594,7.362-27.496,7.166-37.762-0.429c-10.263-7.596-9.992-19.727,0.599-27.089 c10.591-7.362,27.492-7.174,37.759,0.43C285.018,111.528,284.75,123.659,274.159,131.021z M391.908,132.702 c-10.964,7.618-28.461,7.414-39.085-0.444c-10.617-7.86-10.343-20.42,0.621-28.046c10.957-7.61,28.456-7.422,39.078,0.452 C403.147,112.523,402.868,125.076,391.908,132.702z"></path> <path class="st0" d="M246.136,258.366L38.007,133.523c-2.46,5.802-3.798,12.117-3.798,18.62v208.084 c0,16.773,8.797,32.311,23.182,40.946l174.051,104.392c5.829,3.497,12.204,5.629,18.714,6.435V265.464 C250.156,262.556,248.63,259.858,246.136,258.366z M75.845,369.736c-12.056-6.57-21.829-21.671-21.829-33.727 c0-12.056,9.773-16.502,21.829-9.932c12.056,6.571,21.826,21.671,21.826,33.728C97.671,371.861,87.901,376.307,75.845,369.736z M75.845,247.87c-12.056-6.579-21.829-21.679-21.829-33.728c0-12.056,9.773-16.502,21.829-9.931 c12.056,6.57,21.826,21.671,21.826,33.728C97.671,249.987,87.901,254.44,75.845,247.87z M197.715,436.158 c-12.052-6.57-21.826-21.671-21.826-33.728c0-12.048,9.773-16.494,21.826-9.924c12.056,6.571,21.826,21.671,21.826,33.72 C219.541,438.284,209.771,442.729,197.715,436.158z M197.715,314.292c-12.052-6.571-21.826-21.671-21.826-33.728 s9.773-16.502,21.826-9.931c12.056,6.57,21.826,21.671,21.826,33.727C219.541,316.417,209.771,320.862,197.715,314.292z"></path> <path class="st0" d="M473.993,133.523l-208.13,124.843c-2.494,1.492-4.02,4.19-4.02,7.099V512 c6.511-0.806,12.886-2.938,18.714-6.435l174.052-104.392c14.38-8.635,23.182-24.173,23.182-40.946V152.142 C477.791,145.64,476.453,139.325,473.993,133.523z M370.478,355.11c-19.287,10.512-34.922,3.398-34.922-15.892 c0-19.282,15.635-43.447,34.922-53.951c19.293-10.519,34.925-3.406,34.925,15.884C405.403,320.434,389.771,344.598,370.478,355.11z "></path> </g> </g></svg>
                 Randomize
             </button>
-            <button class="join-item btn btn-xs rounded bg-gray-100 gap-1 {stack_mode ? 'bg-neutral text-white' : ''} hover:bg-neutral hover:text-white" onclick={() => {stack_mode = !stack_mode;}}>
+            <button class="join-item btn btn-xs sm:btn-xs text-xs rounded-r bg-neutral-800 hover:bg-neutral-700 {stack_mode ? 'bg-neutral text-white' : ''} hover:bg-neutral hover:text-white" onclick={() => {stack_mode = !stack_mode;}}>
                 <svg class="w-4 h-4" height="200px" width="200px"  viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="10"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path fill-rule="evenodd" clip-rule="evenodd" d="M7.75432 1.81954C7.59742 1.72682 7.4025 1.72682 7.24559 1.81954L1.74559 5.06954C1.59336 5.15949 1.49996 5.32317 1.49996 5.5C1.49996 5.67683 1.59336 5.84051 1.74559 5.93046L7.24559 9.18046C7.4025 9.27318 7.59742 9.27318 7.75432 9.18046L13.2543 5.93046C13.4066 5.84051 13.5 5.67683 13.5 5.5C13.5 5.32317 13.4066 5.15949 13.2543 5.06954L7.75432 1.81954ZM7.49996 8.16923L2.9828 5.5L7.49996 2.83077L12.0171 5.5L7.49996 8.16923ZM2.25432 8.31954C2.01658 8.17906 1.70998 8.2579 1.56949 8.49564C1.42901 8.73337 1.50785 9.03998 1.74559 9.18046L7.24559 12.4305C7.4025 12.5232 7.59742 12.5232 7.75432 12.4305L13.2543 9.18046C13.4921 9.03998 13.5709 8.73337 13.4304 8.49564C13.2899 8.2579 12.9833 8.17906 12.7456 8.31954L7.49996 11.4192L2.25432 8.31954Z" fill="currentColor"></path> </g></svg>
                 Stack
             </button>
         </div>
         <div class="ml-auto join pt-3">
-            <button class="btn btn-xs rounded-l hover:bg-neutral hover:text-white bg-gray-100" onclick={resetBands}>
+            <button class="btn btn-xs sm:btn-xs text-xs rounded-r-none rounded-l bg-neutral-800 hover:bg-neutral-700" onclick={resetBands}>
                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path transform="scale(1.2) translate(-3 -2.5)" fill-rule="evenodd" clip-rule="evenodd" d="M15.0722 3.9967L20.7508 9.83395L17.0544 13.5304L13.0758 17.5H21.0041V19H7.93503L4.00195 15.0669L15.0722 3.9967ZM10.952 17.5L15.4628 12.9994L11.8268 9.3634L6.12327 15.0669L8.55635 17.5H10.952Z" fill="currentColor"></path> </g></svg>
             </button>
-            <button class="join-item btn btn-xs bg-gray-100 hover:bg-neutral hover:text-white"
+            <button class="join-item btn btn-xs text-xs sm:btn-xs text-xs rounded-r-none bg-neutral-800 hover:bg-neutral-700"
                     onclick={() => {
                         if (columns > 1) columns -= 1;
                     }}>
                 -
             </button>
-            <button class="join-item btn btn-xs rounded-r bg-gray-100 hover:bg-neutral hover:text-white"
+            <button class="join-item btn btn-xs sm:btn-xs text-xs rounded-r bg-neutral-800 hover:bg-neutral-700"
                     onclick={() => {
                         const newIndex = columns; // next index
                         bands = {
@@ -684,12 +686,12 @@
 </div> -->
 
 <article class="prose w-full mx-auto mt-5 pt-5 sm:max-w-[700px] px-5">
-    <h4 class="flex flex-row justify-between text-neutral mb-1 inline">
+    <h4 class="flex flex-row justify-between text-white mb-1 inline">
         Restriction Enzymes
         <div>
             <div class="join">
                 <button
-                    class="btn join-item btn-xs bg-gray-100 hover:bg-neutral hover:text-white"
+                    class="btn join-item btn-xs sm:btn-xs text-xs rounded-l rounded-r-none bg-neutral-800 hover:bg-neutral-700"
                     onclick={() => {
                         current_enzymes.forEach(e => e.enabled = true);
                         current_enzymes = [...current_enzymes];
@@ -697,7 +699,7 @@
                 >All On</button>
 
                 <button
-                    class="btn join-item bg-gray-100 btn-xs hover:bg-neutral hover:text-white"
+                    class="btn join-item btn-xs sm:btn-xs text-xs rounded-r bg-neutral-800 hover:bg-neutral-700"
                     onclick={() => {
                         current_enzymes.forEach(e => e.enabled = false);
                         current_enzymes = [...current_enzymes];
@@ -730,7 +732,7 @@
 <!-- Top Level Gel Restriction Digests -->
 <div class="flex flex-col w-full max-w-[100vw] sm:max-w-[700px] mx-auto px-5">
     <article class="prose w-full mx-auto mt-5">
-        <h4 class="text-left text-neutral mb-1">
+        <h4 class="text-left text-white mb-1">
             {#if stack_mode}
                 Top Gel Restriction Digests
             {:else}
@@ -741,7 +743,7 @@
     </article>
     <table class="border border-gray-300 my-2 w-full table-fixed">
         <thead>
-            <tr class="bg-gray-200">
+            <tr class="bg-gray-600">
                 <th class="px-1 py-1 text-xs"></th>
                 {#each Array.from({ length: columns }) as _, col}
                     <th class="px-3 py-1 text-[10px]">
@@ -913,12 +915,12 @@
 {#if stack_mode}
 <div class="flex flex-col w-full max-w-[100vw] sm:max-w-[700px] mx-auto px-5">
     <article class="prose w-full mx-auto mt-5">
-        <h4 class="text-left text-neutral mb-1">Bottom Gel Digest</h4>
+        <h4 class="text-left text-neutral mb-1 text-white">Bottom Gel Digest</h4>
         <hr class="pb-3" />
     </article>
     <table class="border border-gray-300 my-2 w-full table-fixed">
         <thead>
-            <tr class="bg-gray-200">
+            <tr class="bg-gray-600">
                 <th class="px-1 py-1 text-xs"></th>
                 {#each Array.from({ length: columns }) as _, col}
                     <th class="px-3 py-1 text-[10px]">
@@ -1085,7 +1087,7 @@
 
 <div class="flex flex-col w-full max-w-[100vw] sm:max-w-[750px] mx-auto px-5">
     <article class="prose w-full mx-auto mt-5">
-        <h4 class="text-left text-neutral mb-1">Restriction Digest Parameters</h4>
+        <h4 class="text-left text-white mb-1">Restriction Digest Parameters</h4>
         <hr class="pb-3" />
     </article>
     <div class="text-sm text-center">
@@ -1096,7 +1098,7 @@
 
 <div class="flex flex-col w-full max-w-[100vw] sm:max-w-[750px] mx-auto px-5 pt-3 pb-20">
     <article class="prose w-full mx-auto mt-5">
-        <h4 class="text-left text-neutral mb-1">DNA Gel Electrophoresis</h4>
+        <h4 class="text-left text-white mb-1">DNA Gel Electrophoresis</h4>
         <hr class="pb-5" />
     </article>
     <div class="flex flex-row justify-around">
