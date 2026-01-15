@@ -4,11 +4,12 @@ import { PB_EMAIL, PB_PASSWORD } from '$env/static/private';
 const pb = new PocketBase("https://opentrons-art-pb.rcdonovan.com");
 
 export const POST = async ({ request }) => {
-    let { title, author, points, grid_style, radius_mm, grid_spacing_mm, point_colors, point_size, canvasSize: canvas_size, pixelationLevel : pixelation_level, brightness, contrast, saturation, ginkgo_mode } = await request.json();
+    let { title, author, points, grid_style, radius_mm, grid_spacing_mm, point_colors, point_size, canvasSize: canvas_size, pixelationLevel : pixelation_level, brightness, contrast, saturation, ginkgo_mode, lastLoadedGifUrl, zoom, rotation, pixelation } = await request.json();
     try {
         let num_drops = Object.keys(point_colors).length;
         let num_total = points.length;
         let unique_colors = [...new Set(Object.values(point_colors))];
+        let gif_url = lastLoadedGifUrl || null;
         await pb.admins.authWithPassword(PB_EMAIL, PB_PASSWORD);
 
         // confirm we aren't adding the same art repeatedly, use _.isEqual because the objects are unordered
@@ -38,7 +39,11 @@ export const POST = async ({ request }) => {
                 pixelation_level,
                 brightness,
                 contrast,
-                saturation
+                saturation,
+                gif_url,
+                zoom,
+                rotation,
+                pixelation
             });
         } else {
             const newEntry = await pb.collection("designs").create({

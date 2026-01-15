@@ -7,6 +7,7 @@
     import { page } from '$app/stores';
     import { current_well_colors_import, well_colors, old_well_colors, source_384_well_colors } from '$lib/proteins.js';
     import { fade } from 'svelte/transition';
+    import { parseGIF, decompressFrames } from "gifuct-js";
 
     // LOCAL COPY
     let current_well_colors = $state({...current_well_colors_import})
@@ -33,6 +34,16 @@
     let current_color = $state('sfGFP');
     let contentToCopy = $state();
     let showBacteriaModal = $state(false);
+    let animate = $state(false);
+    let animateToken = 0;
+    let isPainting = false;
+    let lastKey = null;
+    let groupScheduled = false;
+    let downKey = null;
+    let didMove = false;
+    let downX = 0;
+    let downY = 0;
+    const DRAG_PX = 4;
 
     // DESIGN METADATA
     let title = $state('');
@@ -67,6 +78,40 @@
     // DOWNLOAD DATA
     let scriptType = '96_deep_well'; // '96_deep_well' or '96_pcr'
 
+    // GIF DATA
+    let gifUrlInput = $state("");
+    let gifUrlStatus = $state("idle"); 
+    let lastLoadedGifUrl = null;
+    let animationImages = $state([]);   // now: array<HTMLCanvasElement> extracted from GIF
+    let animationFrames = $state([]);   // array<{ ...point_colors }>
+    let isPrecomputing = $state(false);
+    let isPlaying = $state(false);
+    let isPaused = $state(false);
+    let frameIndex = 0;
+    let rafId = null;
+    let frameMs = 1000 / 30;
+    let currentFps = 10;
+    let lastTs = 0;
+    let gifUrlError = $state("");
+    let isLoadingGif = $state(false);
+    let skipNextGifRebuild = false;
+    let gifHydrating = $state(false);
+    let gifUrlDebounce = null;
+    let rebuildProgress = $state(0);
+    let rebuildTotal = $state(0);
+    let scrubIndex = $state(0);
+    let isScrubbing = $state(false);
+    let pixelatedCanvas = $state(null);
+    let previewCanvas = $state(null);
+    let rebuildToken = 0;
+    let lastGifSig = "";
+    let mappingVersion = $state(0);
+    const SAMPLE_W = 192;
+    const SAMPLE_H = 192;
+    let sampleCanvas;
+    let sampleCtx;
+    
+
     onMount(async () => {
         if (browser) {
             let loadRecordId = $page.url.searchParams.get('id');
@@ -88,46 +133,35 @@
                         groupByColors();
                     }
                 }
+                if (animate == true && event.key === ' ') {
+                    const activeElement = document.activeElement;
+                    const isTypable = activeElement.nodeName === 'INPUT' || activeElement.nodeName === 'TEXTAREA' || activeElement.isContentEditable;
+                    if (!isTypable) {
+                        event.preventDefault();
+                        togglePlayback();
+                    }
+                }
+                if (animate == true && event.key === 'Shift') {
+                    const activeElement = document.activeElement;
+                    const isTypable = activeElement.nodeName === 'INPUT' || activeElement.nodeName === 'TEXTAREA' || activeElement.isContentEditable;
+                    if (!isTypable) { 
+                        currentFps = 12;
+                    }
+                }
             });
+            window.addEventListener('keyup', function(event) {
+                if (animate == true && event.key === 'Shift') {
+                    const activeElement = document.activeElement;
+                    const isTypable = activeElement.nodeName === 'INPUT' || activeElement.nodeName === 'TEXTAREA' || activeElement.isContentEditable;
+                    if (!isTypable) { 
+                        currentFps *= 2;
+                    }
+                }
+            });
+            if (animate) {
+                grid_style = 'Echo1536Image';
+            }
         }
-    });
-    
-    $effect(() => {
-        points = generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors);
-        tick().then(() => {
-            if (grid_style === 'QRCode') {
-                    const new_colors = {};
-                    for (const point of points) {
-                        new_colors[`${point.x}, ${point.y}`] = 'sfGFP';
-                    }
-                    point_colors = new_colors;
-                    groupByColors();
-                }
-            if (['Standard', 'Grid', 'Image', 'Echo384', 'Echo384Image', 'Echo1536', 'Echo1536Image'].includes(grid_style)) {
-                const current = grid_spacing_mm;
-                const previous = prev_grid_spacing_mm;
-                if (current !== previous && !loadingURLRecord) {
-                    point_colors = shiftPoints("all", current, previous, radius_mm, point_colors);
-                    groupByColors();
-                    prev_grid_spacing_mm = current;
-                }
-            }
-            if (grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image') {
-                if (img) {
-                    const new_colors = {};
-                    for (const point of points) {
-                        const c =  closestNamedColor(point.color, current_well_colors, well_colors, color_mapping);
-                        if (c !== 'White' && c !== 'Erase') {
-                            new_colors[`${point.x}, ${point.y}`] = c;
-                        } else if ((c === 'White' || c === 'Erase') && whiteBgReplacement !== 'Invisible') {
-                            new_colors[`${point.x}, ${point.y}`] = whiteBgReplacement;
-                        }
-                    }
-                    point_colors = new_colors;
-                    groupByColors();
-                }
-            }
-        });
     });
 
     // Toggle blur on sliders
@@ -142,17 +176,40 @@
     }
 
     function resetValues() {
-        point_colors = {};
-        QRCode_text = '';
-        points_by_color = {};
-        points = {};
-        radius_mm = 40;
+        // --- clear animation / GIF state ---
+        stopPlayback?.();
+        rebuildToken++;
+
+        animationImages = [];
+        animationFrames = [];
+        frameIndex = 0;
+        animate = false;
+
+        gifUrlInput = "";
+        gifUrlStatus = "idle";
+        gifUrlError = "";
+
+        isPrecomputing = false;
+        isLoadingGif = false;
+        rebuildProgress = 0;
+        rebuildTotal = 0;
+
+        // --- clear image pipeline ---
         img = null;
         file = null;
         pixelatedSrc = null;
+        pixelatedCanvas = null;
         imageColors = [];
-        points = generateGrid(grid_style, radius_mm, grid_spacing_mm);
+
+        // --- clear design state ---
+        point_colors = {};
+        points_by_color = {};
+        QRCode_text = '';
+        points = {};
+
+        radius_mm = 40;
     }
+
 
     async function loadRecord(id) {
         try {
@@ -168,13 +225,23 @@
             point_size = r.record.point_size || 1;
             grid_style = r.record.grid_style;
             
-            if (r.record.grid_style === 'Image') {
+            if (r.record.grid_style === 'Image' || r.record.grid_style === 'Echo384Image' || r.record.grid_style === 'Echo1536Image') {
                 brightness = r.record.brightness;
                 contrast = r.record.contrast;
                 saturation = r.record.saturation;
 
-                pixelation = r.record.pixelation_level;
+                pixelation = r.record.pixelation;
+                zoom = r.record.zoom || 1;
+                rotation = r.record.rotation;
                 canvasSize = r.record.canvas_size;
+
+                if (r.record.gif_url) {
+                    gifUrlInput = r.record.gif_url;
+                    console.log(gifUrlInput);
+                    await submitGifUrl();
+                    loadingURLRecord = false;
+                    return;
+                }
 
                 processImage(canvasSize, pixelation);
                 console.log('pre-existing', point_colors);
@@ -221,6 +288,10 @@
                 contrast,
                 saturation,
                 ginkgo_mode,
+                lastLoadedGifUrl,
+                zoom,
+                rotation,
+                pixelation
             })
         });
         let r = await response.json();
@@ -699,15 +770,310 @@ def run(protocol):
 		setTimeout(() => { isToastVisible = false; }, 3000);
 	}
 
+        
     $effect(() => {
-        processImage(canvasSize, pixelation, brightness, contrast, saturation, rotation, zoom);
-        if (pixelation > canvasSize) { 
-            pixelation = canvasSize; 
+        points = generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors);
+        tick().then(() => {
+            if (grid_style === 'QRCode') {
+                    const new_colors = {};
+                    for (const point of points) {
+                        new_colors[`${point.x}, ${point.y}`] = 'sfGFP';
+                    }
+                    point_colors = new_colors;
+                    groupByColors();
+                }
+            if (['Standard', 'Grid', 'Image', 'Echo384', 'Echo384Image', 'Echo1536', 'Echo1536Image'].includes(grid_style)) {
+                const current = grid_spacing_mm;
+                const previous = prev_grid_spacing_mm;
+                if (current !== previous && !loadingURLRecord) {
+                    point_colors = shiftPoints("all", current, previous, radius_mm, point_colors);
+                    groupByColors();
+                    prev_grid_spacing_mm = current;
+                }
+            }
+            if (grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image') {
+            // allow point_colors to be computed during precompute/hydration
+            if (animate && !isPrecomputing) return;
+
+            if (img) {
+                const new_colors = {};
+                for (const point of points) {
+                    const c = closestNamedColor(point.color, current_well_colors, well_colors, color_mapping);
+                    if (c !== 'White' && c !== 'Erase') {
+                    new_colors[`${point.x}, ${point.y}`] = c;
+                    } else if ((c === 'White' || c === 'Erase') && whiteBgReplacement !== 'Invisible') {
+                    new_colors[`${point.x}, ${point.y}`] = whiteBgReplacement;
+                    }
+                }
+                point_colors = new_colors;
+                groupByColors();
+                }
+            }
+        });
+    });
+
+
+    async function gifFileToFrameCanvases(file) {
+        const buf = await file.arrayBuffer();
+        const gif = parseGIF(buf);
+        const frames = decompressFrames(gif, true);
+
+        const W = gif.lsd.width;
+        const H = gif.lsd.height;
+
+        const base = document.createElement("canvas");
+        base.width = W;
+        base.height = H;
+        const bctx = base.getContext("2d", { willReadFrequently: true });
+
+        bctx.fillStyle = "#fff";
+        bctx.fillRect(0, 0, W, H);
+
+        const prev = document.createElement("canvas");
+        prev.width = W;
+        prev.height = H;
+        const prevCtx = prev.getContext("2d");
+
+        const patch = document.createElement("canvas");
+        patch.width = W;
+        patch.height = H;
+        const pctx = patch.getContext("2d");
+
+        const out = [];
+
+        for (const fr of frames) {
+            const { left, top, width, height } = fr.dims;
+
+            if (!width || !height) continue;
+
+            if (fr.disposalType === 3) {
+                prevCtx.clearRect(0, 0, W, H);
+                prevCtx.drawImage(base, 0, 0);
+            }
+
+            pctx.clearRect(0, 0, W, H);
+
+            const imageData = pctx.createImageData(width, height);
+            imageData.data.set(fr.patch);
+            pctx.putImageData(imageData, left, top);
+
+            bctx.drawImage(patch, 0, 0);
+
+            const snap = document.createElement("canvas");
+            snap.width = W;
+            snap.height = H;
+            snap.getContext("2d").drawImage(base, 0, 0);
+
+            out.push(snap);
+
+            if (fr.disposalType === 2) {
+                bctx.fillStyle = "#fff";
+                bctx.fillRect(left, top, width, height);
+            } else if (fr.disposalType === 3) {
+                bctx.clearRect(0, 0, W, H);
+                bctx.drawImage(prev, 0, 0);
+            }
+        }
+        return out;
+    }
+
+
+    async function computeAllFrames() {
+        if (!animationImages.length) return;
+
+        isPrecomputing = true;
+        animationFrames = [];
+        grid_style = "Echo1536Image";
+        
+        brightness = 90;
+        contrast = 120;
+        saturation = 120;
+        zoom = 1;
+        pixelation = 4;
+        rotation = 0;
+        whiteBgReplacement = "Invisible";
+        color_mapping = getColorMapping(well_colors, false);
+
+        for (const frameCanvas of animationImages) {
+            // Skip invalid frames (prevents drawImage width/height 0 errors)
+            if (!frameCanvas || frameCanvas.width <= 0 || frameCanvas.height <= 0) continue;
+
+            img = frameCanvas;
+            processImage(canvasSize, pixelation);
+
+            await tick();
+            await tick();
+
+            animationFrames.push({ ...point_colors });
+            
+            await new Promise((r) => setTimeout(r, 0));
+        }
+
+        isPrecomputing = false;
+        scrubIndex = 0;
+        frameIndex = 0;
+    }
+
+    function hasAnyKey(obj) {
+        for (const _k in obj) return true;
+        return false;
+    }
+
+
+    function startPlayback() {
+        if (!animationFrames.length) return;
+
+        frameMs = 1000 / currentFps;
+
+        isPlaying = true;
+        isPaused = false;
+        lastTs = performance.now();
+
+        const loop = (now) => {
+            if (!isPlaying) return;
+
+            if (!isPaused && now - lastTs >= frameMs) {
+            lastTs = now;
+
+            const len = animationFrames.length;
+            const idx = frameIndex % len;
+            frameIndex = idx + 1;
+
+            let pc = animationFrames[idx];
+
+            if (idx === 0 && pc && !hasAnyKey(pc) && len > 1) {
+                const last = animationFrames[len - 1];
+                if (last && hasAnyKey(last)) pc = last;
+            }
+
+            point_colors = pc;
+
+            // keep scrubber synced unless user is actively dragging
+            if (!isScrubbing) scrubIndex = idx;
+
+            if (animationImages?.length) {
+                pixelatedCanvas = animationImages[idx];  // no serialization, no huge strings
+                }
+            }
+
+            rafId = requestAnimationFrame(loop);
+        };
+
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(loop);
+    }
+
+    $effect(() => {
+        if (!previewCanvas || !pixelatedCanvas) return;
+
+        const w = pixelatedCanvas.width;
+        const h = pixelatedCanvas.height;
+
+        // only resize if it actually changed
+        if (previewCanvas.width !== w) previewCanvas.width = w;
+        if (previewCanvas.height !== h) previewCanvas.height = h;
+
+        const ctx = previewCanvas.getContext("2d");
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(pixelatedCanvas, 0, 0);
+    });
+
+
+    $effect(() => {
+        if (pixelation > canvasSize) pixelation = canvasSize;
+
+        // Still image mode: keep live updating
+        if (!animate && !isPrecomputing && !isLoadingGif && !gifHydrating) {
+            processImage(canvasSize, pixelation, brightness, contrast, saturation, rotation, zoom);
+            return;
+        }
+
+        // GIF mode: only run processImage while building frames
+        if (animate && isPrecomputing) {
+            processImage(canvasSize, pixelation, brightness, contrast, saturation, rotation, zoom);
         }
     });
 
-    function handleFileChange(event) {
-        file = event.target.files[0];
+
+    async function handleFileChange(event, optionalFilename = null) {
+        file = event.target.files?.[0];
+
+        if (grid_spacing_mm === "Image") {
+            grid_spacing_mm = 1.8;
+            point_size = 0.25;
+        }
+        
+        // media reset only
+        stopPlayback?.();
+        rebuildToken++;
+        animationImages = [];
+        animationFrames = [];
+        frameIndex = 0;
+        animate = false;
+        img = null;
+        pixelatedSrc = null;
+        imageColors = [];
+        isPrecomputing = false;
+        isLoadingGif = false;
+        rebuildProgress = 0;
+        rebuildTotal = 0;
+
+        gifUrlStatus = "idle";
+        gifUrlError = "";
+
+        // reset params (same as before)
+        if (!loadingURLRecord) {
+            brightness = 90;
+            contrast = 120;
+            saturation = 120;
+            zoom = 0.91;
+            pixelation = 4;
+            rotation = 0;
+        }
+
+        whiteBgReplacement = 'Invisible';
+        color_mapping = getColorMapping(well_colors, false);
+
+        if (!file) return;
+
+        // stop any existing playback when a new file is chosen
+        stopPlayback?.();
+
+        const isGif = file.type === "image/gif" || file.name?.toLowerCase().endsWith(".gif");
+        const isMp4 = file.type === "video/mp4" || file.name?.toLowerCase().endsWith(".mp4");
+
+
+        if (isGif || isMp4) {
+            gifHydrating = true;
+            try {
+                grid_style = "Echo1536Image";
+                img = null;
+                animate = true;
+
+                animationImages = isGif
+                ? await gifFileToFrameCanvases(file)
+                : await mp4FileToFrameCanvases(file, { fps: currentFps, maxW: 480, maxH: 480, maxFrames: 400 });
+
+                pixelatedCanvas = animationImages[0] || null;
+
+                lastGifSig = gifSig();
+                await rebuildFramesNow();
+            } finally {
+                gifHydrating = false;
+            }
+            startPlayback(currentFps);
+            return;
+        }
+
+        // Non-GIF: keep original single-image behavior
+        img = new Image();
+        img.onload = () => { processImage(canvasSize, pixelation); };
+        img.onerror = (e) => console.error("Image load failed", e);
+        img.src = URL.createObjectURL(file);
+    }
+
+    function handleAnimateFileChange(filname) {
+        file = filname;
         if (grid_spacing_mm === "Image") {
             grid_spacing_mm = 1.8;
             point_size = 0.25;
@@ -726,9 +1092,10 @@ def run(protocol):
         img.src = URL.createObjectURL(file);
     }
 
+    
     function processImage(canvasSize, pixelation) {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
         canvas.width = canvasSize;
         canvas.height = canvasSize;
 
@@ -740,58 +1107,62 @@ def run(protocol):
             return;
         }
 
-        const iw = img.naturalWidth;
-        const ih = img.naturalHeight;
+        const iw =
+            img instanceof HTMLCanvasElement ? img.width :
+            img instanceof HTMLImageElement ? img.naturalWidth :
+            img.width ?? 0;
 
-        // Decide final scale ONCE (contain)
-        const baseScale = Math.min(
-            canvasSize / iw,
-            canvasSize / ih
-        ) * zoom;
+        const ih =
+            img instanceof HTMLCanvasElement ? img.height :
+            img instanceof HTMLImageElement ? img.naturalHeight :
+            img.height ?? 0;
 
-        const drawW = iw * baseScale;
-        const drawH = ih * baseScale;
+        if (!iw || !ih) {
+            imageColors = getPixelHexColors(ctx, canvasSize, canvasSize);
+            pixelatedSrc = canvas.toDataURL();
+            return;
+        }
 
-        // Pixelation resolution
+        // contain-fit size WITHOUT zoom (stable reference)
+        const containScale = Math.min(canvasSize / iw, canvasSize / ih);
+        const containW = iw * containScale;
+        const containH = ih * containScale;
+
+        // apply zoom only to the final draw size
+        const drawW = containW * zoom;
+        const drawH = containH * zoom;
+
+        // pixelation resolution based on contain size, not zoomed size
         const pixelRes = canvasSize + 4 - pixelation;
-        const pxScale = Math.min(
-            pixelRes / drawW,
-            pixelRes / drawH
-        );
+        const pxScale = Math.min(pixelRes / containW, pixelRes / containH);
 
-        const tempW = Math.round(drawW * pxScale);
-        const tempH = Math.round(drawH * pxScale);
+        // temp canvas = pixelated version of the *contain* image
+        const tempW = Math.max(1, Math.round(containW * pxScale));
+        const tempH = Math.max(1, Math.round(containH * pxScale));
 
-        // TEMP CANVAS (matches image aspect)
-        const temp = document.createElement('canvas');
+        const temp = document.createElement("canvas");
         temp.width = tempW;
         temp.height = tempH;
-        const tctx = temp.getContext('2d');
+        const tctx = temp.getContext("2d");
 
         tctx.fillStyle = "#ffffff";
         tctx.fillRect(0, 0, tempW, tempH);
 
+        // rotate around temp center (same behavior)
         tctx.save();
         tctx.translate(tempW / 2, tempH / 2);
         tctx.rotate((rotation * Math.PI) / 180);
-        tctx.drawImage(
-            img,
-            -tempW / 2,
-            -tempH / 2,
-            tempW,
-            tempH
-        );
+        tctx.drawImage(img, -tempW / 2, -tempH / 2, tempW, tempH);
         tctx.restore();
 
-        // Draw temp → final (no aspect math here)
+        // final draw (apply zoom here)
         ctx.imageSmoothingEnabled = false;
 
         const dx = (canvasSize - drawW) / 2;
         const dy = (canvasSize - drawH) / 2;
-
         ctx.drawImage(temp, dx, dy, drawW, drawH);
 
-        // --- Filters ---
+        //
         const imageData = ctx.getImageData(0, 0, canvasSize, canvasSize);
         const buf = new Uint32Array(imageData.data.buffer);
 
@@ -802,14 +1173,14 @@ def run(protocol):
         for (let i = 0; i < buf.length; i++) {
             let val = buf[i];
 
-            let r = val & 0xFF;
-            let g = (val >> 8) & 0xFF;
-            let b = (val >> 16) & 0xFF;
-            const a = (val >> 24) & 0xFF;
+            let r = val & 0xff;
+            let g = (val >> 8) & 0xff;
+            let b = (val >> 16) & 0xff;
+            const a = (val >> 24) & 0xff;
 
-            r = ((r * bFactor - 128) * cFactor + 128);
-            g = ((g * bFactor - 128) * cFactor + 128);
-            b = ((b * bFactor - 128) * cFactor + 128);
+            r = (r * bFactor - 128) * cFactor + 128;
+            g = (g * bFactor - 128) * cFactor + 128;
+            b = (b * bFactor - 128) * cFactor + 128;
 
             const lum = 0.299 * r + 0.587 * g + 0.114 * b;
             r = lum + (r - lum) * sFactor;
@@ -817,10 +1188,10 @@ def run(protocol):
             b = lum + (b - lum) * sFactor;
 
             buf[i] =
-                (a << 24) |
-                (Math.max(0, Math.min(255, b)) << 16) |
-                (Math.max(0, Math.min(255, g)) << 8) |
-                Math.max(0, Math.min(255, r));
+            (a << 24) |
+            (Math.max(0, Math.min(255, b)) << 16) |
+            (Math.max(0, Math.min(255, g)) << 8) |
+            Math.max(0, Math.min(255, r));
         }
 
         ctx.putImageData(imageData, 0, 0);
@@ -828,8 +1199,6 @@ def run(protocol):
         pixelatedSrc = canvas.toDataURL();
         imageColors = getPixelHexColors(ctx, canvasSize, canvasSize);
     }
-
-
 
     function formatSeconds(seconds) {
         let totalDuration = 0;
@@ -874,10 +1243,6 @@ def run(protocol):
         return idx === -1 ? label : label.slice(0, idx);
     }
 
-    let isPainting = false;
-    let lastKey = null;
-    let groupScheduled = false;
-
     function scheduleGroupByColors() {
         if (groupScheduled) return;
         groupScheduled = true;
@@ -888,44 +1253,401 @@ def run(protocol):
         });
     }
 
-    function paintFromEvent(e) {
+    function keyFromEvent(e) {
         const el = document.elementFromPoint(e.clientX, e.clientY);
-        if (!el || !el.dataset?.key) return;
+        if (!el || !el.dataset?.key) return null;
+        return el.dataset.key.replace(",", ", ");
+    }
 
-        // normalize to the renderer's key format: "x, y" (comma + space)
-        const key = el.dataset.key.replace(',', ', ');
-
-        if (key === lastKey) return;
+    function paintKey(key) {
+        if (!key || key === lastKey) return;
         lastKey = key;
 
-        if (current_color === 'Erase') {
+        if (current_color === "Erase") {
             delete point_colors[key];
         } else {
             point_colors[key] = current_color;
         }
 
-        // ensure Svelte notices the update
-        point_colors = point_colors;
+        // make Svelte actually re-render
+        point_colors = { ...point_colors };
+        scheduleGroupByColors();
+    }
 
+    function toggleKey(key) {
+        if (!key) return;
+
+        if (point_colors[key]) {
+            delete point_colors[key];
+        } else {
+            if (current_color === "Erase") return;
+            point_colors[key] = current_color;
+        }
+
+        point_colors = { ...point_colors };
         scheduleGroupByColors();
     }
 
     function handlePointerDown(e) {
         isPainting = true;
         lastKey = null;
+
+        didMove = false;
+        downX = e.clientX;
+        downY = e.clientY;
+
+        downKey = keyFromEvent(e);
+
         e.currentTarget.setPointerCapture?.(e.pointerId);
-        paintFromEvent(e);
     }
 
     function handlePointerMove(e) {
         if (!isPainting) return;
-        paintFromEvent(e);
+
+        if (!didMove) {
+            const dx = e.clientX - downX;
+            const dy = e.clientY - downY;
+            if (dx * dx + dy * dy >= DRAG_PX * DRAG_PX) {
+                didMove = true;
+                paintKey(downKey);
+            }
+        }
+
+        if (didMove) {
+            paintKey(keyFromEvent(e));
+        }
     }
 
     function handlePointerUp(e) {
         isPainting = false;
         lastKey = null;
         e.currentTarget.releasePointerCapture?.(e.pointerId);
+
+        if (!didMove) {
+            toggleKey(downKey);
+        }
+
+        downKey = null;
+    }
+
+    function pausePlayback() {
+        if (!isPlaying) return;
+        isPlaying = false;
+        isPaused = true;
+    }
+
+    function resumePlayback() {
+        if (!isPlaying) return;
+
+        // avoid "fast catch-up" after pause
+        lastTs = performance.now();
+        isPaused = false;
+    }
+
+    function togglePlayback() {
+        groupByColors();
+        if (!isPlaying) {
+            startPlayback(currentFps);
+            return;
+        }
+        if (isPaused) resumePlayback();
+        else pausePlayback();
+    }
+
+    function stopPlayback() {
+        isPlaying = false;
+        isPaused = false;
+        if (rafId) cancelAnimationFrame(rafId);
+        rafId = null;
+    }
+
+function markFramesDirty() {
+  if (isPrecomputing) return;
+  rebuildFramesNow();
+}
+
+async function rebuildFramesNow() {
+    if (!animationImages?.length) return;
+
+    if (isPrecomputing) {
+        rebuildToken++; // cancels the currently-running rebuild loop
+        // wait for the current rebuild to exit its finally{} and clear isPrecomputing
+        while (isPrecomputing) await tick();
+    }
+
+    const token = ++rebuildToken;
+    rebuildProgress = 0;
+    rebuildTotal = animationImages.length;
+    isPrecomputing = true;
+
+    const newFrames = [];
+    grid_style = "Echo1536Image";
+
+    try {
+        for (const frameImg of animationImages) {
+            if (token !== rebuildToken) {
+                console.log("[GIF] canceled at", rebuildProgress, "/", rebuildTotal);
+                return;
+            }
+            const pc = frameToPointColors(frameImg);
+
+            newFrames.push(pc);
+            rebuildProgress++;
+
+            await new Promise((r) => setTimeout(r, 0));
+        }
+        if (token === rebuildToken) {
+            animationFrames = newFrames;
+
+            const idx = Math.min(
+                scrubIndex,
+                animationFrames.length - 1
+            );
+
+            frameIndex = idx;
+            scrubIndex = idx;
+            point_colors = animationFrames[idx];
+
+            if (animationImages?.length) {
+                pixelatedCanvas = animationImages[idx];
+            }
+        }
+    } finally {
+        if (token === rebuildToken) isPrecomputing = false;
+    }
+    }
+
+
+    async function submitGifUrl() {
+        const url = (gifUrlInput || "").trim();
+        if (!url) return;
+
+        gifUrlStatus = "checking";
+        gifUrlError = "";
+
+        try {
+            const res = await fetch(url, { mode: "cors" });
+            if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+
+            const blob = await res.blob();
+            const file = new File([blob], "remote.gif", { type: blob.type || "image/gif" });
+            lastLoadedGifUrl = (res.url || "").trim();
+
+            // feed into the exact same upload sequence
+            await handleFileChange({ target: { files: [file] } });
+
+            gifUrlStatus = "valid";
+        } catch (e) {
+            gifUrlStatus = "invalid";
+            gifUrlError = String(e?.message || e);
+        }
+    }
+
+    function gifSig() {
+        return [
+            canvasSize, pixelation, brightness, contrast, saturation, rotation, zoom,
+            whiteBgReplacement,
+            mappingVersion,
+        ].join("|");
+    }
+
+    function randomizeGifColors() {
+        color_mapping = getColorMapping(well_colors, true);
+        mappingVersion++;
+    }
+
+    $effect(() => {
+        if (!animate || !animationImages?.length) return;
+        if (isPrecomputing || isLoadingGif || gifHydrating) return;
+
+        const sig = gifSig();
+        if (sig === lastGifSig) return;
+        lastGifSig = sig;
+
+        markFramesDirty();
+    });
+
+    function setFrame(i) {
+        if (!animationFrames.length) return;
+
+        const idx = Math.max(0, Math.min(animationFrames.length - 1, i | 0));
+        scrubIndex = idx;
+        frameIndex = idx;
+
+        point_colors = animationFrames[idx];
+
+        if (animationImages?.length) {
+            pixelatedCanvas = animationImages[idx];
+        }
+    }
+
+    function ensureSampleCtx() {
+        if (!sampleCanvas) {
+            sampleCanvas = document.createElement("canvas");
+            sampleCanvas.width = SAMPLE_W;
+            sampleCanvas.height = SAMPLE_H;
+            sampleCtx = sampleCanvas.getContext("2d", { willReadFrequently: true });
+            sampleCtx.imageSmoothingEnabled = false;
+        }
+    }
+
+    function frameToPointColors(frame) {
+        ensureSampleCtx();
+
+        const iw = frame?.width ?? 0;
+        const ih = frame?.height ?? 0;
+        if (!iw || !ih || !points?.length) return {};
+
+        // Clear to white
+        sampleCtx.setTransform(1, 0, 0, 1, 0, 0);
+        sampleCtx.globalCompositeOperation = "source-over";
+        sampleCtx.filter = "none";
+        sampleCtx.fillStyle = "#fff";
+        sampleCtx.fillRect(0, 0, SAMPLE_W, SAMPLE_H);
+
+        // Apply filters
+        sampleCtx.filter =
+            `brightness(${brightness / 100}) ` +
+            `contrast(${contrast / 100}) ` +
+            `saturate(${saturation / 100})`;
+
+        // -- Draw frame
+        const baseScale = Math.min(SAMPLE_W / iw, SAMPLE_H / ih) * zoom;
+        const drawW = iw * baseScale;
+        const drawH = ih * baseScale;
+
+        sampleCtx.save();
+        sampleCtx.translate(SAMPLE_W * 0.5, SAMPLE_H * 0.5);
+        sampleCtx.rotate((rotation * Math.PI) / 180);
+        sampleCtx.drawImage(frame, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
+        sampleCtx.restore();
+
+        sampleCtx.filter = "none";
+
+        // Read pixels
+        const data = sampleCtx.getImageData(0, 0, SAMPLE_W, SAMPLE_H).data;
+
+        // Echo grid bounds
+        const minX = 0, maxX = 127;
+        const minY = 0, maxY = 85;
+        const invGW = 1 / (maxX - minX + 1); // 1/128
+        const invGH = 1 / (maxY - minY + 1); // 1/86
+
+        const out = {};
+        const useInvert = !!invertColors;
+        const addWhite = (whiteBgReplacement !== "Invisible");
+
+        // precompute these
+        const wMinus1 = SAMPLE_W - 1;
+        const hMinus1 = SAMPLE_H - 1;
+
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+
+            // Normalize grid point -> [0,1)
+            const u = ((p.x - minX) + 0.5) * invGW;
+            const v = ((p.y - minY) + 0.5) * invGH;
+
+            // ✅ KEY: sample FULL CANVAS coords (not draw rect)
+            let sx = ((u * wMinus1) | 0) + 8;
+            let sy = ((v * hMinus1) | 0) + 8;
+
+            const di = ((sy * SAMPLE_W + sx) << 2);
+
+            let r = data[di], g = data[di + 1], b = data[di + 2];
+            // alpha will basically always be 255 now because we filled white
+            if (useInvert) { r = 255 - r; g = 255 - g; b = 255 - b; }
+
+            const hex = rgbToHex(r, g, b);
+            const cName = closestNamedColor(hex, current_well_colors, well_colors, color_mapping);
+
+            if (cName !== "White" && cName !== "Erase") {
+            out[`${p.x}, ${p.y}`] = cName;
+            } else if (addWhite) {
+            out[`${p.x}, ${p.y}`] = whiteBgReplacement;
+            }
+        }
+
+        return out;
+    }
+
+    async function mp4FileToFrameCanvases(file, {
+        fps = 10,
+        maxFrames = 300,
+        maxW = 480,
+        maxH = 480
+        } = {}) {
+        const url = URL.createObjectURL(file);
+        const video = document.createElement("video");
+        video.src = url;
+        video.muted = true;
+        video.playsInline = true;
+        video.crossOrigin = "anonymous";
+        video.preload = "auto";
+
+        await new Promise((res, rej) => {
+            video.onloadedmetadata = () => res();
+            video.onerror = () => rej(new Error("MP4 load failed"));
+        });
+
+        const dur = video.duration || 0;
+        const vw = video.videoWidth || 0;
+        const vh = video.videoHeight || 0;
+        if (!dur || !vw || !vh) {
+            URL.revokeObjectURL(url);
+            return [];
+        }
+    
+        const scale = Math.min(1, maxW / vw, maxH / vh);
+        const cw = Math.max(1, Math.round(vw * scale));
+        const ch = Math.max(1, Math.round(vh * scale));
+
+        const capture = document.createElement("canvas");
+        capture.width = cw;
+        capture.height = ch;
+        const cctx = capture.getContext("2d", { willReadFrequently: true });
+        cctx.imageSmoothingEnabled = true;
+
+        const frameCount = Math.min(maxFrames, Math.max(1, Math.floor(dur * fps)));
+        const dt = dur / frameCount;
+
+        const out = [];
+        for (let i = 0; i < frameCount; i++) {
+            const t = Math.min(dur - 0.0001, i * dt);
+            await seekVideo(video, t);
+            cctx.clearRect(0, 0, cw, ch);
+            cctx.drawImage(video, 0, 0, cw, ch);
+            const snap = document.createElement("canvas");
+            snap.width = cw;
+            snap.height = ch;
+            snap.getContext("2d").drawImage(capture, 0, 0);
+            out.push(snap);
+            await new Promise(r => setTimeout(r, 0));
+        }
+
+        URL.revokeObjectURL(url);
+        return out;
+    }
+
+    function seekVideo(video, time) {
+        return new Promise((res, rej) => {
+            const onSeeked = () => {
+                cleanup();
+                res();
+            };
+            const onError = () => {
+                cleanup();
+                rej(new Error("MP4 seek failed"));
+            };
+            const cleanup = () => {
+                video.removeEventListener("seeked", onSeeked);
+                video.removeEventListener("error", onError);
+            };
+
+            video.addEventListener("seeked", onSeeked, { once: true });
+            video.addEventListener("error", onError, { once: true });
+            video.currentTime = time;
+        });
     }
 </script>
 
@@ -1156,7 +1878,7 @@ def run(protocol):
                     {point_size === 2.5 ? 'w-[14px] h-[14px]' : ''} 
                     {point_size === 2.75 ? 'w-[15px] h-[15px]' : ''}
                     {point_size === 3 ? 'w-[16px] h-[16px]' : ''}
-                    absolute {grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === "Echo1536" || grid_style === "Echo1536Image" ? '' : 'rounded-full'} [--chkfg:invisible] transition-[box-shadow] duration-200 ease-in-out {point_colors[`${x}, ${y}`] ? 'border-0' : 'border-white opacity-10'} {show_outlines ? '' : 'border-0'}"
+                    absolute {grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === "Echo1536" || grid_style === "Echo1536Image" ? '' : 'rounded-full'} [--chkfg:invisible] transition-[box-shadow] duration-200 ease-in-out {point_colors[`${x}, ${y}`] ? 'border-0' : 'opacity-10'} {!show_outlines ? 'border-0' : point_colors[`${x}, ${y}`] ? 'border-1' : 'border border-white opacity-10'}"
                     style="
                     left: {
                         (grid_style === 'Echo384' || grid_style === 'Echo384Image')
@@ -1174,9 +1896,10 @@ def run(protocol):
                     };
                     transform: translate(-50%, -50%);
                     background-color: {well_colors[point_colors[`${x}, ${y}`]] || old_well_colors[point_colors[`${x}, ${y}`]] || 'transparent'};
-                    border: {well_colors[point_colors[`${x}, ${y}`]] ? `1px solid ${well_colors[point_colors[`${x}, ${y}`]]}` : '1px solid white'};
+                    border: {!show_outlines ? 'none' : well_colors[point_colors[`${x}, ${y}`]] ? `1px solid ${well_colors[point_colors[`${x}, ${y}`]]}` : '1px solid white'};
                     "
                 draggable="false"
+                onmouseover={() => { current_point = {x, y}; hover_point = point_colors[`${x}, ${y}`] }}
             />
         {/each}
         <!-- TIME ESTIMATION -->
@@ -1206,7 +1929,7 @@ def run(protocol):
 <div class="flex flex-col px-5 gap-1 w-full max-w-[96vw] sm:max-w-[480px] mx-auto mb-[150px]">
 
     <div class="flex flex-row justify-between">
-        {#if Object.keys(point_colors).length > 0}
+       {#if (animate && (isPrecomputing || animationFrames.length > 0)) || (!animate && Object.keys(point_colors).length > 0)}
             <!-- ERASE/PUBLISH BUTTON -->
             <div class="flex flex-row gap-2 mt-1 mb-2" in:fade={{ duration: 300 }}>
                 <button class="btn btn-sm rounded gap-1 bg-neutral-700 text-base-content hover:bg-neutral-600 hover:text-base-content" onclick={() => { if (!uploading) {upload_modal.showModal()}}}>
@@ -1214,9 +1937,20 @@ def run(protocol):
                     Publish
                 </button>
             </div>
+            {#if animate}
+                <button class="btn btn-sm rounded gap-1 mt-1 mb-2 bg-neutral-700 text-base-content hover:bg-neutral-600 hover:text-base-content ml-auto" onclick={togglePlayback} in:fade={{ duration: 300 }}>
+                    {#if isPrecomputing}
+                        {rebuildProgress}/{rebuildTotal}
+                    {:else if isPlaying && !isPaused}
+                        <svg class="w-5 h-5" fill="#fff" viewBox="0 0 24 24" id="pause" data-name="Flat Color" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path id="primary" d="M19,4V20a2,2,0,0,1-2,2H15a2,2,0,0,1-2-2V4a2,2,0,0,1,2-2h2A2,2,0,0,1,19,4ZM9,2H7A2,2,0,0,0,5,4V20a2,2,0,0,0,2,2H9a2,2,0,0,0,2-2V4A2,2,0,0,0,9,2Z" style="fill: #fff;"></path></g></svg>
+                    {:else}
+                        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path d="M8.286 3.407A1.5 1.5 0 0 0 6 4.684v14.632a1.5 1.5 0 0 0 2.286 1.277l11.888-7.316a1.5 1.5 0 0 0 0-2.555L8.286 3.407z" fill="#fff"></path></g></svg>
+                    {/if}
+                </button>
+            {/if}
             <button class="btn btn-sm rounded gap-1 mt-1 mb-2 bg-neutral-700 text-base-content hover:bg-neutral-600 hover:text-base-content ml-auto" onclick={resetValues} in:fade={{ duration: 300 }}>
-                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path transform="scale(1.2) translate(-3 -2.5)" fill-rule="evenodd" clip-rule="evenodd" d="M15.0722 3.9967L20.7508 9.83395L17.0544 13.5304L13.0758 17.5H21.0041V19H7.93503L4.00195 15.0669L15.0722 3.9967ZM10.952 17.5L15.4628 12.9994L11.8268 9.3634L6.12327 15.0669L8.55635 17.5H10.952Z" fill="currentColor"></path> </g></svg>
-                    Erase
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path transform="scale(1.2) translate(-3 -2.5)" fill-rule="evenodd" clip-rule="evenodd" d="M15.0722 3.9967L20.7508 9.83395L17.0544 13.5304L13.0758 17.5H21.0041V19H7.93503L4.00195 15.0669L15.0722 3.9967ZM10.952 17.5L15.4628 12.9994L11.8268 9.3634L6.12327 15.0669L8.55635 17.5H10.952Z" fill="currentColor"></path> </g></svg>
+                Erase All
             </button>
         {/if}
     </div>
@@ -1229,25 +1963,82 @@ def run(protocol):
     {/if}
 
     {#if grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image'}
-        <div class="flex flex-row w-full mr-auto items-center">
-            <input type="file" accept="image/*" class="file-input file-input-xs w-2/3" onclick={(e) => {e.target.value = null;}} onchange={(e) => {handleFileChange(e, pixelation);}} />
+        <div class="flex flex-row w-full items-center mx-auto">
+            <input type="file" id="gif-upload" class="hidden" onchange={handleFileChange} />
+            <div class="join w-full">
+                <label for="gif-upload" class="btn btn-sm btn-primary join-item">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path fill-rule="evenodd" clip-rule="evenodd" d="M23 4C23 2.34315 21.6569 1 20 1H4C2.34315 1 1 2.34315 1 4V20C1 21.6569 2.34315 23 4 23H20C21.6569 23 23 21.6569 23 20V4ZM21 4C21 3.44772 20.5523 3 20 3H4C3.44772 3 3 3.44772 3 4V20C3 20.5523 3.44772 21 4 21H20C20.5523 21 21 20.5523 21 20V4Z" fill="#0F0F0F"></path> <path d="M4.80665 17.5211L9.1221 9.60947C9.50112 8.91461 10.4989 8.91461 10.8779 9.60947L14.0465 15.4186L15.1318 13.5194C15.5157 12.8476 16.4843 12.8476 16.8682 13.5194L19.1451 17.5039C19.526 18.1705 19.0446 19 18.2768 19H5.68454C4.92548 19 4.44317 18.1875 4.80665 17.5211Z" fill="#0F0F0F"></path> <path d="M18 8C18 9.10457 17.1046 10 16 10C14.8954 10 14 9.10457 14 8C14 6.89543 14.8954 6 16 6C17.1046 6 18 6.89543 18 8Z" fill="#0F0F0F"></path> </g></svg>
+                    Select
+                </label>   
+                <input
+                    class="input input-sm join-item w-full bg-neutral-700 text-white"
+                    placeholder="https://example.com/image.gif"
+                    bind:value={gifUrlInput}
+                    class:input-success={gifUrlStatus === "valid"}
+                    class:input-error={gifUrlStatus === "invalid"}
+                />
+                <button
+                    class="btn btn-sm btn-primary join-item"
+                    onclick={submitGifUrl}
+                >
+                Submit
+            </button>
+        </div>
+        </div>
+        {#if animate}
+            <div class="flex items-center w-full gap-2 mt-2">
+                <input
+                type="range"
+                min="0"
+                max={Math.max(0, (animationFrames?.length ?? 0) - 1)}
+                step="1"
+                bind:value={scrubIndex}
+                class="range range-xs gif-scrubber flex-1"
+                disabled={!animationFrames?.length}
+                oninput={() => {
+                    if (!animationFrames?.length) return;
+                    isScrubbing = true;
+                    pausePlayback();
+                    setFrame(+scrubIndex);
+                }}
+                onchange={() => {
+                    if (!animationFrames?.length) return;
+                    isScrubbing = false;
+                    setFrame(+scrubIndex);
+                }}
+                />
+
+                <div class="text-xs opacity-70 whitespace-nowrap">
+                {animationFrames?.length ? (scrubIndex + 1) : 0} / {animationFrames?.length ?? 0}
+                </div>
+            </div>
+        {/if}
+
+        <div class="flex flex-row w-full mr-auto items-center">        
             {#if !pixelatedSrc}
-                <div class="w-1/3">
-                    <span class="opacity-70 text-[9px] leading-tight leading-[1.5] block break-words">Simple images & white backgrounds work best!</span>
+                <div class="w-full text-center">
+                    <span class="opacity-70 text-[9px] leading-tight leading-[1.5] block break-words pt-1">
+                        white background works best <br />
+                        contrast & saturation = colorful results
+                    </span>
                 </div>
             {/if}
         </div>
         {#if !pixelatedSrc} <div class="pb-3"></div> {/if}
     {/if}
 
-    {#if pixelatedSrc}
-        <div class="flex flex-row w-full gap-4 text-xs bg-base-200 rounded px-4 py-4">
+    {#if img || animationImages?.length}
+        <div
+  class="flex flex-row w-full gap-4 text-xs bg-base-200 rounded px-4 py-4 transition-opacity"
+  class:opacity-50={animate && (isPrecomputing || isLoadingGif || gifHydrating)}
+  class:pointer-events-none={animate && (isPrecomputing || isLoadingGif || gifHydrating)}
+>
             <div class="w-[25%] mx-auto my-auto flex flex-col gap-1">
-                <img src={pixelatedSrc} class="w-full mx-auto outline outline-neutral outline-2 rounded" alt="Pixelated" />
-                <button class="btn btn-xs btn-primary gap-1 flex items-center text-[9px] sm:text-xs" onclick={() => {color_mapping = getColorMapping(well_colors, true); processImage(canvasSize, pixelation);}}>
-                    <svg class="w-3 h-3 sm:w-4 sm:h-4" version="1.1" id="_x32_" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" xml:space="preserve" fill="currentColor"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <style type="text/css"> .st0{fill:currentColor;} </style> <g> <path class="st0" d="M449.532,105.602L288.463,8.989C278.474,2.994,267.235,0,256.011,0c-11.239,0-22.483,2.994-32.467,8.989 L62.475,105.602c-19.012,11.406-30.647,31.95-30.647,54.117v192.562c0,22.168,11.635,42.711,30.647,54.117l161.069,96.613 c9.984,5.988,21.228,8.989,32.467,8.989c11.225,0,22.463-3.001,32.452-8.989l161.069-96.613 c19.012-11.406,30.64-31.949,30.64-54.117V159.719C480.172,137.552,468.544,117.008,449.532,105.602z M250.599,492.733 c-6.029-0.745-11.93-2.719-17.32-5.948L72.21,390.172c-13.306-7.989-21.456-22.369-21.456-37.891V159.719 c0-6.022,1.236-11.862,3.518-17.233l196.328,117.76V492.733z M59.669,133.114c3.364-4.464,7.593-8.318,12.541-11.285 l161.069-96.613c6.995-4.196,14.85-6.291,22.732-6.291c7.868,0,15.723,2.095,22.718,6.291l161.069,96.613 c4.941,2.967,9.184,6.821,12.54,11.285L256.011,250.881L59.669,133.114z M461.254,352.281c0,15.522-8.15,29.902-21.456,37.891 l-161.069,96.613c-5.398,3.229-11.292,5.203-17.321,5.948V260.246l196.328-117.76c2.283,5.37,3.518,11.211,3.518,17.233V352.281z"></path> <path class="st0" d="M160.209,119.875c-9.828-7.278-26.021-7.465-36.165-0.41c-10.144,7.056-10.399,18.67-0.57,25.947 c9.828,7.277,26.022,7.459,36.159,0.41C169.783,138.766,170.038,127.152,160.209,119.875z"></path> <path class="st0" d="M279.159,48.686c-9.829-7.277-26.022-7.458-36.172-0.403c-10.137,7.049-10.393,18.664-0.564,25.941 c9.829,7.284,26.022,7.458,36.159,0.416C288.732,67.578,288.987,55.963,279.159,48.686z"></path> <path class="st0" d="M220.59,82.024c-9.834-7.27-26.028-7.458-36.172-0.403c-10.15,7.049-10.406,18.664-0.571,25.941 c9.829,7.284,26.022,7.458,36.166,0.416C230.151,100.916,230.412,89.302,220.59,82.024z"></path> <path class="st0" d="M267.437,184.754c-9.828-7.277-26.015-7.459-36.159-0.41c-10.15,7.056-10.405,18.671-0.577,25.947 c9.828,7.284,26.021,7.459,36.172,0.41C277.01,203.645,277.265,192.031,267.437,184.754z"></path> <path class="st0" d="M386.385,113.564c-9.828-7.271-26.021-7.458-36.158-0.403c-10.151,7.049-10.406,18.664-0.577,25.941 c9.828,7.284,26.02,7.458,36.172,0.416C395.959,132.456,396.214,120.842,386.385,113.564z"></path> <path class="st0" d="M327.817,146.903c-9.829-7.27-26.022-7.458-36.172-0.403c-10.137,7.049-10.392,18.664-0.564,25.941 c9.828,7.284,26.021,7.465,36.158,0.416C337.391,165.795,337.646,154.188,327.817,146.903z"></path> <path class="st0" d="M89.289,248.303c11.158,6.083,20.194,1.961,20.194-9.19c0-11.158-9.036-25.128-20.194-31.21 c-11.157-6.083-20.207-1.967-20.207,9.19C69.081,228.244,78.131,242.221,89.289,248.303z"></path> <path class="st0" d="M202.061,309.771c11.158,6.082,20.208,1.967,20.208-9.184c0-11.157-9.05-25.135-20.208-31.217 c-11.15-6.076-20.194-1.961-20.194,9.198C181.867,289.719,190.911,303.689,202.061,309.771z"></path> <path class="st0" d="M89.289,361.082c11.158,6.076,20.194,1.967,20.194-9.19c0-11.158-9.036-25.129-20.194-31.21 c-11.157-6.083-20.207-1.968-20.207,9.19C69.081,341.029,78.131,355,89.289,361.082z"></path> <path class="st0" d="M202.061,422.55c11.158,6.082,20.208,1.967,20.208-9.191c0-11.151-9.05-25.128-20.208-31.21 c-11.15-6.076-20.194-1.961-20.194,9.19C181.867,402.497,190.911,416.468,202.061,422.55z"></path> <path class="st0" d="M145.675,335.424c11.158,6.082,20.201,1.967,20.201-9.191c0-11.151-9.044-25.128-20.201-31.204 c-11.158-6.082-20.201-1.967-20.201,9.185C125.474,315.37,134.517,329.341,145.675,335.424z"></path> <path class="st0" d="M418.341,207.902c-11.158,6.082-20.208,20.053-20.208,31.21c0,11.151,9.05,15.273,20.208,9.19 c11.144-6.082,20.194-20.059,20.194-31.21C438.535,205.935,429.486,201.819,418.341,207.902z"></path> <path class="st0" d="M305.555,382.149c-11.158,6.082-20.194,20.059-20.194,31.21c0,11.158,9.036,15.273,20.194,9.191 c11.158-6.082,20.194-20.053,20.194-31.211C325.749,380.188,316.714,376.074,305.555,382.149z"></path> <path class="st0" d="M361.948,295.028c-11.158,6.076-20.207,20.053-20.207,31.204c0,11.158,9.05,15.273,20.207,9.191 c11.158-6.083,20.194-20.053,20.194-31.21C382.142,293.062,373.106,288.947,361.948,295.028z"></path> </g> </g></svg>
-                    Random
-                </button>
+                {#if img || animationImages?.length}
+                    <canvas bind:this={previewCanvas} class="w-full mx-auto outline outline-neutral outline-2 rounded"></canvas>
+                {/if}
+                <button class="btn btn-xs btn-primary ..." onclick={() => {if (animate) { randomizeGifColors(); } else { color_mapping = getColorMapping(well_colors, true); processImage(canvasSize, pixelation);} }}>Random</button>
+
                 <button class="btn btn-xs btn-primary gap-1 flex items-center text-[9px] sm:text-xs" onclick={() => {color_mapping = getColorMapping(well_colors, false); brightness = 90; contrast = 120; saturation = 120; zoom = 1; pixelation = 4; rotation = 0; processImage(canvasSize, pixelation);}}>
                     <svg class="w-3 h-3 sm:w-4 sm:h-4"  viewBox="-0.5 0 25 25" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path d="M18.8887 10.25C18.5395 10.2462 18.1974 10.151 17.8964 9.97387C17.5954 9.79677 17.3461 9.54393 17.1731 9.24053C17.0002 8.93714 16.9097 8.59372 16.9107 8.2445C16.9117 7.89528 17.0041 7.55241 17.1787 7.24999L17.2987 7.03997C17.4297 6.81781 17.5133 6.57097 17.5443 6.31493C17.5753 6.0589 17.553 5.79924 17.4788 5.55224C17.4046 5.30524 17.2801 5.07626 17.1132 4.87969C16.9462 4.68312 16.7404 4.52317 16.5087 4.40996V4.40996C16.0227 4.17652 15.467 4.13332 14.9507 4.28875C14.4345 4.44418 13.995 4.78704 13.7187 5.24999V5.24999C13.5404 5.54389 13.2894 5.78686 12.9899 5.9555C12.6903 6.12413 12.3524 6.21276 12.0087 6.21276C11.665 6.21276 11.327 6.12413 11.0275 5.9555C10.728 5.78686 10.4769 5.54389 10.2987 5.24999C10.0224 4.78704 9.58291 4.44418 9.06665 4.28875C8.5504 4.13332 7.99469 4.17652 7.5087 4.40996V4.40996C7.27697 4.52317 7.07116 4.68312 6.90421 4.87969C6.73726 5.07626 6.61277 5.30524 6.53858 5.55224C6.46438 5.79924 6.44209 6.0589 6.47309 6.31493C6.50408 6.57097 6.5877 6.81781 6.71869 7.03997L6.83869 7.24999C7.01332 7.55241 7.10571 7.89528 7.10669 8.2445C7.10767 8.59372 7.01721 8.93714 6.84427 9.24053C6.67134 9.54393 6.42196 9.79677 6.12097 9.97387C5.81999 10.151 5.4779 10.2462 5.12869 10.25C4.64217 10.238 4.16698 10.3979 3.78659 10.7015C3.40621 11.005 3.14493 11.4329 3.04868 11.91C2.99868 12.1996 3.01314 12.4967 3.09101 12.7801C3.16887 13.0635 3.30826 13.3263 3.49921 13.5497C3.69016 13.7731 3.92799 13.9516 4.1958 14.0727C4.46362 14.1937 4.75481 14.2543 5.04868 14.25H5.1687C5.5179 14.2538 5.86 14.349 6.16098 14.5261C6.46196 14.7032 6.71131 14.9561 6.88425 15.2595C7.05718 15.5628 7.14768 15.9063 7.1467 16.2555C7.14572 16.6047 7.05333 16.9476 6.87869 17.25L6.82868 17.33C6.56685 17.7935 6.4956 18.3407 6.62998 18.8558C6.76435 19.3709 7.0938 19.8135 7.54868 20.09V20.09C8.00218 20.351 8.53992 20.4239 9.04654 20.293C9.55316 20.1622 9.98834 19.838 10.2587 19.39L10.2787 19.25C10.457 18.9561 10.708 18.7131 11.0075 18.5445C11.307 18.3759 11.6449 18.2872 11.9887 18.2872C12.3324 18.2872 12.6704 18.3759 12.9699 18.5445C13.2694 18.7131 13.5204 18.9561 13.6987 19.25L13.7687 19.39C14.0391 19.8407 14.4761 20.1668 14.9851 20.2978C15.4942 20.4288 16.0343 20.3542 16.4887 20.09C16.9367 19.8197 17.2609 19.3845 17.3917 18.8779C17.5226 18.3712 17.4497 17.8335 17.1887 17.38L17.1287 17.27C16.9541 16.9676 16.8617 16.6247 16.8607 16.2754C16.8597 15.9262 16.9502 15.5829 17.1231 15.2795C17.296 14.9761 17.5454 14.7232 17.8464 14.5461C18.1474 14.369 18.4895 14.2738 18.8387 14.27H18.9587C19.2525 14.2743 19.5438 14.2138 19.8116 14.0927C20.0794 13.9717 20.3172 13.793 20.5082 13.5696C20.6991 13.3462 20.8385 13.0835 20.9164 12.8001C20.9942 12.5167 21.0087 12.2196 20.9587 11.93C20.8669 11.451 20.6088 11.0198 20.2301 10.7124C19.8514 10.405 19.3763 10.2413 18.8887 10.25V10.25Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path> <path d="M12 14.79C13.3807 14.79 14.5 13.6707 14.5 12.29C14.5 10.9093 13.3807 9.78998 12 9.78998C10.6193 9.78998 9.5 10.9093 9.5 12.29C9.5 13.6707 10.6193 14.79 12 14.79Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path> </g></svg>
                     Default
@@ -1260,14 +2051,14 @@ def run(protocol):
                         <div class="flex flex-row justify-between">
                             <span class="font-semibold">Zoom</span><span class="opacity-70">{zoom}</span>
                         </div>
-                        <input type="range" min="0" max="15" class="range range-xs" step="0.05" bind:value={zoom} />
+                        <input type="range" min="0" max="4" class="range range-xs" step="0.05" bind:value={zoom} onpointerup={() => markFramesDirty()} />
                     </div>
                     <!-- BRIGHTNESS -->
                     <div class="flex flex-col gap-2 w-1/2">
                         <div class="flex flex-row justify-between">
                             <span class="font-semibold">Brightness</span><span class="opacity-70">{brightness}%</span>
                         </div>
-                        <input type="range" min="10" max="300" class="range range-xs" step="10" bind:value={brightness} />
+                        <input type="range" min="10" max="300" class="range range-xs" step="10" bind:value={brightness} oninput={() => markFramesDirty()} />
                     </div>
                 </div>
 
@@ -1278,7 +2069,7 @@ def run(protocol):
                         <div class="flex flex-row justify-between">
                             <span class="font-semibold">Rotation</span><span class="opacity-70">{rotation}°</span>
                         </div>
-                        <input type="range" min="0" max="360" class="range range-xs" step="5" bind:value={rotation} />
+                        <input type="range" min="0" max="360" class="range range-xs" step="5" bind:value={rotation} oninput={() => markFramesDirty()} />
                     </div>
 
                     <!-- CONTRAST -->
@@ -1286,7 +2077,7 @@ def run(protocol):
                         <div class="flex flex-row justify-between">
                             <span class="font-semibold">Contrast</span><span class="opacity-70">{contrast}%</span>
                         </div>
-                        <input type="range" min="10" max="300" class="range range-xs" step="10" bind:value={contrast} />
+                        <input type="range" min="10" max="300" class="range range-xs" step="10" bind:value={contrast} oninput={() => markFramesDirty()} />
                     </div>
                 </div>
 
@@ -1312,11 +2103,12 @@ def run(protocol):
                         </span>
                         <input
                             type="range"
-                            min={4}
+                            min={canvasSize / 100}
                             max={canvasSize}
                             step={10}
                             bind:value={pixelation}
                             class="w-full range range-xs"
+                            oninput={() => markFramesDirty()}
                         />
                     </div>
 
@@ -1325,7 +2117,7 @@ def run(protocol):
                         <div class="flex flex-row justify-between">
                             <span class="font-semibold">Saturation</span><span class="opacity-70">{saturation}%</span>
                         </div>
-                        <input type="range" min="10" max="300" class="range range-xs" step="10" bind:value={saturation} />
+                        <input type="range" min="10" max="300" class="range range-xs" step="10" bind:value={saturation} oninput={() => markFramesDirty()} />
                     </div>
                 </div>
             </div>
@@ -1358,7 +2150,7 @@ def run(protocol):
                 <div class="flex flex-col gap-2 flex-wrap justify-center {Object.keys(point_colors).length > 0 ? 'tooltip tooltip-top' : ''}" data-tip="Erase to edit" in:fade={{ duration: 300 }}>
                     <div class="w-full flex justify-between items-center">
                         <div class="join mx-auto">
-                            <button class="btn btn-xs sm:btn-sm text-xs rounded-r-none hover:bg-neutral-700 {grid_style === 'Echo1536' ? 'bg-neutral-600' : 'bg-neutral-800'} {Object.keys(point_colors).length > 0 ? 'cursor-not-allowed' : ''}" type="button" onclick={() => {grid_style = "Echo1536"; point_size = 0.75;}} aria-label="Echo1536" disabled={Object.keys(point_colors).length > 0}>
+                            <button class="btn btn-xs sm:btn-sm text-xs rounded-r-none hover:bg-neutral-700 {grid_style === 'Echo1536' ? 'bg-neutral-600' : 'bg-neutral-800'} {Object.keys(point_colors).length > 0 ? 'cursor-not-allowed' : ''}" type="button" onclick={() => {grid_style = "Echo1536"; point_size = 0.75; img = null; animationImages = 0;}} aria-label="Echo1536" disabled={Object.keys(point_colors).length > 0}>
                                 <svg class="w-4 h-4 sm:w-5 sm:h-5 opacity-75"  height="200px" width="200px" version="1.1" id="_x32_" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" xml:space="preserve" fill="currentColor"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <style type="text/css"> .st0{fill:currentColor;} </style> <g> <path class="st0" d="M229.806,376.797l-58.165-40.976l-1.128-0.112c-26.889-2.741-53.247,9.248-68.79,31.31 c-14.743,20.928-20.101,43.743-25.282,65.812c-3.528,15.064-7.181,30.64-13.805,45.613c-5.483,12.382-9.156,16.802-9.169,16.822 l-3.784,4.283l5.148,2.479c23.958,11.542,56.31,13.143,88.766,4.394c34.09-9.182,62.639-28.109,80.372-53.28 c15.543-22.062,17.963-50.919,6.322-75.316L229.806,376.797z M208.721,442.4c-4.171,5.915-9.148,11.483-14.795,16.605 c-0.892,0.597-1.81,1.259-2.774,2.007c-10.657,8.382-24.548,4.775-16.101-12.224c8.447-17.012-6.44-22.456-18.534-11.286 c-15.175,14.022-22.298,2.826-19.491-4.913c2.8-7.738,12.881-18.291,4.446-25.111c-5.076-4.112-11.628,1.895-22.082,10.041 c-5.988,4.662-19.773,3.148-14.186-17.55c3.023-7.693,6.768-15.11,11.766-22.206c10.847-15.412,29.244-24.462,48.105-23.741 l49.81,35.087C221.923,406.631,219.575,426.988,208.721,442.4z"></path> <path class="st0" d="M191.519,277.032c-6.238,7.943-8.939,18.095-7.484,28.09c1.47,9.994,6.972,18.946,15.229,24.764l26.83,18.9 c8.257,5.817,18.547,7.988,28.45,6.007c9.903-1.993,18.554-7.962,23.938-16.5l24.357-38.734l-83.047-58.506L191.519,277.032z"></path> <path class="st0" d="M447.22,6.635l-0.204-0.138c-15.484-10.907-36.792-7.778-48.492,7.109L229.839,228.265l81.658,57.523 L456.847,54.687C466.934,38.658,462.697,17.541,447.22,6.635z"></path> </g> </g></svg>
                                 Draw
                             </button>
@@ -1687,5 +2479,16 @@ def run(protocol):
     /* Firefox */
     input.no-spinner[type=number] {
         -moz-appearance: textfield;
+    }
+
+    .gif-scrubber { --range-shdw: 0 0 #0000; }
+
+    .gif-scrubber::-webkit-slider-thumb {
+        background-color: #404040; /* Tailwind gray-400 */
+    }
+
+    /* Firefox */
+    .gif-scrubber::-moz-range-thumb {
+        background-color: #404040;
     }
 </style>

@@ -35,9 +35,6 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-    bind:this={container}
-    onmousemove={handleMouseMove}
-    onmouseleave={resetTilt}
     class="w-[115px] sm:w-[150px] tilt-effect rounded-md overflow-hidden bg-base-200 border border-neutral/70 aspect-[3/2]"
     onclick={openBlackViewer}
     style="cursor:pointer;"
