@@ -22,9 +22,9 @@ export const POST = async ({ request }) => {
         if ( JSON.stringify(Object.entries(point_colors).sort()) === JSON.stringify(Object.entries(recentEntry.items[0].point_colors).sort())) {
             return new Response(JSON.stringify({ success: true, duplicate: true }));
         }
-
+        let newEntry;
         if (ginkgo_mode) {
-            const newEntry = await pb.collection("sbs_designs").create({
+            newEntry = await pb.collection("sbs_designs").create({
                 title,
                 author,
                 grid_style,
@@ -46,7 +46,7 @@ export const POST = async ({ request }) => {
                 pixelation
             });
         } else {
-            const newEntry = await pb.collection("designs").create({
+            newEntry = await pb.collection("designs").create({
                 title,
                 author,
                 grid_style,
@@ -64,7 +64,7 @@ export const POST = async ({ request }) => {
                 saturation
             });
         }
-        return new Response(JSON.stringify({success: true, duplicate: false}));
+        return new Response(JSON.stringify({success: true, id: newEntry.id, duplicate: false}));
     } catch (e) {
         console.log(e)
         return new Response(JSON.stringify({success: false, duplicate: false}))

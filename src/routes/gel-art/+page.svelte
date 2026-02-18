@@ -400,7 +400,7 @@
 
 <article class="prose w-full mx-auto mt-5">
     <h2 class="flex justify-center items-center gap-2 text-base-content">
-        DNA Gel Interface
+        DNA Gel Art Interface
     </h2>
 </article>
 
@@ -500,7 +500,7 @@
                     <div class="flex flex-col items-center w-full z-20 {stack_mode ? 'pt-[-6px]' : 'pt-[-3px]'}">
                        <div class="flex flex-row w-full max-w-full justify-between">
                             <button
-                                class="btn btn-xs flex-1 px-0 py-0 bg-gray-100 hover:bg-neutral hover:text-white"
+                                class="btn btn-xs flex-1 px-0 py-0 bg-gray-600 hover:bg-neutral hover:text-white rounded"
                                 onclick={() => {
                                     const { fragments, newIndex, enzymesUsed } = iterateDigest(selected_column, lambda_dna, 'up');
                                     if (top_layer_selected) {
@@ -531,7 +531,7 @@
                                 &uarr;
                             </button>
                             <button
-                                class="btn btn-xs flex-1 px-0 py-0 bg-gray-100 hover:bg-neutral hover:text-white"
+                                class="btn btn-xs flex-1 px-0 py-0 bg-gray-600 hover:bg-neutral hover:text-white rounded"
                                 onclick={() => {
                                     const { fragments, newIndex, enzymesUsed } = iterateDigest(selected_column, lambda_dna, 'down');
                                     if (top_layer_selected) {
@@ -565,7 +565,7 @@
                         <div class="flex flex-col w-full max-w-full justify-between">
                             <!-- switch layer -->
                             {#if stack_mode}
-                                <button class="btn btn-xs flex-1 px-0 py-0 bg-gray-100 w-full hover:bg-neutral hover:text-white gap-1.5"
+                                <button class="btn btn-xs flex-1 px-0 py-0 bg-gray-600 w-full hover:bg-neutral hover:text-white gap-1. rounded5"
                                     onclick={() => {top_layer_selected = !top_layer_selected;}}>
                                     <svg class="w-4 h-4" height="200px" width="200px"  viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="10"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path fill-rule="evenodd" clip-rule="evenodd" d="M7.75432 1.81954C7.59742 1.72682 7.4025 1.72682 7.24559 1.81954L1.74559 5.06954C1.59336 5.15949 1.49996 5.32317 1.49996 5.5C1.49996 5.67683 1.59336 5.84051 1.74559 5.93046L7.24559 9.18046C7.4025 9.27318 7.59742 9.27318 7.75432 9.18046L13.2543 5.93046C13.4066 5.84051 13.5 5.67683 13.5 5.5C13.5 5.32317 13.4066 5.15949 13.2543 5.06954L7.75432 1.81954ZM7.49996 8.16923L2.9828 5.5L7.49996 2.83077L12.0171 5.5L7.49996 8.16923ZM2.25432 8.31954C2.01658 8.17906 1.70998 8.2579 1.56949 8.49564C1.42901 8.73337 1.50785 9.03998 1.74559 9.18046L7.24559 12.4305C7.4025 12.5232 7.59742 12.5232 7.75432 12.4305L13.2543 9.18046C13.4921 9.03998 13.5709 8.73337 13.4304 8.49564C13.2899 8.2579 12.9833 8.17906 12.7456 8.31954L7.49996 11.4192L2.25432 8.31954Z" fill="currentColor"></path> </g></svg>
                                     {#if top_layer_selected}
@@ -576,7 +576,7 @@
                                 </button>
                             {/if}
                             <!-- trash/delete -->
-                            <button class="btn btn-xs flex-1 px-0 py-0 bg-gray-100 w-full hover:bg-neutral hover:text-white"
+                            <button class="btn btn-xs flex-1 px-0 py-0 bg-gray-600 w-full hover:bg-neutral hover:text-white rounded"
                                 onclick={() => {
                                     bands[selected_column] = {
                                         ...bands[selected_column],
@@ -627,8 +627,8 @@
                 <svg viewBox="0 0 16 16" class="w-3.5 h-3.5 rounded-sm" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path fill-rule="evenodd" clip-rule="evenodd" d="M2 0V16H4V14H12V16H14V0H12V2H4V0H2ZM4 4V7H12V4H4ZM12 12H4V9H12V12Z" fill="currentColor"></path> </g></svg>
                 Ladder
             </button>
-            <button class="join-item btn btn-xs sm:btn-xs text-xs rounded-r-none bg-neutral-800 hover:bg-neutral-700" onclick={randomizeBands}>
-                <svg class="w-3.5 h-3.5" height="200px" width="200px" version="1.1" id="_x32_" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" xml:space="preserve" fill="currentColor"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <style type="text/css"> .st0{fill:currentColor;} </style> <g> <path class="st0" d="M454.609,111.204L280.557,6.804C272.992,2.268,264.503,0,255.999,0c-8.507,0-16.995,2.268-24.557,6.796 L57.391,111.204c-5.346,3.202-9.917,7.369-13.556,12.192l207.904,124.708c2.622,1.575,5.9,1.575,8.519,0L468.16,123.396 C464.524,118.573,459.951,114.406,454.609,111.204z M157.711,130.313c-10.96,7.611-28.456,7.422-39.081-0.452 c-10.618-7.859-10.342-20.413,0.618-28.031c10.964-7.626,28.46-7.422,39.081,0.438C168.95,110.134,168.674,122.68,157.711,130.313z M274.159,131.021c-10.594,7.362-27.496,7.166-37.762-0.429c-10.263-7.596-9.992-19.727,0.599-27.089 c10.591-7.362,27.492-7.174,37.759,0.43C285.018,111.528,284.75,123.659,274.159,131.021z M391.908,132.702 c-10.964,7.618-28.461,7.414-39.085-0.444c-10.617-7.86-10.343-20.42,0.621-28.046c10.957-7.61,28.456-7.422,39.078,0.452 C403.147,112.523,402.868,125.076,391.908,132.702z"></path> <path class="st0" d="M246.136,258.366L38.007,133.523c-2.46,5.802-3.798,12.117-3.798,18.62v208.084 c0,16.773,8.797,32.311,23.182,40.946l174.051,104.392c5.829,3.497,12.204,5.629,18.714,6.435V265.464 C250.156,262.556,248.63,259.858,246.136,258.366z M75.845,369.736c-12.056-6.57-21.829-21.671-21.829-33.727 c0-12.056,9.773-16.502,21.829-9.932c12.056,6.571,21.826,21.671,21.826,33.728C97.671,371.861,87.901,376.307,75.845,369.736z M75.845,247.87c-12.056-6.579-21.829-21.679-21.829-33.728c0-12.056,9.773-16.502,21.829-9.931 c12.056,6.57,21.826,21.671,21.826,33.728C97.671,249.987,87.901,254.44,75.845,247.87z M197.715,436.158 c-12.052-6.57-21.826-21.671-21.826-33.728c0-12.048,9.773-16.494,21.826-9.924c12.056,6.571,21.826,21.671,21.826,33.72 C219.541,438.284,209.771,442.729,197.715,436.158z M197.715,314.292c-12.052-6.571-21.826-21.671-21.826-33.728 s9.773-16.502,21.826-9.931c12.056,6.57,21.826,21.671,21.826,33.727C219.541,316.417,209.771,320.862,197.715,314.292z"></path> <path class="st0" d="M473.993,133.523l-208.13,124.843c-2.494,1.492-4.02,4.19-4.02,7.099V512 c6.511-0.806,12.886-2.938,18.714-6.435l174.052-104.392c14.38-8.635,23.182-24.173,23.182-40.946V152.142 C477.791,145.64,476.453,139.325,473.993,133.523z M370.478,355.11c-19.287,10.512-34.922,3.398-34.922-15.892 c0-19.282,15.635-43.447,34.922-53.951c19.293-10.519,34.925-3.406,34.925,15.884C405.403,320.434,389.771,344.598,370.478,355.11z "></path> </g> </g></svg>
+            <button class="join-item text-white btn btn-xs sm:btn-xs text-xs rounded-r-none bg-neutral-800 hover:bg-neutral-700" onclick={randomizeBands}>
+                <svg class="w-3.5 h-3.5" height="200px" width="200px" version="1.1" id="_x32_" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" xml:space="preserve" fill="#fff"><g id="SVGRepo_bgCarrier2" stroke-width="0"></g><g id="SVGRepo_tracerCarrier2" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <style type="text/css"> .st0{fill:#fff;} </style> <g> <path class="st0" d="M454.609,111.204L280.557,6.804C272.992,2.268,264.503,0,255.999,0c-8.507,0-16.995,2.268-24.557,6.796 L57.391,111.204c-5.346,3.202-9.917,7.369-13.556,12.192l207.904,124.708c2.622,1.575,5.9,1.575,8.519,0L468.16,123.396 C464.524,118.573,459.951,114.406,454.609,111.204z M157.711,130.313c-10.96,7.611-28.456,7.422-39.081-0.452 c-10.618-7.859-10.342-20.413,0.618-28.031c10.964-7.626,28.46-7.422,39.081,0.438C168.95,110.134,168.674,122.68,157.711,130.313z M274.159,131.021c-10.594,7.362-27.496,7.166-37.762-0.429c-10.263-7.596-9.992-19.727,0.599-27.089 c10.591-7.362,27.492-7.174,37.759,0.43C285.018,111.528,284.75,123.659,274.159,131.021z M391.908,132.702 c-10.964,7.618-28.461,7.414-39.085-0.444c-10.617-7.86-10.343-20.42,0.621-28.046c10.957-7.61,28.456-7.422,39.078,0.452 C403.147,112.523,402.868,125.076,391.908,132.702z"></path> <path class="st0" d="M246.136,258.366L38.007,133.523c-2.46,5.802-3.798,12.117-3.798,18.62v208.084 c0,16.773,8.797,32.311,23.182,40.946l174.051,104.392c5.829,3.497,12.204,5.629,18.714,6.435V265.464 C250.156,262.556,248.63,259.858,246.136,258.366z M75.845,369.736c-12.056-6.57-21.829-21.671-21.829-33.727 c0-12.056,9.773-16.502,21.829-9.932c12.056,6.571,21.826,21.671,21.826,33.728C97.671,371.861,87.901,376.307,75.845,369.736z M75.845,247.87c-12.056-6.579-21.829-21.679-21.829-33.728c0-12.056,9.773-16.502,21.829-9.931 c12.056,6.57,21.826,21.671,21.826,33.728C97.671,249.987,87.901,254.44,75.845,247.87z M197.715,436.158 c-12.052-6.57-21.826-21.671-21.826-33.728c0-12.048,9.773-16.494,21.826-9.924c12.056,6.571,21.826,21.671,21.826,33.72 C219.541,438.284,209.771,442.729,197.715,436.158z M197.715,314.292c-12.052-6.571-21.826-21.671-21.826-33.728 s9.773-16.502,21.826-9.931c12.056,6.57,21.826,21.671,21.826,33.727C219.541,316.417,209.771,320.862,197.715,314.292z"></path> <path class="st0" d="M473.993,133.523l-208.13,124.843c-2.494,1.492-4.02,4.19-4.02,7.099V512 c6.511-0.806,12.886-2.938,18.714-6.435l174.052-104.392c14.38-8.635,23.182-24.173,23.182-40.946V152.142 C477.791,145.64,476.453,139.325,473.993,133.523z M370.478,355.11c-19.287,10.512-34.922,3.398-34.922-15.892 c0-19.282,15.635-43.447,34.922-53.951c19.293-10.519,34.925-3.406,34.925,15.884C405.403,320.434,389.771,344.598,370.478,355.11z "></path> </g> </g></svg>
                 Randomize
             </button>
             <button class="join-item btn btn-xs sm:btn-xs text-xs rounded-r bg-neutral-800 hover:bg-neutral-700 {stack_mode ? 'bg-neutral text-white' : ''} hover:bg-neutral hover:text-white" onclick={() => {stack_mode = !stack_mode;}}>
@@ -1099,33 +1099,92 @@
 <div class="flex flex-col w-full max-w-[100vw] sm:max-w-[750px] mx-auto px-5 pt-3 pb-20">
     <article class="prose w-full mx-auto mt-5">
         <h4 class="text-left text-white mb-1">DNA Gel Electrophoresis</h4>
-        <hr class="pb-5" />
+        <hr class="pb-3" />
     </article>
-    <div class="flex flex-row justify-around">
+
+    <span class="opacity-40 text-xs text-center italic">Goal: 100-150 ng of DNA per lane!</span>
+
+    <!-- HAND CAST -->
+    <div class="text-center font-bold mb-1 pt-2"> Hand-Cast Gel </div>
+    <div class="flex flex-row justify-around bg-gray-800 rounded-sm mx-10 py-1 mb-2">
         <div class="flex-1 text-[10px] text-center">
-            <div class="font-bold">Standard Agarose (Ladder)</div>
-            16.42 μL Water <br />
-            3.33 μL Loading Dye <br />
-            0.25 μL Ladder (0.5 μg/μL Stock) <br />
-        </div>
-        <div class="flex-1 text-[10px] text-center">
-            <div class="font-bold">E-Gel (Ladder)</div>
-            19.75 μL Water <br />
-            0.25 μL Ladder (0.5 μg/μL Stock) <br />
-        </div>
-    </div>
-    <div class="flex flex-row justify-around pt-5">
-        <div class="flex-1 text-[10px] text-center">
-            <div class="font-bold">Standard Agarose (Digest)</div>
+            <div class="font-bold">Digest</div>
             14.7 μL Water <br />
-            3.33 μL Loading Dye <br />
+            3.3 μL Loading Dye <br />
             2 μL Digest <br />
         </div>
         <div class="flex-1 text-[10px] text-center">
-            <div class="font-bold">E-Gel (Digest)</div>
+            <div class="font-bold">Ladder</div>
+            6.6 μL Water <br />
+            3.3 μL Loading Dye <br />
+            10 μL Ladder (15 ng/μL Stock) <br />
+        </div>
+    </div>
+
+    <!-- E-GEL -->
+    <div class="text-center font-bold mb-1"> E-Gel </div>
+    <div class="flex flex-row justify-around bg-gray-900 rounded-sm mx-10 py-1" >
+        <div class="flex-1 text-[10px] text-center">
+            <div class="font-bold">Digest</div>
             18 μL Water <br />
             2 μL Digest <br />
         </div>
+        <div class="flex-1 text-[10px] text-center">
+            <div class="font-bold">Ladder</div>
+            10 μL Water <br />
+            10 μL Ladder (15 ng/μL Stock) <br />
+        </div>
+    </div>
+
+    <!-- Benchling Link -->
+    <article class="prose w-full mx-auto mt-5">
+        <h4 class="text-left text-white mb-1">Documentation</h4>
+        <hr class="pb-3" />
+    </article>
+    <span class="text-xs text-center italic">Take lots of pictures and document both good & bad gels on your website!</span>
+    <div class="flex flex-row mx-auto">
+    <div class="text-sm px-4 mt-2">
+        <div class="max-w-[160px] mx-auto pt-3">
+            <a href="https://benchling.com/editor" target="_blank" rel="noopener noreferrer" data-value="benchling" style="border-radius:2px;" class="py-2 px-3 pr-2 text-blue-800 flex justify-center items-center bg-gray-100 hover:text-blue-700 hover:bg-black hover:text-white transition ease-in duration-100 text-center text-sm font-semibold shadow-md focus:outline-none">
+                <svg class="w-5 h-5" version="1.1" id="Layer_1" xmlns:x="ns_extend;" xmlns:i="ns_ai;" xmlns:graph="ns_graphs;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 30.8 43.6" style="enable-background:new 0 0 30.8 43.6;" xml:space="preserve">
+            <style type="text/css">
+            .st0{fill:currentColor;}
+            </style>
+            <metadata>
+            <sfw xmlns="ns_sfw;">
+            <slices>
+            </slices>
+            <sliceSourceBounds bottomLeftOrigin="true" height="43.6" width="30.8" x="-119.7" y="-181.1">
+            </sliceSourceBounds>
+            </sfw>
+            </metadata>
+            <g>
+            <path class="st0 w-5 h-5" d="M13.1,39.4c-0.6,0.6-1,1.1-1.2,1.9H19c-0.2-0.7-0.6-1.3-1.2-1.9H13.1z M19.7,35.8c-0.6,0.4-1.3,0.7-2,1.1
+                    L17.5,37l0.2,0.1c2.2,1.3,3.2,3.1,3.2,5.4c0,0.6,0.5,1.1,1.1,1.1c0.6,0,1.1-0.5,1.1-1.1c0-2.7-1.1-4.9-3.3-6.6L19.7,35.8L19.7,35.8
+                    z M11.8,28.5c0.2,0.7,0.6,1.3,1.2,1.9h4.6c0.6-0.6,1-1.1,1.2-1.9H11.8z M13.1,24c-0.6,0.6-1,1.1-1.2,1.9H19
+                    c-0.2-0.7-0.6-1.3-1.2-1.9H13.1z M7.8,11.7c0-0.7,0.6-1.3,1.3-1.3c0.7,0,1.3,0.6,1.3,1.3c0,0.7-0.6,1.3-1.3,1.3
+                    C8.3,13,7.8,12.4,7.8,11.7z M20.4,11.7c0-0.7,0.6-1.3,1.3-1.3c0.7,0,1.3,0.6,1.3,1.3c0,0.7-0.6,1.3-1.3,1.3
+                    C21,13,20.4,12.4,20.4,11.7z M2.8,11c-0.1,0.5-0.2,1-0.3,1.2c-0.8,2.2-2,3.3-2,3.3C0.2,15.7,0,16,0,16.3v0.3c0,0,0,0.1,0,0.1
+                    c0.1,0.4,0.5,0.8,0.9,0.8c5.9,0.6,9.2,1.4,11.4,2.1c-3.1,1.8-4.7,4.3-4.7,7.5c0,3.3,1.7,5.9,4.9,7.7c-3.2,1.8-4.9,4.4-4.9,7.7
+                    c0,0.6,0.5,1.1,1.1,1.1c0.6,0,1.1-0.5,1.1-1.1c0-3.9,3.1-5.6,5.5-6.5c0.1,0,0.2-0.1,0.3-0.1c0.8-0.3,1.6-0.6,2.3-1
+                    c3.4-1.8,5.1-4.4,5.1-7.8c0-2.5-1-4.6-2.9-6.3l0,0h0c-0.9,0.2-1.8,0.5-2.5,0.7l-0.2,0.1l0.2,0.1c2.2,1.3,3.2,3.1,3.2,5.4
+                    c0,3.9-3.1,5.6-5.5,6.4C13,32.6,9.9,31,9.9,27.1s3.1-5.6,5.5-6.5l0.2,0c0.5-0.2,1.3-0.6,2.7-0.9c2.2-0.7,5.6-1.5,11.7-2.1
+                    c0.5,0,0.8-0.4,0.9-0.8c0.1-0.4-0.1-0.9-0.5-1.1c0,0-1.1-1.1-2-3.3c-0.1-0.3-0.2-0.7-0.3-1.2C27.2,7.7,25.3,0,15.4,0
+                    C5.6,0,3.6,7.7,2.8,11z">
+            </path>
+            </g>
+            </svg>
+                Benchling
+            </a>
+        </div>
+    </div>
+    <div class="text-sm px-4 mt-2">
+        <div class="max-w-[160px] mx-auto pt-3">
+            <a href="https://www.ncbi.nlm.nih.gov/nuccore/J02459.1" target="_blank" rel="noopener noreferrer" data-value="github" style="border-radius:2px;" class="py-2 px-3 text-black flex justify-center items-center bg-gray-100 hover:text-gray-700 hover:bg-black hover:text-white transition ease-in duration-100 text-center text-sm font-semibold shadow-md focus:outline-none">
+                λ Phage DNA
+            </a>
+        </div>
+    </div>
     </div>
 </div>
 

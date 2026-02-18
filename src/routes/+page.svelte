@@ -16,9 +16,9 @@
     // GRID DATA
     let grid_style = $state('Echo1536'); // 'Standard', 'Honeycomb', 'Radial', 'QRCode', 'Image'
     let radius_mm = $state(39.9);
-    let grid_spacing_mm = $state(3);
+    let grid_spacing_mm = $state(2.2);
     let prev_grid_spacing_mm = $state(3);
-    let point_size = $state(0.75);
+    let point_size = $state(1);
     let points = $state({});
     let point_colors = $state({}); // Typical workflow: edit point_colors then call groupByColors()
     let points_by_color = $state({});
@@ -119,10 +119,9 @@
                 loadRecord(loadRecordId);
             }
             let isHTGAA = $page.url.searchParams.get('htgaa');
-            if (isHTGAA) {
-                console.log('HTGAA MODE')
-                ginkgo_mode = false;
-            }
+            if ($page.url.searchParams.get('htgaa')) {ginkgo_mode = false; grid_style = 'Standard';}
+            if ($page.url.href.includes('opentrons') || $page.url.searchParams.get('opentrons')) {ginkgo_mode = false; grid_style = 'Standard';}
+            
             window.addEventListener('keydown', function(event) {
                 if (Object.keys(point_colors).length > 0 && ['Standard', 'Grid', 'Image', 'Echo384', 'Echo384Image', 'Echo1536', 'Echo1536Image'].includes(grid_style)) {
                     const directions = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right'};
@@ -297,17 +296,28 @@
         });
         let r = await response.json();
         
+        const uploadModal = document.getElementById('upload_modal');
+        uploadModal.close();
+
+        console.log(r)
+
         if (r.success && !r.duplicate) {
             showAlert("alert-success", "Added to gallery!");
+
+            const link = `/?id=${r.id}`;
+
+            const linkModal = document.getElementById('gallery_link_modal');
+            linkModal.querySelector('a').href = link;
+            linkModal.querySelector('.link-text').textContent = 'opentrons-art.rcdonovan.com' + link;
+            linkModal.showModal();
+
         } else if (r.duplicate) {
             showAlert("alert-warning", "Duplicate submission.");
         } else {
             showAlert("alert-error", "Error: try again later.");
         }
+
         uploading = false;
-        // close the popup modal
-        const modal = document.getElementById('upload_modal');
-        modal.close();
     }
     
     function groupByColors() {
@@ -431,7 +441,7 @@ import string
 metadata = {
     'protocolName': '{YOUR NAME} - Opentrons Art - HTGAA',
     'author': 'HTGAA',
-    'source': 'HTGAA 2025',
+    'source': 'HTGAA 2026',
     'apiLevel': '2.20'
 }
 
@@ -551,7 +561,7 @@ import string
 metadata = {
     'protocolName': '{YOUR NAME} - Opentrons Art - HTGAA',
     'author': 'HTGAA',
-    'source': 'HTGAA 2025',
+    'source': 'HTGAA 2026',
     'apiLevel': '2.20'
 }
 
@@ -787,9 +797,9 @@ def run(protocol):
                 const current = grid_spacing_mm;
                 const previous = prev_grid_spacing_mm;
                 if (current !== previous && !loadingURLRecord) {
-                    point_colors = shiftPoints("all", current, previous, radius_mm, point_colors);
-                    groupByColors();
-                    prev_grid_spacing_mm = current;
+                    // point_colors = shiftPoints("all", current, previous, radius_mm, point_colors);
+                    // groupByColors();
+                    // prev_grid_spacing_mm = current;
                 }
             }
             if (grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image') {
@@ -1623,7 +1633,6 @@ async function rebuildFramesNow() {
             const u = ((p.x - minX) + 0.5) * invGW;
             const v = ((p.y - minY) + 0.5) * invGH;
 
-            // ✅ KEY: sample FULL CANVAS coords (not draw rect)
             let sx = ((u * wMinus1) | 0) + 8;
             let sy = ((v * hMinus1) | 0) + 8;
 
@@ -1726,6 +1735,18 @@ async function rebuildFramesNow() {
     }
 </script>
 
+<dialog id="gallery_link_modal" class="modal">
+  <div class="modal-box">
+    <h3 class="font-bold text-lg text-center pb-1">Uploaded</h3>
+    <a class="link link-primary break-all link-text text-center text-sm mx-auto" target="_blank"></a>
+    <div class="modal-action">
+      <form method="dialog">
+        <button class="btn">Close</button>
+      </form>
+    </div>
+  </div>
+</dialog>
+
 <article class="prose w-full mx-auto mt-5">
     <h2 class="flex justify-center items-center gap-2 text-base-content">
         <svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1514 1527" width="20" height="20" fill="currentColor" >
@@ -1789,13 +1810,13 @@ async function rebuildFramesNow() {
 
 <dialog id="download_modal" class="modal modal-middle">
     <div class="modal-box">
-        <h3 class="text-lg font-bold ">Downloads</h3>
+        <h3 class="text-lg font-bold text-center">Downloads</h3>
         <div class="flex flex-col gap-2 pt-5">
-            <button class="btn btn-sm rounded bg-gray-100 gap-2 hover:bg-neutral hover:text-white" onclick={() => {scriptType="96_deep_well"; downloadPythonFile();}}>
+            <button class="btn btn-sm rounded bg-content-primary gap-1" onclick={() => {scriptType="96_deep_well"; downloadPythonFile();}}>
                 <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
                 96 Deep-Well Plate
             </button>
-            <button class="btn btn-sm rounded bg-gray-100 gap-2 hover:bg-neutral hover:text-white" onclick={() => {scriptType="96_pcr"; downloadPythonFile();}}>
+            <button class="btn btn-sm rounded bg-content-primary gap-1" onclick={() => {scriptType="96_pcr"; downloadPythonFile();}}>
                 <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
                 96 PCR Plate
             </button>
@@ -1989,7 +2010,7 @@ async function rebuildFramesNow() {
                 <div class="">{formatSeconds(estimatedPrintDuration)}</div>
             </div>
         {/if}
-        <!-- MOVEMENT KEYS -->
+        <!-- ARROW KEYS FOR CIRCULAR PLATES -->
         {#if Object.keys(point_colors).length > 0 && grid_style !== "Echo384" && grid_style !== "Echo384Image" && grid_style !== "Echo1536" && grid_style !== "Echo1536Image"}
             <div class="absolute bottom-0 right-0 scale-[60%] origin-bottom-right" transition:fade={{ duration: 200 }}>
                 <div class="flex w-full justify-center">
@@ -2046,24 +2067,24 @@ async function rebuildFramesNow() {
         <div class="flex flex-row w-full items-center mx-auto">
             <input type="file" id="gif-upload" class="hidden" onchange={handleFileChange} />
             <div class="join w-full">
-                <label for="gif-upload" class="btn btn-sm btn-primary join-item">
-                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path fill-rule="evenodd" clip-rule="evenodd" d="M23 4C23 2.34315 21.6569 1 20 1H4C2.34315 1 1 2.34315 1 4V20C1 21.6569 2.34315 23 4 23H20C21.6569 23 23 21.6569 23 20V4ZM21 4C21 3.44772 20.5523 3 20 3H4C3.44772 3 3 3.44772 3 4V20C3 20.5523 3.44772 21 4 21H20C20.5523 21 21 20.5523 21 20V4Z" fill="#0F0F0F"></path> <path d="M4.80665 17.5211L9.1221 9.60947C9.50112 8.91461 10.4989 8.91461 10.8779 9.60947L14.0465 15.4186L15.1318 13.5194C15.5157 12.8476 16.4843 12.8476 16.8682 13.5194L19.1451 17.5039C19.526 18.1705 19.0446 19 18.2768 19H5.68454C4.92548 19 4.44317 18.1875 4.80665 17.5211Z" fill="#0F0F0F"></path> <path d="M18 8C18 9.10457 17.1046 10 16 10C14.8954 10 14 9.10457 14 8C14 6.89543 14.8954 6 16 6C17.1046 6 18 6.89543 18 8Z" fill="#0F0F0F"></path> </g></svg>
+                <label for="gif-upload" type="file" class="btn btn-sm rounded-l rounded-r-none gap-1 bg-neutral-800 hover:bg-neutral-700 text-base-content hover:bg-neutral-600 hover:text-base-content join-item">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path fill-rule="evenodd" clip-rule="evenodd" d="M23 4C23 2.34315 21.6569 1 20 1H4C2.34315 1 1 2.34315 1 4V20C1 21.6569 2.34315 23 4 23H20C21.6569 23 23 21.6569 23 20V4ZM21 4C21 3.44772 20.5523 3 20 3H4C3.44772 3 3 3.44772 3 4V20C3 20.5523 3.44772 21 4 21H20C20.5523 21 21 20.5523 21 20V4Z" fill="currentColor"></path> <path d="M4.80665 17.5211L9.1221 9.60947C9.50112 8.91461 10.4989 8.91461 10.8779 9.60947L14.0465 15.4186L15.1318 13.5194C15.5157 12.8476 16.4843 12.8476 16.8682 13.5194L19.1451 17.5039C19.526 18.1705 19.0446 19 18.2768 19H5.68454C4.92548 19 4.44317 18.1875 4.80665 17.5211Z" fill="currentColor"></path> <path d="M18 8C18 9.10457 17.1046 10 16 10C14.8954 10 14 9.10457 14 8C14 6.89543 14.8954 6 16 6C17.1046 6 18 6.89543 18 8Z" fill="currentColor"></path> </g></svg>
                     Select
-                </label>   
+                </label>
                 <input
-                    class="input input-sm join-item w-full bg-neutral-700 text-white"
-                    placeholder="https://example.com/image.gif"
+                    class="input input-sm join-item w-full bg-base-200 text-white"
+                    placeholder="https://example.com/animated.png"
                     bind:value={gifUrlInput}
                     class:input-success={gifUrlStatus === "valid"}
                     class:input-error={gifUrlStatus === "invalid"}
                 />
                 <button
-                    class="btn btn-sm btn-primary join-item"
+                    class="btn btn-sm rounded-r rounded-l-none gap-1 bg-neutral-800 hover:bg-neutral-700"
                     onclick={submitGifUrl}
                 >
                 Submit
-            </button>
-        </div>
+                </button>
+            </div>
         </div>
         {#if animate}
             <div class="flex items-center w-full gap-2 mt-2">
@@ -2355,8 +2376,8 @@ async function rebuildFramesNow() {
                         </span>
                     </span>
                 </div>
-                <div class="{Object.keys(point_colors).length > 0 && !(grid_style === 'QRCode' || grid_style === 'Standard') ? 'tooltip tooltip-top' : ''}" data-tip="Erase Grid to Edit" >
-                    <input type="range" min="1" max="7.5" disabled={blurSlider()} class="range {blurSlider() ? 'cursor-not-allowed blur-sm' : ''}" step="0.1" bind:value={grid_spacing_mm} />
+                <div class="{Object.keys(point_colors).length > 0 && !(grid_style === 'QRCode' || grid_style === 'Standard') ? 'tooltip tooltip-top' : ''}" >
+                    <input type="range" min="1" max="7.5" disabled={blurSlider()} class="range {blurSlider() ? 'cursor-not-allowed blur-sm' : ''}" step="0.1" bind:value={grid_spacing_mm} oninput={() => markFramesDirty()} />
                 </div>
             </div>
         {/if}
@@ -2440,10 +2461,10 @@ async function rebuildFramesNow() {
                 <p class="text-left text-sm">You should write a Python script that iterates over each coordinate and dispenses the correct color of bacteria into that location using the <a class="underline" href="https://docs.opentrons.com/v2/">Opentrons API</a>. Remember to switch pipette tips between each color and aspirate liquid as needed!
                 <br />
                 <br />
-                <a class="underline" href="https://docs.google.com/document/d/1VR1ngrwncH4kW80PHKZDGITu4GJbDa7pCE9yCs4YdUU" target="_blank" rel="noopener noreferrer">HTGAA 2025 Opentrons Lab Protocol</a>
+                <a class="underline" href="https://2026a.htgaa.org/2026a/course-pages/weeks/week-03/lab/index.html" target="_blank" rel="noopener noreferrer">HTGAA 2026 Opentrons Lab Protocol</a>
                 <br />
                 <br />
-                <a class="underline" href="https://colab.research.google.com/drive/1VoouRH0nqlk09g50rHxOElaLD-SVknYY" target="_blank" rel="noopener noreferrer">HTGAA 2025 Opentrons Lab Colab</a>
+                <a class="underline" href="https://colab.research.google.com/drive/1VoouRH0nqlk09g50rHxOElaLD-SVknYY#scrollTo=Vo86NBCmu61e" target="_blank" rel="noopener noreferrer">HTGAA 2026 Opentrons Lab Colab</a>
             </div>
         </div>
         <div class="collapse collapse-arrow">
@@ -2451,13 +2472,45 @@ async function rebuildFramesNow() {
             <label for="section3" class="collapse-title text-lg font-medium">Tips & Tricks for Lab Day</label>
             <div class="collapse-content text-sm">
                 <ul class="list-disc pl-5 space-y-2">
-                    <li><span class="font-semibold">0.5-2µL points with 3-5mm spacing as a starting point</span>: You can experiment with different settings, but be aware that you may get unexpected results.</li>
+                    <li><span class="font-semibold">0.5-2µL points with 2-4mm spacing as a starting point</span>: You can experiment with different settings, but be aware that you may get unexpected results.</li>
                     <li><span class="font-semibold">Add an offset when necessary</span>: To adjust for varying amounts of agar, apply a vertical offset after loading `agar_plate` in your `run()` function using the `set_offset` method:<br />
                         <span class="italic pl-5">agar_plate.set_offset(x=0.00, y=0.00, z=11.0)</span>
                     </li>
                     <li><span class="font-semibold">Use a 100mm cell culture dish</span>: The <span class="italic">Thermo Fisher Nunclon Delta Surface Cell Culture Dish 100 (150464)</span> works best with the MIT Lab's 3D-printed holder.</li>
                     <li><span class="font-semibold">Take photographs</span>: Document your process thoroughly & keep notes as you go!</li>
                 </ul>
+            </div>
+        </div>
+        <div class="collapse collapse-arrow">
+            <input type="checkbox" id="section2" class="toggle-checkbox" />
+            <label for="section1" class="collapse-title text-lg font-medium">Biological Details</label>
+            <div class="collapse-content">
+                <p class="text-left text-sm">
+                    <span class="font-bold">Expression Strain</span>: E. coli, <a class="underline" href="https://www.thermofisher.com/order/catalog/product/EC0114" target="_blank" rel="noopener noreferrer">BL21(DE3)</a>
+                </p>
+                <br />
+                <p class="text-left text-sm">
+                   <span class="font-bold">Antibiotic</span>: <a class="underline" href="https://en.wikipedia.org/wiki/Chloramphenicol" target="_blank" rel="noopener noreferrer">Chloramphenicol</a> at 12.5 µg/mL
+                </p>
+                <br />
+                <p class="text-left text-sm">
+                   <span class="font-bold">Agar Plates</span>: <a class="underline" href="https://www.thermofisher.com/order/catalog/product/264728?SID=srch-srp-264728" target="_blank" rel="noopener noreferrer">OmniTray</a> or <a class="underline" href="https://www.thermofisher.com/order/catalog/product/150464" target="_blank" rel="noopener noreferrer">Petri Plate</a> with <a class="underline" href="https://www.thermofisher.com/order/catalog/product/22700025" target="_blank" rel="noopener noreferrer">LB Agar (Lennox)</a>
+                </p>
+                <br />
+                <p class="text-left text-sm">
+                    <span class="font-bold">Plasmid Design</span>: Fluorescent protein genes under control of a constitutive promoter (<a class="underline" href="https://parts.igem.org/Part:BBa_J23106" target="_blank" rel="noopener noreferrer">BBa_J23106</a>), using a strong RBS (<a class="underline" href="https://parts.igem.org/Part:BBa_B0034" target="_blank" rel="noopener noreferrer">BBa_B0034</a>), double terminator (<a class="underline" href="https://parts.igem.org/Part:BBa_B0015" target="_blank" rel="noopener noreferrer">BBa_B0015</a>),  and 7x His tag. 
+                    <br />
+                    <a class="underline" href="https://benchling.com/s/seq-gMvih3gUKD8pmeupzoK9?m=slm-owczb4PJt1TiWdcYdwSW" target="_blank" rel="noopener noreferrer">Benchling</a> example.
+                </p>
+                <br />
+                <p class="text-left text-sm">
+                    <span class="font-bold">Sequence Optimization</span>: Codon-optimized for E. coli and S. cerevisiae. 
+                </p>
+                <br />
+                <p class="text-left text-sm">
+                    <span class="font-bold">Photographs</span>: Taken with an iPhone 17 and 312 nm UV lamp. Exposure, contrast, brightness, saturation, sharpness adjusted as necessary.
+                </p>
+                <!-- <a class="underline" href="https://www.newport.com/p/10CGA-395" target="_blank" rel="noopener noreferrer">395 nm Cut-on Longpass Filter</a> -->
             </div>
         </div>
         <div class="text-sm px-4 mt-5">
@@ -2475,10 +2528,10 @@ async function rebuildFramesNow() {
             <input type="checkbox" id="section1" class="toggle-checkbox" />
             <label for="section1" class="collapse-title text-lg font-medium">What is Automation Art Interface?</label>
             <div class="collapse-content text-sm">
-                <p>It's a fluorescent bacteria artwork interface which remotely programs the <a class="font-bold underline" href="https://www.ginkgo.bio/product/hardware" target="_blank" rel="noopener noreferrer">Reconfigurable Automation Cart</a> (RAC) system at <a class="font-bold underline" href="https://www.ginkgo.bio" target="_blank" rel="noopener noreferrer">Ginkgo Bioworks</a>.
+                It's a fluorescent bacteria artwork interface which remotely programs the <a class="font-bold underline" href="https://www.ginkgo.bio/product/hardware" target="_blank" rel="noopener noreferrer">Reconfigurable Automation Cart</a> (RAC) system at <a class="font-bold underline" href="https://www.ginkgo.bio" target="_blank" rel="noopener noreferrer">Ginkgo Bioworks</a>.
                 <br />
                 <br />
-                Nanoliter droplets of fluorescent bacterial culture are dispensed onto an agar plate and photographed after incubation.
+                Nanoliter-scale droplets of fluorescent bacterial culture are dispensed onto an agar plate and photographed under UV light after incubation.
                 <br />
                 <br />
                 <img src="/bacteria_images/echo_test.jpeg" class="mx-auto w-[75%] outline outline-neutral outline-1 rounded" alt="Pixelated" />
@@ -2526,6 +2579,38 @@ async function rebuildFramesNow() {
                 </div>
                 <br />
                 <p class="text-left text-sm">3. After incubating overnight, the artwork is photographed under UV light and posted to the gallery tab.
+            </div>
+        </div>
+        <div class="collapse collapse-arrow">
+            <input type="checkbox" id="section2" class="toggle-checkbox" />
+            <label for="section1" class="collapse-title text-lg font-medium">Biological Details?</label>
+            <div class="collapse-content">
+                <p class="text-left text-sm">
+                    <span class="font-bold">Expression Strain</span>: E. coli, <a class="underline" href="https://www.thermofisher.com/order/catalog/product/EC0114" target="_blank" rel="noopener noreferrer">BL21(DE3)</a>
+                </p>
+                <br />
+                <p class="text-left text-sm">
+                   <span class="font-bold">Antibiotic</span>: <a class="underline" href="https://en.wikipedia.org/wiki/Chloramphenicol" target="_blank" rel="noopener noreferrer">Chloramphenicol</a> at 12.5 µg/mL
+                </p>
+                <br />
+                <p class="text-left text-sm">
+                   <span class="font-bold">Agar Plates</span>: <a class="underline" href="https://www.thermofisher.com/order/catalog/product/264728?SID=srch-srp-264728" target="_blank" rel="noopener noreferrer">OmniTray</a> or <a class="underline" href="https://www.thermofisher.com/order/catalog/product/150464" target="_blank" rel="noopener noreferrer">Petri Plate</a> with <a class="underline" href="https://www.thermofisher.com/order/catalog/product/22700025" target="_blank" rel="noopener noreferrer">LB Agar (Lennox)</a>
+                </p>
+                <br />
+                <p class="text-left text-sm">
+                    <span class="font-bold">Plasmid Design</span>: Fluorescent protein genes under control of a constitutive promoter (<a class="underline" href="https://parts.igem.org/Part:BBa_J23106" target="_blank" rel="noopener noreferrer">BBa_J23106</a>), using a strong RBS (<a class="underline" href="https://parts.igem.org/Part:BBa_B0034" target="_blank" rel="noopener noreferrer">BBa_B0034</a>), double terminator (<a class="underline" href="https://parts.igem.org/Part:BBa_B0015" target="_blank" rel="noopener noreferrer">BBa_B0015</a>),  and 7x His tag. 
+                    <br />
+                    <a class="underline" href="https://benchling.com/s/seq-gMvih3gUKD8pmeupzoK9?m=slm-owczb4PJt1TiWdcYdwSW" target="_blank" rel="noopener noreferrer">Benchling</a> example.
+                </p>
+                <br />
+                <p class="text-left text-sm">
+                    <span class="font-bold">Sequence Optimization</span>: Codon-optimized for E. coli and S. cerevisiae. 
+                </p>
+                <br />
+                <p class="text-left text-sm">
+                    <span class="font-bold">Photographs</span>: Taken with an iPhone 17 and 312 nm UV lamp. Exposure, contrast, brightness, saturation, sharpness adjusted as necessary.
+                </p>
+                <!-- <a class="underline" href="https://www.newport.com/p/10CGA-395" target="_blank" rel="noopener noreferrer">395 nm Cut-on Longpass Filter</a> -->
             </div>
         </div>
         <div class="text-sm px-4">
