@@ -28,3 +28,5 @@ vite.config.ts.timestamp-*
 
 # Image Bucket
 /static/images.txt
+
+.venv
