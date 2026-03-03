@@ -34,15 +34,55 @@ function extractStoredDesign(record) {
   return null;
 }
 
-export const POST = async ({ request }) => {
+function extractSubmissionLocation(headers, getClientAddress) {
+  const forwardedFor = headers.get('x-forwarded-for') || '';
+  const ip =
+    forwardedFor.split(',')[0].trim() ||
+    headers.get('cf-connecting-ip') ||
+    headers.get('x-real-ip') ||
+    headers.get('x-client-ip') ||
+    headers.get('x-forwarded') ||
+    headers.get('forwarded') ||
+    headers.get('true-client-ip') ||
+    headers.get('x-nf-client-connection-ip') ||
+    headers.get('x-appengine-user-ip') ||
+    headers.get('fly-client-ip') ||
+    (typeof getClientAddress === 'function' ? getClientAddress() : null) ||
+    null;
+
+  return {
+    ip,
+    country: headers.get('cf-ipcountry') || headers.get('x-vercel-ip-country') || null,
+    region: headers.get('x-vercel-ip-country-region') || headers.get('x-appengine-region') || null,
+    city: headers.get('x-vercel-ip-city') || null
+  };
+}
+
+function normalizeHtgAaNode(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  return raw.split('(')[0].replace(/:\s*$/, '').trim() || null;
+}
+
+export const POST = async ({ request, getClientAddress }) => {
   try {
-    const { title, author, rationale, design } = await request.json();
+    const { title, author, rationale, htgAA_node, htgaaNode, design } = await request.json();
 
     await pb.admins.authWithPassword(PB_EMAIL, PB_PASSWORD);
 
     const collection = process.env.CFPS_COLLECTION || 'cfps_designs';
     const safeTitle = title?.trim() || `CFPS-${new Date().toISOString()}`;
-    const incomingSignature = buildVolumeSignature(design);
+    const normalizedHtgAaNode = normalizeHtgAaNode(htgAA_node || htgaaNode);
+    const submissionLocation = extractSubmissionLocation(request.headers, getClientAddress);
+    const designWithMetadata = {
+      ...(design || {}),
+      submission_metadata: {
+        ...((design && typeof design === 'object' && design.submission_metadata) || {}),
+        htgaa_node: normalizedHtgAaNode,
+        location: submissionLocation
+      }
+    };
+    const incomingSignature = buildVolumeSignature(designWithMetadata);
 
     if (incomingSignature) {
       const perPage = 200;
@@ -77,28 +117,36 @@ export const POST = async ({ request }) => {
         title: safeTitle,
         author: author || null,
         rationale: rationale || null,
-        design_json: design,
-        total_volume_nl: design?.totalVolumeNl,
-        total_cost_usd: design?.totalCostUsd,
-        cost_per_ml_reaction: design?.costPerMlReaction
+        htgaa_node: normalizedHtgAaNode,
+        submission_location: submissionLocation,
+        design_json: designWithMetadata,
+        total_volume_nl: designWithMetadata?.totalVolumeNl,
+        total_cost_usd: designWithMetadata?.totalCostUsd,
+        cost_per_ml_reaction: designWithMetadata?.costPerMlReaction
       },
       {
         title: safeTitle,
         author: author || null,
         rationale: rationale || null,
-        design
+        htgAA_node: normalizedHtgAaNode,
+        submission_location: submissionLocation,
+        design: designWithMetadata
       },
       {
         title: safeTitle,
         author: author || null,
         rationale: rationale || null,
-        payload: design
+        htgAA_node: normalizedHtgAaNode,
+        submission_location: submissionLocation,
+        payload: designWithMetadata
       },
       {
         title: safeTitle,
         author: author || null,
         rationale: rationale || null,
-        content: JSON.stringify(design)
+        htgAA_node: normalizedHtgAaNode,
+        submission_location: submissionLocation,
+        content: JSON.stringify(designWithMetadata)
       }
     ];
 

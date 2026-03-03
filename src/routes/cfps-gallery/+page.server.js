@@ -27,6 +27,12 @@ function extractStoredDesign(record) {
   return null;
 }
 
+function extractNode(record, design) {
+  const topLevel = record?.htgaa_node || record?.htgAA_node || null;
+  const metaNode = design?.submission_metadata?.htgaa_node || design?.submission_metadata?.htgAA_node || null;
+  return (topLevel || metaNode || '').trim() || null;
+}
+
 export async function load() {
   try {
     await pb.admins.authWithPassword(PB_EMAIL, PB_PASSWORD);
@@ -47,6 +53,7 @@ export async function load() {
         title: item.title || `CFPS-${item.id}`,
         author: item.author || null,
         rationale: item.rationale || null,
+        htgaa_node: extractNode(item, design),
         created: item.created,
         totalVolumeNl: Number(design.totalVolumeNl ?? item.total_volume_nl) || 0,
         totalCostUsd: Number(design.totalCostUsd ?? item.total_cost_usd) || 0,

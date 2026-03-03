@@ -133,6 +133,23 @@ const baseTargetMm_1793665_74 = {
     '1794089_36': { label: '1794089_36', targetMm: { ...baseTargetMm_1794089_36 }, targetUnitsPerMl: { } }
   };
   const DEFAULT_PROFILE_KEY = '1777863_77';
+  const HTGAA_NODE_OPTIONS = [
+    'MIT / Harvard (Cambridge, USA)',
+    'BioClub Tokyo (Tokyo, Japan)',
+    'Biopunk Lab (San Francisco, USA)',
+    'Designer Cells at Yonsei University (Incheon, South Korea)',
+    'Genspace (New York, USA):',
+    'Lifefabs Institute (London, UK)',
+    'Ottawa Bio Science (ON, Canada)',
+    'USFQ (Quito, Ecuador)',
+    'Victoria Makerspace (BC, Canada)',
+    'Baltimore Underground Science Space (Baltimore, MD, USA)',
+    'Duke (Durham, NC, USA)',
+    'Iowa State (Ames, IA, USA)',
+    'William & Mary (Williamsburg, VA, USA)',
+    'Chitown Bio (Chicago, IL, USA)',
+    'Hartnell College (Salinas, CA, USA)'
+  ];
 
   // Components pre-mixed inside the fixed 2 uL base buffer; values are stock mM in that mix.
   // This lets us subtract base-buffer contribution from defaults and show true final concentrations.
@@ -152,6 +169,8 @@ const baseTargetMm_1793665_74 = {
   let designTitle = $state('');
   let author = $state('');
   let rationale = $state('');
+  let selectedNodeDisplay = $state('');
+  let publishFormError = $state('');
   let selectedProfileKey = $state(DEFAULT_PROFILE_KEY);
   let profileDropdown;
   let uploadModal;
@@ -219,6 +238,23 @@ const baseTargetMm_1793665_74 = {
     return `$${value.toFixed(4)}`;
   }
 
+  function reagentMetaLabel(reagent) {
+    const parts = [];
+    if (Number(reagent.costPerMl) > 0) {
+      parts.push(reagent.concentration);
+      parts.push(`$${Number(reagent.costPerMl).toFixed(2)}/mL`);
+    }
+
+    parts.push(formatUl(volumesNl[reagent.id] || 0));
+
+    const finalLabel = formatConcentration(finalNmForReagent(reagent));
+    if (finalLabel !== 'n/a') {
+      parts.push(`final ${finalLabel}`);
+    }
+
+    return parts.join(' | ');
+  }
+
   function floorToStepNl(valueNl) {
     const numeric = Number(valueNl);
     if (!Number.isFinite(numeric)) return 0;
@@ -256,9 +292,18 @@ const baseTargetMm_1793665_74 = {
   function parseMolarityM(concentration) {
     const match = String(concentration || '')
       .trim()
-      .match(/^([0-9]*\.?[0-9]+)\s*M$/i);
+      .match(/^([0-9]*\.?[0-9]+)\s*(nM|uM|µM|mM|M)$/i);
     if (!match) return null;
-    return Number(match[1]);
+
+    const value = Number(match[1]);
+    const unit = match[2].toLowerCase();
+    if (!Number.isFinite(value)) return null;
+
+    if (unit === 'm') return value;
+    if (unit === 'mm') return value * 1e-3;
+    if (unit === 'um' || unit === 'µm') return value * 1e-6;
+    if (unit === 'nm') return value * 1e-9;
+    return null;
   }
 
   function parseUnitsPerMl(concentration) {
@@ -699,10 +744,24 @@ const baseTargetMm_1793665_74 = {
     return null;
   }
 
+  function nodeShortName(displayLabel) {
+    return String(displayLabel || '')
+      .split('(')[0]
+      .replace(/:\s*$/, '')
+      .trim();
+  }
+
   async function publishDesign() {
     isPublishing = true;
+    publishFormError = '';
     publishMessage = '';
     publishError = '';
+
+    if (!selectedNodeDisplay) {
+      publishFormError = 'Please select an HTGAA Node.';
+      isPublishing = false;
+      return;
+    }
 
     if (totalVolumeNl > MAX_TOTAL_NL) {
       publishError = 'Total reaction volume must be <= 20 uL.';
@@ -714,6 +773,7 @@ const baseTargetMm_1793665_74 = {
       title: designTitle?.trim() || `CFPS-${new Date().toISOString()}`,
       author: author?.trim() || null,
       rationale: rationale?.trim() || null,
+      htgaaNode: nodeShortName(selectedNodeDisplay),
       design: {
         maxTotalNl: MAX_TOTAL_NL,
         stepNl: STEP_NL,
@@ -802,7 +862,7 @@ const baseTargetMm_1793665_74 = {
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-base-content/70">Preset</span>
         <details class="dropdown relative z-50" bind:this={profileDropdown}>
-          <summary class="btn btn-xs">
+          <summary class="rounded-md bg-neutral-700 px-2 py-1 text-xs text-white hover:bg-neutral-600">
             {defaultTargetProfiles[selectedProfileKey]?.label ?? selectedProfileKey}
           </summary>
           <ul class="menu dropdown-content bg-base-100 rounded-box z-[999] w-52 p-2 shadow-sm">
@@ -824,13 +884,25 @@ const baseTargetMm_1793665_74 = {
         <span><span class="text-base-content/60">Total</span> {formatUl(totalVolumeNl)}</span>
         <span><span class="text-base-content/60">Cost/Reaction</span> {formatUsd(totalCostUsd)}</span>
         <span><span class="text-base-content/60">Cost/mL</span> {formatUsd(costPerMlReaction)}</span>
+        <button
+          class="rounded-md bg-neutral-700 px-2 py-1 text-xs text-white hover:bg-neutral-600 disabled:opacity-60"
+          onclick={() => {
+            if (!isPublishing) {
+              publishFormError = '';
+              uploadModal?.showModal();
+            }
+          }}
+          disabled={isPublishing}
+        >
+          {isPublishing ? 'Publishing...' : 'Publish Design'}
+        </button>
       </div>
 
-      <a href="/cfps-gallery" class="btn btn-xs btn-ghost">Gallery</a>
+      <a href="/cfps-gallery" class="rounded-md bg-neutral-700 px-2 py-1 text-xs text-white hover:bg-neutral-600">Gallery</a>
     </section>
 
-    <section class="mb-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-      <div class="order-2 xl:order-1">
+    <section class="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div class="order-2 md:order-1">
         <h3 class="pb-2 text-md font-semibold text-primary text-center underline">Summary Statistics</h3>
         <div class="h-72 overflow-x-auto overflow-y-scroll rounded-md bg-base-200/60">
           <table class="table table-xs tabular-nums table-fixed">
@@ -892,7 +964,7 @@ const baseTargetMm_1793665_74 = {
         </div>
       </div>
 
-      <div class="order-1 xl:order-2 flex flex-col xl:h-72">
+      <div class="order-1 md:order-2 flex flex-col md:h-72">
         <h3 class="pb-2 text-md font-semibold text-primary text-center underline">Reaction Composition</h3>
         <svg viewBox="0 0 1000 440" class="block w-full flex-1 min-h-0">
           {#if pieSlices.length === 0}
@@ -970,7 +1042,7 @@ const baseTargetMm_1793665_74 = {
                       {/if}
                     </div>
                     <p class="truncate text-xs text-primary/50">
-                      {reagent.concentration} | ${reagent.costPerMl.toFixed(2)}/mL | {formatUl(volumesNl[reagent.id] || 0)} | final {formatConcentration(finalNmForReagent(reagent))}
+                      {reagentMetaLabel(reagent)}
                     </p>
                   </div>
 
@@ -1016,7 +1088,7 @@ const baseTargetMm_1793665_74 = {
       {/if}
 
       <div class="mt-3">
-        <h4 class="mb-1 text-xs font-semibold text-primary">Concentration Rank (high to low)</h4>
+        <h4 class="mb-1 text-sm font-semibold text-primary">Concentration Rank</h4>
         <div class="rounded bg-base-300/50 p-2 text-xs font-mono">
           {#if concentrationRankEntries.length === 0}
             <p>No non-zero reagents in composition.</p>
@@ -1028,30 +1100,6 @@ const baseTargetMm_1793665_74 = {
         </div>
       </div>
     </section>
-
-    <footer class=" bottom-2 mt-4 bg-white/70 px-2 py-1.5 backdrop-blur w-1/2 mx-auto rounded">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          {#if publishError}
-            <p class="text-xs font-medium text-red-700">{publishError}</p>
-          {:else if publishMessage}
-            <p class="text-xs font-medium text-emerald-700">{publishMessage}</p>
-          {:else}
-            <p class="text-xs text-slate-700">Publish the current design to the database</p>
-          {/if}
-        </div>
-
-        <button
-          class="rounded-md bg-secondary px-2.5 py-1 text-xs font-medium text-white hover:text-secondary hover:bg-primary disabled:cursor-not-allowed disabled:opacity-60"
-          onclick={() => {
-            if (!isPublishing) uploadModal?.showModal();
-          }}
-          disabled={isPublishing}
-        >
-          {isPublishing ? 'Publishing...' : 'Publish Design'}
-        </button>
-      </div>
-    </footer>
   </div>
 </div>
 {/if}
@@ -1064,9 +1112,18 @@ const baseTargetMm_1793665_74 = {
 <dialog id="upload_modal" class="modal modal-middle" bind:this={uploadModal}>
   <div class="modal-box">
     <h3 class="text-lg font-bold">Ready to publish?</h3>
-    <p class="pt-2 text-sm text-base-content/70">Add author and rationale for this CFPS design.</p>
+    <p class="pt-2 text-sm text-base-content/70">Select HTGAA Node and add author/rationale for this CFPS design.</p>
 
     <div class="flex flex-col w-full gap-2 pt-4">
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70 pb-1">HTGAA Node (required)</span>
+        <select class="select select-bordered text-sm" bind:value={selectedNodeDisplay}>
+          <option value="" disabled>Select a node</option>
+          {#each HTGAA_NODE_OPTIONS as nodeOption}
+            <option value={nodeOption}>{nodeOption}</option>
+          {/each}
+        </select>
+      </label>
       <label class="input input-bordered flex items-center gap-2 text-sm">
         <span class="opacity-70">Author</span>
         <input
@@ -1087,6 +1144,9 @@ const baseTargetMm_1793665_74 = {
           bind:value={rationale}
         ></textarea>
       </label>
+      {#if publishFormError}
+        <p class="text-xs text-error">{publishFormError}</p>
+      {/if}
     </div>
 
     <div class="modal-action">
