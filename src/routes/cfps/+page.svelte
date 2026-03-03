@@ -147,12 +147,14 @@ const baseTargetMm_1793665_74 = {
   const fixedVolumeSummaryIds = new Set(['cell_lysate', 'base_buffer', 'dna_template']);
   const excludedFromExportIds = new Set(['cell_lysate', 'base_buffer', 'dna_template']);
 
-  const initialVolumes = computeDefaultVolumes(DEFAULT_PROFILE_KEY);
+  const initialVolumes = computeInitialVolumes();
 
   let designTitle = $state('');
   let author = $state('');
+  let rationale = $state('');
   let selectedProfileKey = $state(DEFAULT_PROFILE_KEY);
   let profileDropdown;
+  let uploadModal;
   let draggingReagent = null;
   let dragLeft = 0;
   let dragWidth = 1;
@@ -221,6 +223,34 @@ const baseTargetMm_1793665_74 = {
     const numeric = Number(valueNl);
     if (!Number.isFinite(numeric)) return 0;
     return Math.max(0, Math.floor(numeric / STEP_NL) * STEP_NL);
+  }
+
+  function computeInitialVolumes() {
+    const loaded = volumesFromLoadedDesign(data?.initialDesign);
+    if (loaded) return loaded;
+    return computeDefaultVolumes(DEFAULT_PROFILE_KEY);
+  }
+
+  function volumesFromLoadedDesign(design) {
+    if (!design || typeof design !== 'object') return null;
+    if (!Array.isArray(design.reagents)) return null;
+
+    const byId = Object.fromEntries(
+      design.reagents
+        .map((item) => [String(item?.id || ''), floorToStepNl(Number(item?.volumeNl) || 0)])
+        .filter(([id]) => id.length > 0)
+    );
+
+    const volumes = Object.fromEntries(
+      allReagents.map((reagent) => [reagent.id, reagent.fixedNl ?? byId[reagent.id] ?? 0])
+    );
+
+    const nonWaterTotal = allReagents
+      .filter((reagent) => reagent.id !== WATER_ID)
+      .reduce((sum, reagent) => sum + (Number(volumes[reagent.id]) || 0), 0);
+    volumes[WATER_ID] = Math.max(0, MAX_TOTAL_NL - nonWaterTotal);
+
+    return volumes;
   }
 
   function parseMolarityM(concentration) {
@@ -683,6 +713,7 @@ const baseTargetMm_1793665_74 = {
     const payload = {
       title: designTitle?.trim() || `CFPS-${new Date().toISOString()}`,
       author: author?.trim() || null,
+      rationale: rationale?.trim() || null,
       design: {
         maxTotalNl: MAX_TOTAL_NL,
         stepNl: STEP_NL,
@@ -721,6 +752,7 @@ const baseTargetMm_1793665_74 = {
       } else {
         publishMessage = `Published design ${result.id}.`;
       }
+      uploadModal?.close();
     } catch (error) {
       publishError = error?.message || 'Failed to publish CFPS design.';
     } finally {
@@ -1011,7 +1043,9 @@ const baseTargetMm_1793665_74 = {
 
         <button
           class="rounded-md bg-secondary px-2.5 py-1 text-xs font-medium text-white hover:text-secondary hover:bg-primary disabled:cursor-not-allowed disabled:opacity-60"
-          onclick={publishDesign}
+          onclick={() => {
+            if (!isPublishing) uploadModal?.showModal();
+          }}
           disabled={isPublishing}
         >
           {isPublishing ? 'Publishing...' : 'Publish Design'}
@@ -1026,5 +1060,50 @@ const baseTargetMm_1793665_74 = {
   <p class="text-sm">Loading CFPS reagents...</p>
 </div>
 {/if}
+
+<dialog id="upload_modal" class="modal modal-middle" bind:this={uploadModal}>
+  <div class="modal-box">
+    <h3 class="text-lg font-bold">Ready to publish?</h3>
+    <p class="pt-2 text-sm text-base-content/70">Add author and rationale for this CFPS design.</p>
+
+    <div class="flex flex-col w-full gap-2 pt-4">
+      <label class="input input-bordered flex items-center gap-2 text-sm">
+        <span class="opacity-70">Author</span>
+        <input
+          type="text"
+          class="rounded-sm grow no-autofill px-1 py-0.5"
+          placeholder="Name"
+          autocomplete="off"
+          maxlength="100"
+          bind:value={author}
+        />
+      </label>
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70 pb-1">Rationale</span>
+        <textarea
+          class="textarea textarea-bordered text-sm min-h-24"
+          placeholder="Why this formulation?"
+          maxlength="1000"
+          bind:value={rationale}
+        ></textarea>
+      </label>
+    </div>
+
+    <div class="modal-action">
+      <form method="dialog">
+        <button type="button" class="btn" onclick={publishDesign} disabled={isPublishing}>
+          {#if !isPublishing}
+            Publish
+          {:else}
+            <span class="loading loading-spinner loading-xs"></span>
+          {/if}
+        </button>
+      </form>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop">
+    <button>close</button>
+  </form>
+</dialog>
 
 <svelte:window onclick={closeProfileDropdownOnOutsideClick} onpointermove={handlePointerMove} onpointerup={endReagentDrag} />

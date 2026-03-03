@@ -297,7 +297,7 @@
         let r = await response.json();
         
         const uploadModal = document.getElementById('upload_modal');
-        uploadModal.close();
+        if (uploadModal?.open) uploadModal.close();
 
         console.log(r)
 
@@ -308,7 +308,7 @@
 
             const linkModal = document.getElementById('gallery_link_modal');
             linkModal.querySelector('a').href = link;
-            linkModal.querySelector('.link-text').textContent = 'opentrons-art.rcdonovan.com' + link;
+            linkModal.querySelector('.link-text').textContent = 'ginkgoartworks.com' + link;
             linkModal.showModal();
 
         } else if (r.duplicate) {
@@ -2033,7 +2033,7 @@ async function rebuildFramesNow() {
        {#if (animate && (isPrecomputing || animationFrames.length > 0)) || (!animate && Object.keys(point_colors).length > 0)}
             <!-- ERASE/PUBLISH BUTTON -->
             <div class="flex flex-row gap-2 mt-1 mb-2" in:fade={{ duration: 300 }}>
-                <button class="btn btn-sm rounded gap-1 bg-neutral-700 text-base-content hover:bg-neutral-600 hover:text-base-content" onclick={() => { if (!uploading) {upload_modal.showModal()}}}>
+                <button class="btn btn-sm rounded gap-1 bg-neutral-700 text-base-content hover:bg-neutral-600 hover:text-base-content" onclick={() => { if (!uploading) {saveToGallery()}}}>
                     <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 35 35" version="1.1" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <title>upload1</title> <path d="M29.426 15.535c0 0 0.649-8.743-7.361-9.74-6.865-0.701-8.955 5.679-8.955 5.679s-2.067-1.988-4.872-0.364c-2.511 1.55-2.067 4.388-2.067 4.388s-5.576 1.084-5.576 6.768c0.124 5.677 6.054 5.734 6.054 5.734h9.351v-6h-3l5-5 5 5h-3v6h8.467c0 0 5.52 0.006 6.295-5.395 0.369-5.906-5.336-7.070-5.336-7.070z"></path> </g></svg>
                     Publish
                 </button>
@@ -2524,28 +2524,22 @@ async function rebuildFramesNow() {
             </div>
         </div>
     {:else}
-        <div class="collapse collapse-arrow pt-2">
-            <input type="checkbox" id="section1" class="toggle-checkbox" />
-            <label for="section1" class="collapse-title text-lg font-medium">What is Automation Art Interface?</label>
-            <div class="collapse-content text-sm">
+        <div class="pt-2">
+            <div class="text-lg font-medium pb-2 pt-4">What is Automation Art Interface?</div>
+            <div class="text-sm">
                 It's a fluorescent bacteria artwork interface which remotely programs the <a class="font-bold underline" href="https://www.ginkgo.bio/product/hardware" target="_blank" rel="noopener noreferrer">Reconfigurable Automation Cart</a> (RAC) system at <a class="font-bold underline" href="https://www.ginkgo.bio" target="_blank" rel="noopener noreferrer">Ginkgo Bioworks</a>.
                 <br />
                 <br />
-                Nanoliter-scale droplets of fluorescent bacterial culture are dispensed onto an agar plate and photographed under UV light after incubation.
+                <img src="2026_images/2026_HTGAA_Nebula_Artwork.png" class="mx-auto w-full outline outline-neutral outline-1 rounded" alt="Pixelated" />
+                <div class="text-xs italic text-center mt-2">Fluorescent Bacteria Photographs</div>
                 <br />
-                <br />
-                <img src="/bacteria_images/echo_test.jpeg" class="mx-auto w-[75%] outline outline-neutral outline-1 rounded" alt="Pixelated" />
-                <div class="text-xs italic text-center mt-2">Fluorescent Bacteria Photograph</div>
-            </div>
-        </div>
-        <div class="collapse collapse-arrow">
-            <input type="checkbox" id="section2" class="toggle-checkbox" />
-            <label for="section1" class="collapse-title text-lg font-medium">How Does It Work?</label>
-            <div class="collapse-content">
                 <p class="text-left text-sm">1. Publish your designed agar plate to the website gallery.
                 <br />
                 <br />
                 <p class="text-left text-sm">2. Approved designs are queued for automated production.
+                <br />
+                <br />
+                <p class="text-left text-sm">3. After incubating overnight, the artwork is photographed under UV light.
                 <br />
                 <br />
                 <div class="grid grid-cols-2 gap-2">
@@ -2577,8 +2571,6 @@ async function rebuildFramesNow() {
                         <span class="text-xs italic text-center mt-1">Agar Plate into Echo 525</span>
                     </div>
                 </div>
-                <br />
-                <p class="text-left text-sm">3. After incubating overnight, the artwork is photographed under UV light and posted to the gallery tab.
             </div>
         </div>
         <div class="collapse collapse-arrow">

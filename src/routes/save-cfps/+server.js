@@ -36,7 +36,7 @@ function extractStoredDesign(record) {
 
 export const POST = async ({ request }) => {
   try {
-    const { title, author, design } = await request.json();
+    const { title, author, rationale, design } = await request.json();
 
     await pb.admins.authWithPassword(PB_EMAIL, PB_PASSWORD);
 
@@ -76,6 +76,7 @@ export const POST = async ({ request }) => {
       {
         title: safeTitle,
         author: author || null,
+        rationale: rationale || null,
         design_json: design,
         total_volume_nl: design?.totalVolumeNl,
         total_cost_usd: design?.totalCostUsd,
@@ -84,16 +85,19 @@ export const POST = async ({ request }) => {
       {
         title: safeTitle,
         author: author || null,
+        rationale: rationale || null,
         design
       },
       {
         title: safeTitle,
         author: author || null,
+        rationale: rationale || null,
         payload: design
       },
       {
         title: safeTitle,
         author: author || null,
+        rationale: rationale || null,
         content: JSON.stringify(design)
       }
     ];

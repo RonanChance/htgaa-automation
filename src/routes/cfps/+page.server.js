@@ -4,6 +4,7 @@ import { PB_EMAIL, PB_PASSWORD } from '$env/static/private';
 const pb = new PocketBase('https://opentrons-art-pb.rcdonovan.com');
 const COLLECTION = 'cfps_reagent_groups';
 const RECORD_ID = 't7a97pyfs8lx67w';
+const DESIGNS_COLLECTION = process.env.CFPS_COLLECTION || 'cfps_designs';
 
 function parseMaybeJson(value) {
   if (value == null) return null;
@@ -135,26 +136,51 @@ function extractGroupsFromRecord(record) {
   return normalizeFlat([record]);
 }
 
-export async function load() {
+function extractStoredDesign(record) {
+  if (!record || typeof record !== 'object') return null;
+  if (record.design_json && typeof record.design_json === 'object') return record.design_json;
+  if (record.design && typeof record.design === 'object') return record.design;
+  if (record.payload && typeof record.payload === 'object') return record.payload;
+  if (typeof record.content === 'string') {
+    const parsed = parseMaybeJson(record.content);
+    if (parsed && typeof parsed === 'object') return parsed;
+  }
+  return null;
+}
+
+export async function load({ url }) {
   try {
     await pb.admins.authWithPassword(PB_EMAIL, PB_PASSWORD);
 
     const record = await pb.collection(COLLECTION).getOne(RECORD_ID);
     if (!record) {
-      return { success: false, reagentGroups: [] };
+      return { success: false, reagentGroups: [], initialDesign: null };
     }
 
     const reagentGroups = extractGroupsFromRecord(record);
+    const requestedDesignId = url.searchParams.get('design')?.trim();
+    let initialDesign = null;
+
+    if (requestedDesignId) {
+      try {
+        const designRecord = await pb.collection(DESIGNS_COLLECTION).getOne(requestedDesignId);
+        initialDesign = extractStoredDesign(designRecord);
+      } catch (error) {
+        console.error(`Failed to load CFPS design ${requestedDesignId}:`, error);
+      }
+    }
 
     return {
       success: reagentGroups.length > 0,
-      reagentGroups
+      reagentGroups,
+      initialDesign
     };
   } catch (error) {
     console.error('Failed to load CFPS reagent groups from PocketBase:', error);
     return {
       success: false,
-      reagentGroups: []
+      reagentGroups: [],
+      initialDesign: null
     };
   }
 }

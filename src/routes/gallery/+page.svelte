@@ -13,7 +13,7 @@
 
     const filter_list = ['Approved', 'Media Lab', 'Off']
     
-    let filter = $state(-1);
+    let filter = $state(3);
     let record_load_iteration = $state(0);
     let loadingRecords = $state(true);
     let loadedRecords = $state([]);
@@ -76,8 +76,8 @@
     </a>
     <div class="mx-auto p-4 rounded-box ">
         <div class="tabs tabs-bordered">
-            <input type="radio" name="tab" class="tab" aria-label="Images" onclick={() => {filter = -1;}} checked />
-            <input type="radio" name="tab" class="tab" aria-label="Designs" onclick={() => {if ($page.url.searchParams.get('htgaa')){filter = 0} else {filter = 3}; record_load_iteration = 0; loadedRecords = []; loadGallery();}} />
+            <input type="radio" name="tab" class="tab" aria-label="Images" onclick={() => {filter = -1;}} />
+            <input type="radio" name="tab" class="tab" aria-label="Designs" onclick={() => {if ($page.url.searchParams.get('htgaa')){filter = 0} else {filter = 3}; record_load_iteration = 0; loadedRecords = []; loadGallery();}} checked />
         </div>
     </div>
 </div>
