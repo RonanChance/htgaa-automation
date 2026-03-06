@@ -227,13 +227,16 @@ function Echo384Image(imageColors) {
     const imgH = imageColors.length;
     const imgW = imageColors[0].length;
 
-    for (let row = 0; row < rows; row++) {
-        const imgY = Math.round((row / (rows - 1)) * (imgH - 1));
-        const colorRow = imageColors[imgY] || [];
+    const { padX, padY, drawCols, drawRows } = containRect(cols, rows, imgW, imgH);
 
+    for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
-            const imgX = Math.round((col / (cols - 1)) * (imgW - 1));
-            const color = colorRow[imgX] ?? '#FFFFFF';
+            const color = sampleContainedImage(imageColors, col, row, {
+                padX,
+                padY,
+                drawCols,
+                drawRows
+            });
 
             const xPos = col * x_spacing;  // same as echo384
             const yPos = row * y_spacing;  // same as echo384
@@ -301,13 +304,16 @@ function Echo1536Image(imageColors) {
     const imgH = imageColors.length;
     const imgW = imageColors[0].length;
 
-    for (let row = 0; row < rows; row++) {
-        const imgY = Math.round((row / (rows - 1)) * (imgH - 1));
-        const colorRow = imageColors[imgY] || [];
+    const { padX, padY, drawCols, drawRows } = containRect(cols, rows, imgW, imgH);
 
+    for (let row = 0; row < rows; row++) {
         for (let col = 0; col < cols; col++) {
-            const imgX = Math.round((col / (cols - 1)) * (imgW - 1));
-            const color = colorRow[imgX] ?? '#FFFFFF';
+            const color = sampleContainedImage(imageColors, col, row, {
+                padX,
+                padY,
+                drawCols,
+                drawRows
+            });
 
             const xPos = col * x_spacing;
             const yPos = row * y_spacing;
@@ -321,4 +327,50 @@ function Echo1536Image(imageColors) {
     }
 
     return points;
+}
+
+function containRect(targetCols, targetRows, sourceW, sourceH) {
+    const targetAspect = targetCols / targetRows;
+    const sourceAspect = sourceW / sourceH;
+
+    let drawCols;
+    let drawRows;
+
+    if (sourceAspect > targetAspect) {
+        drawCols = targetCols;
+        drawRows = targetCols / sourceAspect;
+    } else {
+        drawRows = targetRows;
+        drawCols = targetRows * sourceAspect;
+    }
+
+    return {
+        padX: (targetCols - drawCols) / 2,
+        padY: (targetRows - drawRows) / 2,
+        drawCols,
+        drawRows
+    };
+}
+
+function sampleContainedImage(imageColors, col, row, rect) {
+    const { padX, padY, drawCols, drawRows } = rect;
+    const imgH = imageColors.length;
+    const imgW = imageColors[0].length;
+
+    if (
+        col < padX ||
+        col > padX + drawCols - 1 ||
+        row < padY ||
+        row > padY + drawRows - 1
+    ) {
+        return '#FFFFFF';
+    }
+
+    const u = drawCols > 1 ? (col - padX) / (drawCols - 1) : 0.5;
+    const v = drawRows > 1 ? (row - padY) / (drawRows - 1) : 0.5;
+
+    const imgX = Math.max(0, Math.min(imgW - 1, Math.round(u * (imgW - 1))));
+    const imgY = Math.max(0, Math.min(imgH - 1, Math.round(v * (imgH - 1))));
+
+    return imageColors[imgY]?.[imgX] ?? '#FFFFFF';
 }

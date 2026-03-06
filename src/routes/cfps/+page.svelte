@@ -188,6 +188,14 @@ const baseTargetMm_1793665_74 = {
     allReagents.reduce((sum, reagent) => sum + (Number(volumesNl[reagent.id]) || 0), 0)
   );
 
+  let uniqueReagentCount = $derived(
+    new Set(
+      allReagents
+        .filter((reagent) => (Number(volumesNl[reagent.id]) || 0) > 0)
+        .map((reagent) => reagent.id)
+    ).size
+  );
+
   let remainingNl = $derived(Math.max(0, MAX_TOTAL_NL - totalVolumeNl));
 
   let totalCostUsd = $derived(
@@ -426,13 +434,14 @@ const baseTargetMm_1793665_74 = {
 
   function formatMm(value) {
     if (value == null) return 'n/a';
+    if (isZeroValue(value)) return '-';
     return `${value.toFixed(3)} mM`;
   }
 
   function formatPercentDelta(baseMm, deltaMm) {
     if (baseMm == null || deltaMm == null) return 'n/a';
+    if (isZeroValue(deltaMm)) return '-';
     if (baseMm === 0) {
-      if (deltaMm === 0) return '0.0%';
       return 'new';
     }
     return `${((deltaMm / baseMm) * 100).toFixed(1)}%`;
@@ -440,7 +449,14 @@ const baseTargetMm_1793665_74 = {
 
   function formatUlValue(value) {
     if (value == null) return 'n/a';
+    if (isZeroValue(value)) return '-';
     return `${value.toFixed(3)} uL`;
+  }
+
+  function formatDeltaLabel(value, unit) {
+    if (value == null) return 'n/a';
+    if (isZeroValue(value)) return '-';
+    return `${value >= 0 ? '+' : ''}${value.toFixed(3)} ${unit}`;
   }
 
   function isZeroValue(value) {
@@ -463,7 +479,7 @@ const baseTargetMm_1793665_74 = {
           delta,
           baselineLabel: formatUlValue(baselineUl),
           currentLabel: formatUlValue(currentUl),
-          deltaLabel: `${delta >= 0 ? '+' : ''}${delta.toFixed(3)} uL`,
+          deltaLabel: formatDeltaLabel(delta, 'uL'),
           deltaPctLabel: formatPercentDelta(baselineUl, delta)
         };
       }
@@ -484,7 +500,7 @@ const baseTargetMm_1793665_74 = {
           delta,
           baselineLabel: formatUlValue(baselineUl),
           currentLabel: formatUlValue(currentUl),
-          deltaLabel: `${delta >= 0 ? '+' : ''}${delta.toFixed(3)} uL`,
+          deltaLabel: formatDeltaLabel(delta, 'uL'),
           deltaPctLabel: formatPercentDelta(baselineUl, delta)
         };
       }
@@ -499,7 +515,7 @@ const baseTargetMm_1793665_74 = {
         delta,
         baselineLabel: formatMm(baselineMm),
         currentLabel: formatMm(currentMm),
-        deltaLabel: delta == null ? 'n/a' : `${delta >= 0 ? '+' : ''}${delta.toFixed(3)} mM`,
+        deltaLabel: formatDeltaLabel(delta, 'mM'),
         deltaPctLabel: formatPercentDelta(baselineMm, delta)
       };
     });
@@ -645,6 +661,26 @@ const baseTargetMm_1793665_74 = {
     }
   }
 
+  function concentrationRankText() {
+    if (concentrationRankEntries.length === 0) {
+      return 'No non-zero reagents in composition.';
+    }
+    return concentrationRankEntries
+      .map((entry) => `${entry.rank}. ${entry.name} ${entry.label}`)
+      .join('\n');
+  }
+
+  async function copyConcentrationRank() {
+    copyMessage = '';
+    copyError = '';
+    try {
+      await navigator.clipboard.writeText(concentrationRankText());
+      copyMessage = 'Copied concentration rank to clipboard.';
+    } catch {
+      copyError = 'Failed to copy concentration rank.';
+    }
+  }
+
   function buildConcentrationRankEntries() {
     return allReagents
       .filter((reagent) => {
@@ -666,25 +702,52 @@ const baseTargetMm_1793665_74 = {
   function buildPieSlices() {
     if (totalVolumeNl <= 0) return [];
 
-    const slices = allReagents
-      .map((reagent) => {
-        const volumeNl = Number(volumesNl[reagent.id]) || 0;
+    const reagentById = new Map(allReagents.map((reagent) => [reagent.id, reagent]));
+    const sliceVolumeById = new Map();
+
+    for (const reagent of allReagents) {
+      if (reagent.id === BASE_BUFFER_ID) continue;
+      const volumeNl = Number(volumesNl[reagent.id]) || 0;
+      if (volumeNl <= 0) continue;
+      sliceVolumeById.set(reagent.id, volumeNl);
+    }
+
+    const baseBufferNl = Number(volumesNl[BASE_BUFFER_ID]) || 0;
+    if (baseBufferNl > 0) {
+      const componentEntries = Object.entries(baseBufferComponentStockMm).filter(([, stockMm]) => stockMm > 0);
+      const totalStockMm = componentEntries.reduce((sum, [, stockMm]) => sum + stockMm, 0);
+
+      if (totalStockMm > 0) {
+        for (const [componentId, stockMm] of componentEntries) {
+          const apportionedNl = (baseBufferNl * stockMm) / totalStockMm;
+          const currentNl = sliceVolumeById.get(componentId) || 0;
+          sliceVolumeById.set(componentId, currentNl + apportionedNl);
+        }
+      }
+    }
+
+    const includedSlices = Array.from(sliceVolumeById.entries())
+      .map(([id, volumeNl]) => {
+        const reagent = reagentById.get(id);
         return {
-          ...reagent,
-          volumeNl,
-          percent: (volumeNl / totalVolumeNl) * 100
+          ...(reagent || { id, name: id }),
+          volumeNl
         };
       })
       .filter((slice) => slice.volumeNl > 0)
       .sort((a, b) => b.volumeNl - a.volumeNl);
 
+    const includedTotalNl = includedSlices.reduce((sum, slice) => sum + slice.volumeNl, 0);
+    if (includedTotalNl <= 0) return [];
+
     let start = -Math.PI / 2;
-    return slices.map((slice, idx) => {
-      const angle = (slice.volumeNl / totalVolumeNl) * Math.PI * 2;
+    return includedSlices.map((slice, idx) => {
+      const percent = (slice.volumeNl / includedTotalNl) * 100;
+      const angle = (slice.volumeNl / includedTotalNl) * Math.PI * 2;
       const end = start + angle;
       const mid = start + angle / 2;
       const color = `hsl(${(idx * 47) % 360} 70% 60%)`;
-      const result = { ...slice, start, end, mid, color };
+      const result = { ...slice, percent, start, end, mid, color };
       start = end;
       return result;
     });
@@ -836,28 +899,8 @@ const baseTargetMm_1793665_74 = {
     </h2>
 </article>
 
-<div class="min-h-screen text-base-content px-4 py-8 flex mx-auto">
+<div class="min-h-screen text-base-content px-4 py-1 flex mx-auto">
   <div class="mx-auto max-w-7xl">
-    <!-- <header class="mb-4">
-      <h1 class="text-3xl font-semibold tracking-tight">CFPS Reaction Designer</h1>
-      <p class="mt-1 text-sm text-slate-700">
-        Tune reagent transfer volumes in 25 nL steps. Total reaction volume cannot exceed 20 uL.
-      </p>
-
-      <div class="mt-3 grid gap-2 md:grid-cols-2">
-        <input
-          class="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
-          placeholder="Design title"
-          bind:value={designTitle}
-        />
-        <input
-          class="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
-          placeholder="Author"
-          bind:value={author}
-        />
-      </div>
-    </header> -->
-
     <section class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-base-200/40 px-3 py-2 text-xs">
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-base-content/70">Preset</span>
@@ -882,6 +925,7 @@ const baseTargetMm_1793665_74 = {
 
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-base-content/80">
         <span><span class="text-base-content/60">Total</span> {formatUl(totalVolumeNl)}</span>
+        <span><span class="text-base-content/60">Reagents</span> {uniqueReagentCount}</span>
         <span><span class="text-base-content/60">Cost/Reaction</span> {formatUsd(totalCostUsd)}</span>
         <span><span class="text-base-content/60">Cost/mL</span> {formatUsd(costPerMlReaction)}</span>
         <button
@@ -1076,26 +1120,33 @@ const baseTargetMm_1793665_74 = {
     </div>
 
     <section class="mt-4 rounded-md bg-base-200/60 p-3">
-      <div class="mb-2 flex items-center justify-between gap-2">
-        <h3 class="text-sm font-semibold text-primary">Composition JSON</h3>
-        <button class="btn btn-xs" onclick={copyCompositionJson}>Copy JSON</button>
-      </div>
-      <pre class="max-h-56 overflow-auto rounded bg-base-300/50 p-2 text-xs">{exportedCompositionJson}</pre>
-      {#if copyError}
-        <p class="mt-1 text-xs text-red-400">{copyError}</p>
-      {:else if copyMessage}
-        <p class="mt-1 text-xs text-emerald-400">{copyMessage}</p>
-      {/if}
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-2 md:items-stretch">
+        <div class="flex flex-col min-h-0">
+          <div class="mb-1 flex items-center justify-between gap-2">
+            <h4 class="text-sm font-semibold text-primary">Concentration Rank</h4>
+            <button class="btn btn-xs" onclick={copyConcentrationRank}>Copy Rank</button>
+          </div>
+          <div class="rounded bg-base-300/50 p-2 text-xs font-mono">
+            {#if concentrationRankEntries.length === 0}
+              <p>No non-zero reagents in composition.</p>
+            {:else}
+              {#each concentrationRankEntries as entry}
+                <p>{entry.rank}. {entry.name} <span class="opacity-50">{entry.label}</span></p>
+              {/each}
+            {/if}
+          </div>
+        </div>
 
-      <div class="mt-3">
-        <h4 class="mb-1 text-sm font-semibold text-primary">Concentration Rank</h4>
-        <div class="rounded bg-base-300/50 p-2 text-xs font-mono">
-          {#if concentrationRankEntries.length === 0}
-            <p>No non-zero reagents in composition.</p>
-          {:else}
-            {#each concentrationRankEntries as entry}
-              <p>{entry.rank}. {entry.name} <span class="opacity-50">{entry.label}</span></p>
-            {/each}
+        <div class="flex flex-col min-h-0">
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <h3 class="text-sm font-semibold text-primary">Composition JSON</h3>
+            <button class="btn btn-xs" onclick={copyCompositionJson}>Copy JSON</button>
+          </div>
+          <pre class="h-56 overflow-auto rounded bg-base-300/50 p-2 text-xs">{exportedCompositionJson}</pre>
+          {#if copyError}
+            <p class="mt-1 text-xs text-red-400">{copyError}</p>
+          {:else if copyMessage}
+            <p class="mt-1 text-xs text-emerald-400">{copyMessage}</p>
           {/if}
         </div>
       </div>
