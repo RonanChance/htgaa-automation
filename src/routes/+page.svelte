@@ -579,6 +579,7 @@ def run(protocol):
         pipette_20ul.drop_tip()
     `
     }
+
     // WITHOUT TEMPERATURE PLATE SCRIPT
     if (scriptType === '96_pcr') {
         scriptToCopy = `from opentrons import types
@@ -722,6 +723,118 @@ def run(protocol):
         document.body.removeChild(a);
 
         URL.revokeObjectURL(url); // Clean up the URL object
+    }
+
+    function downloadWellPlatePng() {
+        const isEcho = grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === 'Echo1536' || grid_style === 'Echo1536Image';
+        const width = isEcho ? 1400 : 1200;
+        const height = isEcho ? 940 : 1200;
+        const padding = isEcho ? 36 : 28;
+        const plateBg = '#0a0a0b';
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.fillStyle = plateBg;
+        ctx.fillRect(0, 0, width, height);
+
+        const pxByPointSize = {
+            0.25: 3, 0.5: 6, 0.75: 7, 1: 8, 1.25: 9, 1.5: 10,
+            1.75: 11, 2: 12, 2.25: 13, 2.5: 14, 2.75: 15, 3: 16
+        };
+        const baseDotPx = pxByPointSize[Number(point_size)] || 8;
+        const dotPx = baseDotPx * (isEcho ? (width / 440) : (height / 440));
+        const dotRadius = Math.max(1, dotPx / 2);
+
+        const drawPoint = (x, y, color) => {
+            if (!color) return;
+            const fill = well_colors[color] || old_well_colors[color] || null;
+            if (!fill) return;
+            ctx.fillStyle = fill;
+            ctx.beginPath();
+            ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
+            ctx.fill();
+        };
+
+        if (isEcho) {
+            const roundedRect = (x, y, w, h, r) => {
+                const rr = Math.min(r, w / 2, h / 2);
+                ctx.beginPath();
+                ctx.moveTo(x + rr, y);
+                ctx.lineTo(x + w - rr, y);
+                ctx.arcTo(x + w, y, x + w, y + rr, rr);
+                ctx.lineTo(x + w, y + h - rr);
+                ctx.arcTo(x + w, y + h, x + w - rr, y + h, rr);
+                ctx.lineTo(x + rr, y + h);
+                ctx.arcTo(x, y + h, x, y + h - rr, rr);
+                ctx.lineTo(x, y + rr);
+                ctx.arcTo(x, y, x + rr, y, rr);
+                ctx.closePath();
+            };
+
+            // Keep exact plate aspect ratio and center it on export.
+            const plateAspect = 128 / 86;
+            const innerW = width - padding * 2;
+            const innerH = height - padding * 2;
+            let plateW = innerW;
+            let plateH = innerW / plateAspect;
+            if (plateH > innerH) {
+                plateH = innerH;
+                plateW = innerH * plateAspect;
+            }
+            const plateX = (width - plateW) / 2;
+            const plateY = (height - plateH) / 2;
+
+            ctx.fillStyle = plateBg;
+            roundedRect(plateX, plateY, plateW, plateH, Math.max(14, plateH * 0.035));
+            ctx.fill();
+
+            const xs = points.map((p) => p.x);
+            const ys = points.map((p) => p.y);
+            const minX = Math.min(...xs);
+            const maxX = Math.max(...xs);
+            const minY = Math.min(...ys);
+            const maxY = Math.max(...ys);
+            const spanX = Math.max(1e-6, maxX - minX);
+            const spanY = Math.max(1e-6, maxY - minY);
+
+            for (const { x, y } of points) {
+                const color = point_colors[`${x}, ${y}`];
+                if (!color) continue;
+                const px = plateX + ((x - minX) / spanX) * plateW;
+                const py = plateY + ((y - minY) / spanY) * plateH;
+                drawPoint(px, py, color);
+            }
+        } else {
+            const size = Math.min(width, height) - padding * 2;
+            const cx = width / 2;
+            const cy = height / 2;
+            const r = size / 2;
+
+            ctx.fillStyle = plateBg;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.fill();
+
+            const denom = (radius_mm + 4);
+            for (const { x, y } of points) {
+                const color = point_colors[`${x}, ${y}`];
+                if (!color) continue;
+                const px = cx + (x / denom) * r;
+                const py = cy - (y / denom) * r;
+                drawPoint(px, py, color);
+            }
+        }
+
+        const link = document.createElement('a');
+        const safeTitle = (title || 'well_plate_design').trim().replace(/[^a-z0-9-_]+/gi, '_');
+        link.href = canvas.toDataURL('image/png');
+        link.download = `${safeTitle || 'well_plate_design'}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     }
 
     function downloadEchoCSV(ProtocolLauncher) {
@@ -1377,6 +1490,34 @@ def run(protocol):
     function stripAfterLastUnderscore(label) {
         const idx = label.lastIndexOf("_");
         return idx === -1 ? label : label.slice(0, idx);
+    }
+
+    function fluorescentSummary() {
+        const nonProteinNames = new Set(['erase', 'white', 'invisible']);
+        const displayNameFor = (proteinKey) => {
+            const match = Object.keys(well_colors).find((name) => name.toLowerCase() === proteinKey.toLowerCase());
+            return match || proteinKey;
+        };
+
+        return Object.entries(points_by_color)
+            .map(([colorKey, colorPoints]) => ({
+                protein: displayNameFor(colorKey.replace(/_points$/i, '')),
+                count: colorPoints.length
+            }))
+            .filter(({ protein, count }) => count > 0 && !nonProteinNames.has(protein.toLowerCase()))
+            .sort((a, b) => b.count - a.count);
+    }
+
+    function fpbaseUrlFor(protein) {
+        const slugOverrides = {
+            mScarlet_I: 'mscarlet-i'
+        };
+        const slug = slugOverrides[protein] || protein.toLowerCase().split('_')[0];
+        return `https://www.fpbase.org/protein/${slug}`;
+    }
+
+    function totalFluorescentPoints() {
+        return fluorescentSummary().reduce((sum, { count }) => sum + count, 0);
     }
 
     function scheduleGroupByColors() {
@@ -2091,10 +2232,14 @@ async function rebuildFramesNow() {
     <div class="flex flex-row justify-between">
        {#if (animate && (isPrecomputing || animationFrames.length > 0)) || (!animate && Object.keys(point_colors).length > 0)}
             <!-- ERASE/PUBLISH BUTTON -->
-            <div class="flex flex-row gap-2 mt-1 mb-2" in:fade={{ duration: 300 }}>
+            <div class="flex flex-row gap-0.5 mt-1 mb-2" in:fade={{ duration: 300 }}>
                 <button class="btn btn-sm rounded gap-1 bg-neutral-700 text-base-content hover:bg-neutral-600 hover:text-base-content" onclick={() => { if (!uploading) {saveToGallery()}}}>
                     <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 35 35" version="1.1" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <title>upload1</title> <path d="M29.426 15.535c0 0 0.649-8.743-7.361-9.74-6.865-0.701-8.955 5.679-8.955 5.679s-2.067-1.988-4.872-0.364c-2.511 1.55-2.067 4.388-2.067 4.388s-5.576 1.084-5.576 6.768c0.124 5.677 6.054 5.734 6.054 5.734h9.351v-6h-3l5-5 5 5h-3v6h8.467c0 0 5.52 0.006 6.295-5.395 0.369-5.906-5.336-7.070-5.336-7.070z"></path> </g></svg>
                     Publish
+                </button>
+                <button class="btn btn-sm rounded gap-1 bg-neutral-700 text-base-content hover:bg-neutral-600 hover:text-base-content" onclick={downloadWellPlatePng}>
+                    <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
+                    PNG
                 </button>
             </div>
             {#if animate}
@@ -2470,6 +2615,20 @@ async function rebuildFramesNow() {
             </div>
         {/if}
     </div>
+
+    {#if fluorescentSummary().length > 0}
+        <div class="flex flex-col w-full mt-3 gap-1 mx-auto bg-base-200 rounded px-3 py-2">
+            <span class="font-semibold">Summary</span>
+            <div class="list-disc text-xs opacity-80">
+                This {totalFluorescentPoints()} pixel design uses {fluorescentSummary().length} fluorescent protein{fluorescentSummary().length === 1 ? '' : 's'}:
+                {#each fluorescentSummary() as { protein, count }, i}
+                    <a class="underline" href={fpbaseUrlFor(protein)} target="_blank" rel="noopener noreferrer">{protein}</a> ({count} pixel{count === 1 ? '' : 's'}){#if i < fluorescentSummary().length - 1},{' '}{/if}
+                {/each}. 
+                <br /> <br />
+                Artwork is dispensed as 25nL pixels via Echo 525 onto LB–chloramphenicol–charcoal agar (1536-well coordinates) and incubated 30°C (16 h) then 4°C (12 h) to maximize fluorescence.
+            </div>
+        </div>
+    {/if}
 
     <!-- SHOW POINTS -->
     <div class="flex flex-col w-full mt-3 gap-2 mx-auto bg-base-200 rounded px-3 {Object.keys(points_by_color).length >= 1 ? 'pb-2' : ''}">
