@@ -37,6 +37,11 @@
     let animate = $state(false);
     let animateToken = 0;
     let isPainting = false;
+    let interaction_mode = $state('draw'); // 'draw' | 'select'
+    let selected_point_keys = $state({});
+    let isSelectingRegion = $state(false);
+    let selectionStart = $state(null);
+    let selectionCurrent = $state(null);
     let lastKey = null;
     let groupScheduled = false;
     let downKey = null;
@@ -130,9 +135,11 @@
                     const directions = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right'};
                     const direction = directions[event.key];
                     if (direction) {
+                        const activeElement = document.activeElement;
+                        const isTypable = activeElement?.nodeName === 'INPUT' || activeElement?.nodeName === 'TEXTAREA' || activeElement?.isContentEditable;
+                        if (isTypable) return;
                         event.preventDefault();
-                        point_colors = shiftPoints(direction, grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style);
-                        groupByColors();
+                        movePointsByDirection(direction);
                     }
                 }
                 if (animate == true && event.key === ' ') {
@@ -217,6 +224,11 @@
         // --- clear design state ---
         point_colors = {};
         points_by_color = {};
+        selected_point_keys = {};
+        interaction_mode = 'draw';
+        isSelectingRegion = false;
+        selectionStart = null;
+        selectionCurrent = null;
         QRCode_text = '';
         points = {};
 
@@ -335,11 +347,6 @@
     }
     
     function groupByColors() {
-        const normalizePointKey = (key) => {
-            const [xRaw, yRaw] = String(key).split(',').map((s) => s.trim());
-            return `${xRaw}, ${yRaw}`;
-        };
-
         const renderedKeys = new Set((points || []).map(({ x, y }) => `${x}, ${y}`));
         const entries = Object.entries(point_colors)
             .map(([point, color]) => [normalizePointKey(point), color])
@@ -348,6 +355,17 @@
         // Keep internal state in sync with what is currently renderable.
         if (entries.length !== Object.keys(point_colors).length) {
             point_colors = Object.fromEntries(entries);
+        }
+        if (Object.keys(selected_point_keys).length > 0) {
+            const currentKeys = new Set(entries.map(([point]) => point));
+            const nextSelection = {};
+            for (const key of Object.keys(selected_point_keys)) {
+                const normalized = normalizePointKey(key);
+                if (currentKeys.has(normalized)) nextSelection[normalized] = true;
+            }
+            if (Object.keys(nextSelection).length !== Object.keys(selected_point_keys).length) {
+                selected_point_keys = nextSelection;
+            }
         }
 
         const uniqueColors = new Set(entries.map(([, color]) => color));
@@ -1492,6 +1510,102 @@ def run(protocol):
         return idx === -1 ? label : label.slice(0, idx);
     }
 
+    function normalizePointKey(key) {
+        const [xRaw, yRaw] = String(key).split(',').map((s) => s.trim());
+        return `${xRaw}, ${yRaw}`;
+    }
+
+    function pointLeftPercent(x) {
+        if (grid_style === 'Echo384' || grid_style === 'Echo384Image') return (x / 128 * 105 + 2.8);
+        if (grid_style === 'Echo1536' || grid_style === 'Echo1536Image') return (x / 128 * 105 + 1.68);
+        return (50.5 + x / (radius_mm + 4) * 50);
+    }
+
+    function pointTopPercent(y) {
+        if (grid_style === 'Echo384' || grid_style === 'Echo384Image') return (y / 86 * 105 + 4.1);
+        if (grid_style === 'Echo1536' || grid_style === 'Echo1536Image') return (y / 86 * 105 + 2.65);
+        return (50.5 - y / (radius_mm + 4) * 50);
+    }
+
+    function pointerPositionInContainer(e) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+        return { x, y, width: rect.width, height: rect.height };
+    }
+
+    function selectionBounds() {
+        if (!selectionStart || !selectionCurrent) return null;
+        const left = Math.min(selectionStart.x, selectionCurrent.x);
+        const top = Math.min(selectionStart.y, selectionCurrent.y);
+        const width = Math.abs(selectionCurrent.x - selectionStart.x);
+        const height = Math.abs(selectionCurrent.y - selectionStart.y);
+        return { left, top, width, height };
+    }
+
+    function selectionBoxStyle() {
+        const b = selectionBounds();
+        if (!b) return '';
+        return `left:${b.left}px; top:${b.top}px; width:${b.width}px; height:${b.height}px;`;
+    }
+
+    function setInteractionMode(mode) {
+        interaction_mode = mode;
+        if (mode !== 'select') {
+            selected_point_keys = {};
+            isSelectingRegion = false;
+            selectionStart = null;
+            selectionCurrent = null;
+        }
+    }
+
+    function applySelectionFromBounds(containerWidth, containerHeight, clickedKey = null) {
+        const b = selectionBounds();
+        const nextSelection = {};
+
+        if (!b || (b.width < DRAG_PX && b.height < DRAG_PX)) {
+            if (clickedKey && point_colors[clickedKey]) nextSelection[clickedKey] = true;
+            selected_point_keys = nextSelection;
+            return;
+        }
+
+        for (const { x, y } of points) {
+            const key = `${x}, ${y}`;
+            if (!point_colors[key]) continue;
+            const px = (pointLeftPercent(x) / 100) * containerWidth;
+            const py = (pointTopPercent(y) / 100) * containerHeight;
+            if (px >= b.left && px <= b.left + b.width && py >= b.top && py <= b.top + b.height) {
+                nextSelection[key] = true;
+            }
+        }
+
+        selected_point_keys = nextSelection;
+    }
+
+    function movePointsByDirection(direction) {
+        if (interaction_mode === 'select' && Object.keys(selected_point_keys).length > 0) {
+            const selectedSubset = {};
+            for (const [key, color] of Object.entries(point_colors)) {
+                const normalized = normalizePointKey(key);
+                if (selected_point_keys[normalized]) selectedSubset[normalized] = color;
+            }
+            if (Object.keys(selectedSubset).length === 0) return;
+
+            const movedSubset = shiftPoints(direction, grid_spacing_mm, grid_spacing_mm, radius_mm, selectedSubset, grid_style);
+            const nextPointColors = { ...point_colors };
+            for (const key of Object.keys(selectedSubset)) delete nextPointColors[key];
+            for (const [key, color] of Object.entries(movedSubset)) nextPointColors[normalizePointKey(key)] = color;
+
+            point_colors = nextPointColors;
+            selected_point_keys = Object.fromEntries(Object.keys(movedSubset).map((k) => [normalizePointKey(k), true]));
+            groupByColors();
+            return;
+        }
+
+        point_colors = shiftPoints(direction, grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style);
+        groupByColors();
+    }
+
     function fluorescentSummary() {
         const nonProteinNames = new Set(['erase', 'white', 'invisible']);
         const displayNameFor = (proteinKey) => {
@@ -1533,7 +1647,7 @@ def run(protocol):
     function keyFromEvent(e) {
         const el = document.elementFromPoint(e.clientX, e.clientY);
         if (!el || !el.dataset?.key) return null;
-        return el.dataset.key.replace(",", ", ");
+        return normalizePointKey(el.dataset.key);
     }
 
     function paintKey(key) {
@@ -1566,6 +1680,16 @@ def run(protocol):
     }
 
     function handlePointerDown(e) {
+        if (interaction_mode === 'select') {
+            isPainting = false;
+            const p = pointerPositionInContainer(e);
+            selectionStart = { x: p.x, y: p.y };
+            selectionCurrent = { x: p.x, y: p.y };
+            isSelectingRegion = true;
+            e.currentTarget.setPointerCapture?.(e.pointerId);
+            return;
+        }
+
         isPainting = true;
         lastKey = null;
 
@@ -1579,6 +1703,13 @@ def run(protocol):
     }
 
     function handlePointerMove(e) {
+        if (interaction_mode === 'select') {
+            if (!isSelectingRegion) return;
+            const p = pointerPositionInContainer(e);
+            selectionCurrent = { x: p.x, y: p.y };
+            return;
+        }
+
         if (!isPainting) return;
 
         if (!didMove) {
@@ -1596,6 +1727,17 @@ def run(protocol):
     }
 
     function handlePointerUp(e) {
+        if (interaction_mode === 'select') {
+            if (isSelectingRegion) {
+                const p = pointerPositionInContainer(e);
+                selectionCurrent = { x: p.x, y: p.y };
+                applySelectionFromBounds(p.width, p.height, keyFromEvent(e));
+            }
+            isSelectingRegion = false;
+            e.currentTarget.releasePointerCapture?.(e.pointerId);
+            return;
+        }
+
         isPainting = false;
         lastKey = null;
         e.currentTarget.releasePointerCapture?.(e.pointerId);
@@ -2181,28 +2323,20 @@ async function rebuildFramesNow() {
                     {point_size === 3 ? 'w-[16px] h-[16px]' : ''}
                     absolute {grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === "Echo1536" || grid_style === "Echo1536Image" ? '' : 'rounded-full'} [--chkfg:invisible] transition-[box-shadow] duration-200 ease-in-out {point_colors[`${x}, ${y}`] ? 'border-0' : 'opacity-10'} {!show_outlines ? 'border-0' : point_colors[`${x}, ${y}`] ? 'border-1' : 'border border-white opacity-10'}"
                     style="
-                    left: {
-                        (grid_style === 'Echo384' || grid_style === 'Echo384Image')
-                            ? (x / 128 * 105 + 2.8) + '%'
-                        : (grid_style === 'Echo1536' || grid_style === 'Echo1536Image')
-                            ? (x / 128 * 105 + 1.68) + '%'
-                        : (50.5 + x / (radius_mm + 4) * 50) + '%'
-                    };
-                    top: {
-                        (grid_style === 'Echo384' || grid_style === 'Echo384Image')
-                            ? (y / 86 * 105 + 4.1) + '%'
-                        : (grid_style === 'Echo1536' || grid_style === 'Echo1536Image')
-                            ? (y / 86 * 105 + 2.65) + '%'
-                        : (50.5 - y / (radius_mm + 4) * 50) + '%'
-                    };
+                    left: {pointLeftPercent(x)}%;
+                    top: {pointTopPercent(y)}%;
                     transform: translate(-50%, -50%);
                     background-color: {well_colors[point_colors[`${x}, ${y}`]] || old_well_colors[point_colors[`${x}, ${y}`]] || 'transparent'};
                     border: {!show_outlines ? 'none' : well_colors[point_colors[`${x}, ${y}`]] ? `1px solid ${well_colors[point_colors[`${x}, ${y}`]]}` : '1px solid white'};
+                    box-shadow: {selected_point_keys[`${x}, ${y}`] ? '0 0 0 1.5px #fff, 0 0 0 3px rgba(56, 189, 248, 0.6)' : 'none'};
                     "
                 draggable="false"
                 onmouseover={() => { current_point = {x, y}; hover_point = point_colors[`${x}, ${y}`] }}
             />
         {/each}
+        {#if interaction_mode === 'select' && isSelectingRegion}
+            <div class="absolute pointer-events-none border border-cyan-300 bg-cyan-300/15" style={selectionBoxStyle()}></div>
+        {/if}
         <!-- TIME ESTIMATION -->
         {#if Object.keys(point_colors).length > 0 && grid_style !== "Echo384" && grid_style !== "Echo384Image" && grid_style !== "Echo1536" && grid_style !== "Echo1536Image"}
             <div class="flex flex-row items-center gap-1 justify-center align-middle absolute top-0 left-0 origin-bottom-left opacity-50 tooltip tooltip-bottom" data-tip="Estimated Print Duration" transition:fade={{ duration: 200 }}>
@@ -2214,12 +2348,12 @@ async function rebuildFramesNow() {
         {#if Object.keys(point_colors).length > 0 && grid_style !== "Echo384" && grid_style !== "Echo384Image" && grid_style !== "Echo1536" && grid_style !== "Echo1536Image"}
             <div class="absolute bottom-0 right-0 scale-[60%] origin-bottom-right" transition:fade={{ duration: 200 }}>
                 <div class="flex w-full justify-center">
-                    <button class="kbd" onclick={() => {point_colors = shiftPoints("up", grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style); groupByColors();}}>▲</button>
+                    <button class="kbd" onclick={() => movePointsByDirection("up")}>▲</button>
                 </div>
                 <div class="flex w-full justify-center gap-2 pt-2">
-                    <button class="kbd" onclick={() => {point_colors = shiftPoints("left", grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style); groupByColors();}}>◀︎</button>
-                    <button class="kbd" onclick={() => {point_colors = shiftPoints("down", grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style); groupByColors();}}>▼</button>
-                    <button class="kbd" onclick={() => {point_colors = shiftPoints("right", grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style); groupByColors();}}>▶︎</button>
+                    <button class="kbd" onclick={() => movePointsByDirection("left")}>◀︎</button>
+                    <button class="kbd" onclick={() => movePointsByDirection("down")}>▼</button>
+                    <button class="kbd" onclick={() => movePointsByDirection("right")}>▶︎</button>
                 </div>
             </div>
         {/if}
@@ -2467,17 +2601,24 @@ async function rebuildFramesNow() {
                 {:else}
                     <span class="font-semibold">Mode</span>
                 {/if}
+                <div class="join">
+                    <button class="btn btn-xs text-xs rounded-r-none text-base-content hover:bg-neutral-700 {interaction_mode === 'draw' ? 'bg-neutral-600' : 'bg-neutral-800'}" onclick={() => setInteractionMode('draw')}>Draw</button>
+                    <button class="btn btn-xs text-xs rounded-l-none text-base-content hover:bg-neutral-700 {interaction_mode === 'select' ? 'bg-neutral-600' : 'bg-neutral-800'}" onclick={() => setInteractionMode('select')}>Select</button>
+                </div>
             </div>
+            {#if interaction_mode === 'select' && Object.keys(selected_point_keys).length > 0}
+                <div class="text-[10px] text-center opacity-70 pb-1">{Object.keys(selected_point_keys).length} selected</div>
+            {/if}
             <!-- Arrow keys for non-circular agar plates -->
             {#if Object.keys(point_colors).length > 0 && (grid_style === "Echo384" || grid_style === "Echo384Image" || grid_style === "Echo1536" || grid_style === "Echo1536Image")}
                 <div class="flex flex-col mt-auto" in:fade={{ duration: 300 }}>
                     <div class="flex w-full justify-center">
-                        <button class="kbd" onclick={() => {point_colors = shiftPoints("up", grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style); groupByColors();}}>▲</button>
+                        <button class="kbd" onclick={() => movePointsByDirection("up")}>▲</button>
                     </div>
                     <div class="flex w-full justify-center gap-2 pt-2">
-                        <button class="kbd" onclick={() => {point_colors = shiftPoints("left", grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style); groupByColors();}}>◀︎</button>
-                        <button class="kbd" onclick={() => {point_colors = shiftPoints("down", grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style); groupByColors();}}>▼</button>
-                        <button class="kbd" onclick={() => {point_colors = shiftPoints("right", grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style); groupByColors();}}>▶︎</button>
+                        <button class="kbd" onclick={() => movePointsByDirection("left")}>◀︎</button>
+                        <button class="kbd" onclick={() => movePointsByDirection("down")}>▼</button>
+                        <button class="kbd" onclick={() => movePointsByDirection("right")}>▶︎</button>
                     </div>
                 </div>
             {:else}
