@@ -8,10 +8,18 @@ export const POST = async ({ request }) => {
     let record;
     try {
         await pb.admins.authWithPassword(PB_EMAIL, PB_PASSWORD);
-        record = await pb.collection('sbs_designs').getOne(id);
+        record = await pb.collection('sbs_designs_official').getOne(id);
     } catch (err) {
         if (err.status === 404) {
-            record = await pb.collection('designs').getOne(id);
+            try {
+                record = await pb.collection('sbs_designs').getOne(id);
+            } catch (err2) {
+                if (err2.status === 404) {
+                    record = await pb.collection('designs').getOne(id);
+                } else {
+                    return new Response(JSON.stringify({success: false}))
+                }
+            }
         } else {
             return new Response(JSON.stringify({success: false}))
         }

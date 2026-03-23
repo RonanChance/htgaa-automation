@@ -14,7 +14,7 @@
     let ginkgo_mode = $state(true);
 
     // GRID DATA
-    let grid_style = $state('Echo1536'); // 'Standard', 'Honeycomb', 'Radial', 'QRCode', 'Image'
+    let grid_style = $state('Echo1536Image');
     let radius_mm = $state(39.9);
     let grid_spacing_mm = $state(2.2);
     let prev_grid_spacing_mm = $state(3);
@@ -33,6 +33,8 @@
     let uploading = $state(false);
     let current_color = $state('sfGFP');
     let contentToCopy = $state();
+    let shareLink = $state('');
+    let shareLinkInput = $state();
     let showBacteriaModal = $state(false);
     let animate = $state(false);
     let animateToken = 0;
@@ -42,12 +44,19 @@
     let isSelectingRegion = $state(false);
     let selectionStart = $state(null);
     let selectionCurrent = $state(null);
+    let colorCycleGroups = $state({});
     let lastKey = null;
     let groupScheduled = false;
     let downKey = null;
     let didMove = false;
     let downX = 0;
     let downY = 0;
+    let rightClickErasing = false;
+    let rightClickRestoreColor = null;
+    let undoStack = $state([]);
+    let pendingPointerUndoSnapshot = null;
+    let pointerMutationRecorded = false;
+    const MAX_UNDO_STEPS = 100;
     const DRAG_PX = 4;
 
     // DESIGN METADATA
@@ -66,8 +75,11 @@
     let saturation = $state(130);
     let rotation = $state(0);
     let zoom = $state(1);
+    let imagePanX = $state(0);
+    let imagePanY = $state(0);
     let imageColors = $state([]);
     let file = null;
+    let mediaUploadInput;
     let img = $state(null);
     let whiteBgReplacement = $state('Invisible');
     let blackBgReplacement = $state('Invisible');
@@ -126,33 +138,48 @@
             if (loadRecordId) {
                 loadRecord(loadRecordId);
             }
-            let isHTGAA = $page.url.searchParams.get('htgaa');
-            if ($page.url.searchParams.get('htgaa')) {ginkgo_mode = false; grid_style = 'Standard';}
-            if ($page.url.href.includes('opentrons') || $page.url.searchParams.get('opentrons')) {ginkgo_mode = false; grid_style = 'Standard';}
+            grid_style = 'Echo1536Image';
             
             window.addEventListener('keydown', function(event) {
+                const activeElement = document.activeElement;
+                const isTypable = activeElement?.nodeName === 'INPUT' || activeElement?.nodeName === 'TEXTAREA' || activeElement?.isContentEditable;
+
+                const isUndoShortcut = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z';
+                if (isUndoShortcut && !isTypable) {
+                    event.preventDefault();
+                    undoLastChange();
+                    return;
+                }
+
+                const isDeleteShortcut = (event.key === 'Backspace' || event.key === 'Delete');
+                if (isDeleteShortcut && !isTypable && interaction_mode === 'select' && Object.keys(selected_point_keys).length > 0) {
+                    event.preventDefault();
+                    clearSelectionPoints();
+                    return;
+                }
+
+                if (event.key === 'Escape' && !isTypable && interaction_mode === 'select') {
+                    event.preventDefault();
+                    setInteractionMode('draw');
+                    return;
+                }
+
                 if (Object.keys(point_colors).length > 0 && ['Standard', 'Grid', 'Image', 'Echo384', 'Echo384Image', 'Echo1536', 'Echo1536Image'].includes(grid_style)) {
                     const directions = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right'};
                     const direction = directions[event.key];
                     if (direction) {
-                        const activeElement = document.activeElement;
-                        const isTypable = activeElement?.nodeName === 'INPUT' || activeElement?.nodeName === 'TEXTAREA' || activeElement?.isContentEditable;
                         if (isTypable) return;
                         event.preventDefault();
                         movePointsByDirection(direction);
                     }
                 }
                 if (animate == true && event.key === ' ') {
-                    const activeElement = document.activeElement;
-                    const isTypable = activeElement.nodeName === 'INPUT' || activeElement.nodeName === 'TEXTAREA' || activeElement.isContentEditable;
                     if (!isTypable) {
                         event.preventDefault();
                         togglePlayback();
                     }
                 }
                 if (animate == true && event.key === 'Shift') {
-                    const activeElement = document.activeElement;
-                    const isTypable = activeElement.nodeName === 'INPUT' || activeElement.nodeName === 'TEXTAREA' || activeElement.isContentEditable;
                     if (!isTypable) { 
                         currentFps = 12;
                     }
@@ -167,9 +194,7 @@
                     }
                 }
             });
-            if (animate) {
-                grid_style = 'Echo1536Image';
-            }
+            if (animate) grid_style = 'Echo1536Image';
         }
     });
 
@@ -220,20 +245,25 @@
         pixelatedSrc = null;
         pixelatedCanvas = null;
         imageColors = [];
+        imagePanX = 0;
+        imagePanY = 0;
 
         // --- clear design state ---
         point_colors = {};
         points_by_color = {};
         selected_point_keys = {};
+        colorCycleGroups = {};
+        undoStack = [];
+        grid_style = 'Echo1536';
         interaction_mode = 'draw';
         isSelectingRegion = false;
         selectionStart = null;
         selectionCurrent = null;
         QRCode_text = '';
-        points = {};
 
         radius_mm = 40;
         animationImages = null;
+        points = generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors);
     }
 
 
@@ -249,7 +279,7 @@
             grid_spacing_mm = prev_grid_spacing_mm = r.record.grid_spacing_mm;
             radius_mm = r.record.radius_mm;
             point_size = r.record.point_size || 1;
-            grid_style = r.record.grid_style;
+            grid_style = 'Echo1536Image';
             
             if (r.record.grid_style === 'Image' || r.record.grid_style === 'Echo384Image' || r.record.grid_style === 'Echo1536Image') {
                 brightness = r.record.brightness;
@@ -259,6 +289,8 @@
                 pixelation = r.record.pixelation;
                 zoom = r.record.zoom || 1;
                 rotation = r.record.rotation;
+                imagePanX = r.record.image_pan_x || 0;
+                imagePanY = r.record.image_pan_y || 0;
                 canvasSize = r.record.canvas_size;
 
                 if (r.record.gif_url) {
@@ -314,9 +346,12 @@
                 contrast,
                 saturation,
                 ginkgo_mode,
+                target_collection: 'sbs_designs_official',
                 lastLoadedGifUrl,
                 zoom,
                 rotation,
+                image_pan_x: imagePanX,
+                image_pan_y: imagePanY,
                 pixelation
             })
         });
@@ -332,13 +367,20 @@
 
             const link = `/?id=${r.id}`;
 
-            const linkModal = document.getElementById('gallery_link_modal');
-            linkModal.querySelector('a').href = link;
-            linkModal.querySelector('.link-text').textContent = 'ginkgoartworks.com' + link;
-            linkModal.showModal();
+            const fullLink = `https://ginkgoartworks.com${link}`;
+            shareLink = fullLink;
+            document.getElementById('gallery_link_modal')?.showModal();
 
         } else if (r.duplicate) {
-            showAlert("alert-warning", "Duplicate submission.");
+            if (r.id) {
+                showAlert("alert-warning", `Exact match already exists: ${r.id}`);
+                const link = `/?id=${r.id}`;
+                const fullLink = `https://ginkgoartworks.com${link}`;
+                shareLink = fullLink;
+                document.getElementById('gallery_link_modal')?.showModal();
+            } else {
+                showAlert("alert-warning", "Duplicate submission.");
+            }
         } else {
             showAlert("alert-error", "Error: try again later.");
         }
@@ -357,7 +399,7 @@
             point_colors = Object.fromEntries(entries);
         }
         if (Object.keys(selected_point_keys).length > 0) {
-            const currentKeys = new Set(entries.map(([point]) => point));
+            const currentKeys = new Set((points || []).map(({ x, y }) => `${x}, ${y}`));
             const nextSelection = {};
             for (const key of Object.keys(selected_point_keys)) {
                 const normalized = normalizePointKey(key);
@@ -365,6 +407,20 @@
             }
             if (Object.keys(nextSelection).length !== Object.keys(selected_point_keys).length) {
                 selected_point_keys = nextSelection;
+            }
+        }
+        if (Object.keys(colorCycleGroups).length > 0) {
+            const nextGroups = {};
+            for (const [groupName, groupKeys] of Object.entries(colorCycleGroups)) {
+                const kept = {};
+                for (const key of Object.keys(groupKeys || {})) {
+                    const normalized = normalizePointKey(key);
+                    if (renderedKeys.has(normalized)) kept[normalized] = true;
+                }
+                if (Object.keys(kept).length > 0) nextGroups[groupName] = kept;
+            }
+            if (Object.keys(nextGroups).length !== Object.keys(colorCycleGroups).length) {
+                colorCycleGroups = nextGroups;
             }
         }
 
@@ -1080,6 +1136,8 @@ def run(protocol):
         zoom = 1;
         pixelation = 4;
         rotation = 0;
+        imagePanX = 0;
+        imagePanY = 0;
         whiteBgReplacement = "Invisible";
         blackBgReplacement = "Invisible";
         color_mapping = getColorMapping(well_colors, false);
@@ -1213,6 +1271,8 @@ def run(protocol):
             zoom = 0.91;
             pixelation = 4;
             rotation = 0;
+            imagePanX = 0;
+            imagePanY = 0;
         }
 
         whiteBgReplacement = 'Invisible';
@@ -1293,9 +1353,13 @@ def run(protocol):
         const containScale = Math.min(targetW / iw, targetH / ih);
         const drawW = iw * containScale * zoom;
         const drawH = ih * containScale * zoom;
+        const maxPanX = Math.max(0, (drawW - targetW) / 2);
+        const maxPanY = Math.max(0, (drawH - targetH) / 2);
+        const panX = Math.max(-maxPanX, Math.min(maxPanX, imagePanX));
+        const panY = Math.max(-maxPanY, Math.min(maxPanY, imagePanY));
 
         ctx.save();
-        ctx.translate(targetW / 2, targetH / 2);
+        ctx.translate(targetW / 2 + panX, targetH / 2 + panY);
         ctx.rotate((rotation * Math.PI) / 180);
         ctx.drawImage(frameImg, -drawW / 2, -drawH / 2, drawW, drawH);
         ctx.restore();
@@ -1349,6 +1413,8 @@ def run(protocol):
         zoom = 1;
         pixelation = 4;
         rotation = 0;
+        imagePanX = 0;
+        imagePanY = 0;
         whiteBgReplacement = 'Invisible';
         blackBgReplacement = 'Invisible';
         color_mapping = getColorMapping(well_colors, false)
@@ -1425,8 +1491,13 @@ def run(protocol):
         // final draw (apply zoom here)
         ctx.imageSmoothingEnabled = false;
 
-        const dx = (targetW - drawW) / 2;
-        const dy = (targetH - drawH) / 2;
+        const maxPanX = Math.max(0, (drawW - targetW) / 2);
+        const maxPanY = Math.max(0, (drawH - targetH) / 2);
+        const panX = Math.max(-maxPanX, Math.min(maxPanX, imagePanX));
+        const panY = Math.max(-maxPanY, Math.min(maxPanY, imagePanY));
+
+        const dx = (targetW - drawW) / 2 + panX;
+        const dy = (targetH - drawH) / 2 + panY;
         ctx.drawImage(temp, dx, dy, drawW, drawH);
 
         //
@@ -1505,6 +1576,12 @@ def run(protocol):
         return s;
     }
 
+    function echoWellFromPoint(x, y) {
+        const rowIndex = Math.max(0, Math.round(y / 2.5));
+        const colIndex = Math.max(0, Math.round(x / 2.5));
+        return `${rowLabel1536(rowIndex)}${colIndex + 1}`;
+    }
+
     function stripAfterLastUnderscore(label) {
         const idx = label.lastIndexOf("_");
         return idx === -1 ? label : label.slice(0, idx);
@@ -1559,19 +1636,28 @@ def run(protocol):
         }
     }
 
+    async function promptImageUpload() {
+        grid_style = 'Echo1536Image';
+        interaction_mode = 'draw';
+        await tick();
+        if (mediaUploadInput) {
+            mediaUploadInput.value = '';
+            mediaUploadInput.click();
+        }
+    }
+
     function applySelectionFromBounds(containerWidth, containerHeight, clickedKey = null) {
         const b = selectionBounds();
         const nextSelection = {};
 
         if (!b || (b.width < DRAG_PX && b.height < DRAG_PX)) {
-            if (clickedKey && point_colors[clickedKey]) nextSelection[clickedKey] = true;
+            if (clickedKey) nextSelection[clickedKey] = true;
             selected_point_keys = nextSelection;
             return;
         }
 
         for (const { x, y } of points) {
             const key = `${x}, ${y}`;
-            if (!point_colors[key]) continue;
             const px = (pointLeftPercent(x) / 100) * containerWidth;
             const py = (pointTopPercent(y) / 100) * containerHeight;
             if (px >= b.left && px <= b.left + b.width && py >= b.top && py <= b.top + b.height) {
@@ -1582,8 +1668,189 @@ def run(protocol):
         selected_point_keys = nextSelection;
     }
 
+    function isImageGridStyle() {
+        return grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image';
+    }
+
+    function getActiveImageDimensions() {
+        const src = img || (animationImages?.length ? animationImages[frameIndex % animationImages.length] : null);
+        if (!src) return { iw: 0, ih: 0 };
+        const iw = src.width || src.naturalWidth || 0;
+        const ih = src.height || src.naturalHeight || 0;
+        return { iw, ih };
+    }
+
+    function getImagePanLimitsFor(iw, ih, targetW, targetH) {
+        if (!iw || !ih || !targetW || !targetH) return { maxPanX: 0, maxPanY: 0 };
+        const containScale = Math.min(targetW / iw, targetH / ih);
+        const drawW = iw * containScale * zoom;
+        const drawH = ih * containScale * zoom;
+        return {
+            maxPanX: Math.max(0, (drawW - targetW) / 2),
+            maxPanY: Math.max(0, (drawH - targetH) / 2)
+        };
+    }
+
+    function nudgeImagePan(direction) {
+        const { iw, ih } = getActiveImageDimensions();
+        if (!iw || !ih) return;
+        const { width: targetW, height: targetH } = getImageCanvasDimensions(canvasSize);
+        const { maxPanX, maxPanY } = getImagePanLimitsFor(iw, ih, targetW, targetH);
+        if (maxPanX <= 0 && maxPanY <= 0) return;
+
+        const stepX = targetW / 48; // one 1536-col step at default canvas scale
+        const stepY = targetH / 32; // one 1536-row step at default canvas scale
+
+        let nextPanX = imagePanX;
+        let nextPanY = imagePanY;
+
+        if (direction === 'left') nextPanX -= stepX;
+        else if (direction === 'right') nextPanX += stepX;
+        else if (direction === 'up') nextPanY -= stepY;
+        else if (direction === 'down') nextPanY += stepY;
+
+        imagePanX = Math.max(-maxPanX, Math.min(maxPanX, nextPanX));
+        imagePanY = Math.max(-maxPanY, Math.min(maxPanY, nextPanY));
+    }
+
+    function clearSelectionPoints() {
+        if (Object.keys(selected_point_keys).length === 0) return;
+        const snapshot = clonePointColors();
+        const nextPointColors = { ...point_colors };
+        let changed = false;
+
+        for (const key of Object.keys(selected_point_keys)) {
+            if (key in nextPointColors) {
+                delete nextPointColors[key];
+                changed = true;
+            }
+        }
+        if (!changed) return;
+
+        pushUndoSnapshot(snapshot);
+        point_colors = nextPointColors;
+        groupByColors();
+    }
+
+    function applyColorToSelection(colorName) {
+        if (interaction_mode !== 'select' || Object.keys(selected_point_keys).length === 0) return false;
+
+        const snapshot = clonePointColors();
+        const nextPointColors = { ...point_colors };
+        let changed = false;
+
+        for (const key of Object.keys(selected_point_keys)) {
+            if (colorName === 'Erase') {
+                if (key in nextPointColors) {
+                    delete nextPointColors[key];
+                    changed = true;
+                }
+            } else if (nextPointColors[key] !== colorName) {
+                nextPointColors[key] = colorName;
+                changed = true;
+            }
+        }
+
+        if (!changed) return true;
+
+        pushUndoSnapshot(snapshot);
+        point_colors = nextPointColors;
+        groupByColors();
+        return true;
+    }
+
+    function chooseBacteriaColor(name, event = null) {
+        // Ignore click handlers that are part of a double-click cycle action.
+        if (event?.detail > 1) return;
+        current_color = name;
+        applyColorToSelection(name);
+    }
+
+    function cycleColorRight(sourceColor) {
+        const cycleColors = Object.entries(current_well_colors)
+            .filter(([name, val]) => name !== 'White' && name !== 'Erase' && val)
+            .map(([name]) => name);
+        if (cycleColors.length < 2) return;
+
+        let groupedKeys = colorCycleGroups[sourceColor];
+        if (!groupedKeys || Object.keys(groupedKeys).length === 0) {
+            groupedKeys = {};
+            for (const [key, color] of Object.entries(point_colors)) {
+                if (color === sourceColor) groupedKeys[key] = true;
+            }
+            if (Object.keys(groupedKeys).length === 0) return;
+            colorCycleGroups = { ...colorCycleGroups, [sourceColor]: groupedKeys };
+        }
+
+        const snapshot = clonePointColors();
+        const nextPointColors = { ...point_colors };
+        let changed = false;
+        const nextGroup = {};
+
+        for (const key of Object.keys(groupedKeys)) {
+            const color = nextPointColors[key];
+            if (!color) continue;
+            const idx = cycleColors.indexOf(color);
+            if (idx === -1) continue;
+            const targetColor = cycleColors[(idx + 1) % cycleColors.length];
+            if (targetColor !== color) {
+                nextPointColors[key] = targetColor;
+                changed = true;
+            }
+            nextGroup[key] = true;
+        }
+        if (!changed) return;
+
+        pushUndoSnapshot(snapshot);
+        point_colors = nextPointColors;
+        colorCycleGroups = { ...colorCycleGroups, [sourceColor]: nextGroup };
+        groupByColors();
+    }
+
+    function clonePointColors() {
+        return { ...point_colors };
+    }
+
+    function arePointColorMapsEqual(a, b) {
+        const aKeys = Object.keys(a);
+        const bKeys = Object.keys(b);
+        if (aKeys.length !== bKeys.length) return false;
+        for (const key of aKeys) {
+            if (a[key] !== b[key]) return false;
+        }
+        return true;
+    }
+
+    function pushUndoSnapshot(snapshotPointColors, snapshotSelectedKeys = selected_point_keys) {
+        const normalizedSnapshot = { ...snapshotPointColors };
+        undoStack = [...undoStack, {
+            point_colors: normalizedSnapshot,
+            selected_point_keys: { ...snapshotSelectedKeys }
+        }];
+        if (undoStack.length > MAX_UNDO_STEPS) {
+            undoStack = undoStack.slice(undoStack.length - MAX_UNDO_STEPS);
+        }
+    }
+
+    function undoLastChange() {
+        if (undoStack.length === 0) return;
+        const previous = undoStack[undoStack.length - 1];
+        undoStack = undoStack.slice(0, -1);
+        point_colors = { ...previous.point_colors };
+        selected_point_keys = { ...(previous.selected_point_keys || {}) };
+        groupByColors();
+    }
+
     function movePointsByDirection(direction) {
+        if (isImageGridStyle() && (img || animationImages?.length)) {
+            nudgeImagePan(direction);
+            if (animate) markFramesDirty();
+            else processImage(canvasSize, pixelation);
+            return;
+        }
+
         if (interaction_mode === 'select' && Object.keys(selected_point_keys).length > 0) {
+            const snapshot = clonePointColors();
             const selectedSubset = {};
             for (const [key, color] of Object.entries(point_colors)) {
                 const normalized = normalizePointKey(key);
@@ -1596,13 +1863,19 @@ def run(protocol):
             for (const key of Object.keys(selectedSubset)) delete nextPointColors[key];
             for (const [key, color] of Object.entries(movedSubset)) nextPointColors[normalizePointKey(key)] = color;
 
+            if (arePointColorMapsEqual(snapshot, nextPointColors)) return;
+            pushUndoSnapshot(snapshot);
             point_colors = nextPointColors;
             selected_point_keys = Object.fromEntries(Object.keys(movedSubset).map((k) => [normalizePointKey(k), true]));
             groupByColors();
             return;
         }
 
-        point_colors = shiftPoints(direction, grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style);
+        const snapshot = clonePointColors();
+        const nextPointColors = shiftPoints(direction, grid_spacing_mm, grid_spacing_mm, radius_mm, point_colors, grid_style);
+        if (arePointColorMapsEqual(snapshot, nextPointColors)) return;
+        pushUndoSnapshot(snapshot);
+        point_colors = nextPointColors;
         groupByColors();
     }
 
@@ -1655,8 +1928,18 @@ def run(protocol):
         lastKey = key;
 
         if (current_color === "Erase") {
+            if (!point_colors[key]) return;
+            if (!pointerMutationRecorded && pendingPointerUndoSnapshot) {
+                pushUndoSnapshot(pendingPointerUndoSnapshot);
+                pointerMutationRecorded = true;
+            }
             delete point_colors[key];
         } else {
+            if (point_colors[key] === current_color) return;
+            if (!pointerMutationRecorded && pendingPointerUndoSnapshot) {
+                pushUndoSnapshot(pendingPointerUndoSnapshot);
+                pointerMutationRecorded = true;
+            }
             point_colors[key] = current_color;
         }
 
@@ -1669,9 +1952,17 @@ def run(protocol):
         if (!key) return;
 
         if (point_colors[key]) {
+            if (!pointerMutationRecorded && pendingPointerUndoSnapshot) {
+                pushUndoSnapshot(pendingPointerUndoSnapshot);
+                pointerMutationRecorded = true;
+            }
             delete point_colors[key];
         } else {
             if (current_color === "Erase") return;
+            if (!pointerMutationRecorded && pendingPointerUndoSnapshot) {
+                pushUndoSnapshot(pendingPointerUndoSnapshot);
+                pointerMutationRecorded = true;
+            }
             point_colors[key] = current_color;
         }
 
@@ -1690,7 +1981,18 @@ def run(protocol):
             return;
         }
 
+        if (e.button === 2) {
+            rightClickErasing = true;
+            rightClickRestoreColor = current_color;
+            current_color = 'Erase';
+        } else {
+            rightClickErasing = false;
+            rightClickRestoreColor = null;
+        }
+
         isPainting = true;
+        pendingPointerUndoSnapshot = clonePointColors();
+        pointerMutationRecorded = false;
         lastKey = null;
 
         didMove = false;
@@ -1747,6 +2049,16 @@ def run(protocol):
         }
 
         downKey = null;
+        pendingPointerUndoSnapshot = null;
+        pointerMutationRecorded = false;
+
+        if (rightClickErasing) {
+            if (rightClickRestoreColor != null) {
+                current_color = rightClickRestoreColor;
+            }
+            rightClickErasing = false;
+            rightClickRestoreColor = null;
+        }
     }
 
     function pausePlayback() {
@@ -1935,9 +2247,16 @@ async function rebuildFramesNow() {
         const baseScale = Math.min(SAMPLE_W / iw, SAMPLE_H / ih) * zoom;
         const drawW = iw * baseScale;
         const drawH = ih * baseScale;
+        const { width: targetW, height: targetH } = getImageCanvasDimensions(canvasSize);
+        const panScaleX = targetW ? (SAMPLE_W / targetW) : 0;
+        const panScaleY = targetH ? (SAMPLE_H / targetH) : 0;
+        const maxPanX = Math.max(0, (drawW - SAMPLE_W) / 2);
+        const maxPanY = Math.max(0, (drawH - SAMPLE_H) / 2);
+        const panX = Math.max(-maxPanX, Math.min(maxPanX, imagePanX * panScaleX));
+        const panY = Math.max(-maxPanY, Math.min(maxPanY, imagePanY * panScaleY));
 
         sampleCtx.save();
-        sampleCtx.translate(SAMPLE_W * 0.5, SAMPLE_H * 0.5);
+        sampleCtx.translate(SAMPLE_W * 0.5 + panX, SAMPLE_H * 0.5 + panY);
         sampleCtx.rotate((rotation * Math.PI) / 180);
         sampleCtx.drawImage(frame, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
         sampleCtx.restore();
@@ -2075,12 +2394,55 @@ async function rebuildFramesNow() {
             video.currentTime = time;
         });
     }
+
+    async function copyGalleryLink() {
+        const href = (shareLink || '').trim();
+        if (!href) return;
+        try {
+            if (navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(href);
+            } else {
+                throw new Error('Clipboard API unavailable');
+            }
+            showAlert("alert-success", "Copied link to clipboard.");
+        } catch {
+            // iOS/Safari fallback
+            if (shareLinkInput) {
+                shareLinkInput.focus();
+                shareLinkInput.select();
+                shareLinkInput.setSelectionRange(0, href.length);
+            }
+            const ok = document.execCommand('copy');
+            if (ok) {
+                showAlert("alert-success", "Copied link to clipboard.");
+            } else {
+                window.prompt('Copy this link:', href);
+                showAlert("alert-warning", "Copy opened in prompt.");
+            }
+        }
+    }
 </script>
 
 <dialog id="gallery_link_modal" class="modal">
   <div class="modal-box">
     <h3 class="font-bold text-lg text-center pb-1">Uploaded</h3>
-    <a class="link link-primary break-all link-text text-center text-sm mx-auto" target="_blank"></a>
+    <div class="mt-3 space-y-3">
+        <div class="flex items-center justify-between rounded-md border border-base-300 bg-base-200 px-3 py-2">
+            <input
+                bind:this={shareLinkInput}
+                class="input input-ghost input-xs opacity-80 flex-1 min-w-0 pr-2 h-auto py-0 text-xs truncate"
+                readonly
+                tabindex="-1"
+                value={shareLink}
+                title={shareLink}
+            />
+            <button class="btn btn-xs" type="button" onclick={copyGalleryLink}>Copy</button>
+        </div>
+        <p class="text-xs opacity-80 text-left">
+            Submit this link with your order at
+            <a class="underline" href="https://cloud.ginkgo.bio/protocols/fluorescent-pixel-art-generation" target="_blank" rel="noopener noreferrer">cloud.ginkgo.bio</a>.
+        </p>
+    </div>
     <div class="modal-action">
       <form method="dialog">
         <button class="btn">Close</button>
@@ -2094,7 +2456,7 @@ async function rebuildFramesNow() {
         <svg version="1.2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1514 1527" width="20" height="20" fill="currentColor" >
             <path id="Layer" class="" d="m1151.8 146.1l-11.2 11.2c-22.4 18.7-52.2 26.1-78.3 14.9l-82-33.6c-26.1-11.2-44.7-37.3-44.7-67.1v-18.7c0-29.8-26.1-52.2-52.2-52.2h-227.4c-29.8 0-52.2 22.4-52.2 52.2v18.7c0 29.8-18.6 55.9-44.7 67.1l-82 33.6c-26.1 11.2-59.6 3.8-78.3-14.9l-11.1-11.2c-22.4-18.7-52.2-18.7-74.6 0l-167.7 160.5c-18.7 18.6-22.4 52.2 0 74.6l11.2 11.2c18.6 22.4 26 52.2 14.9 78.4l-33.6 82.1c-11.2 26.1-37.3 44.7-67.1 44.7h-18.6c-29.8 0-52.2 26.2-52.2 52.3v227.6c0 29.9 22.4 52.3 52.2 52.3h18.6c29.8 0 55.9 18.6 67.1 44.7l33.6 82.1c11.1 26.2 3.7 59.8-14.9 78.4l-11.2 11.2c-18.7 22.4-18.7 52.2 0 74.6l160.3 160.5c18.6 18.7 52.1 22.4 74.5 0l11.2-11.2c22.3-18.7 52.2-26.1 78.3-14.9l82 33.6c26.1 11.2 44.7 37.3 44.7 67.1v18.7c0 29.8 26.1 52.2 52.2 52.2h227.4c29.8 0 52.1-22.4 52.1-52.2v-18.7c0-29.8 18.7-55.9 44.8-67.1l82-33.6c26.1-11.2 59.6-3.8 78.2 14.9l11.2 11.2c22.4 18.7 52.2 18.7 74.6 0l52.2-52.2-290.8-291.1c-37.3-37.3-123-123.2-234.8-11.2-33.6 33.6-55.9 78.4-89.5 111.9-78.2 78.4-171.4 41.1-208.7-33.5-22.4-44.8-14.9-48.6-37.3-89.6-26.1-41.1-70.8-70.9-85.7-123.2-11.2-52.2 14.9-67.1 14.9-93.2 0-26.2-26.1-56-18.6-93.3 3.7-29.9 26.1-48.5 29.8-63.5 3.7-14.9 3.7-26.1 7.4-48.5 14.9-67.2 78.3-100.7 134.2-63.4 37.3 26.1 119.3 115.7 130.5 104.5 11.2-11.2-78.3-93.3-104.4-130.6-37.3-56-3.7-123.2 63.4-134.4 22.3-3.7 37.3-3.7 48.4-7.5 15-7.4 29.9-26.1 63.4-29.8 37.3-7.5 70.8 18.7 93.2 18.7 26.1 0 44.7-26.2 93.2-15 52.2 11.2 82 59.7 123 85.9 41 26.1 41 18.6 89.4 37.3 74.6 37.3 115.6 130.6 33.6 208.9-33.6 33.6-78.3 52.3-111.8 89.6-111.9 112-22.4 197.8 11.2 235.1l290.7 291.1 52.2-52.3c18.6-18.6 22.3-52.2 0-74.6l-11.2-11.2c-18.6-22.4-26.1-52.2-14.9-78.4l33.5-82.1c11.2-26.1 37.3-44.7 67.1-44.7h18.7c29.8 0 52.1-26.2 52.1-52.3v-227.6c0-29.9-22.3-52.3-52.1-52.3h-18.7c-29.8 0-55.9-18.6-67.1-44.7l-33.5-82.1c-11.2-26.2-3.7-59.7 14.9-78.4l11.2-11.2c18.6-22.4 18.6-52.2 0-74.6l-160.3-160.5c-3.7-29.9-37.3-29.9-55.9-11.2z"/>
         </svg>
-        Automation Art Interface
+        Fluorescent Pixel Art
     </h2>
 </article>
 
@@ -2256,33 +2618,20 @@ async function rebuildFramesNow() {
 {/if}
 
 <!-- MENU BAR -->
-<div class="flex flex-row w-full max-w-[100vw] sm:max-w-[490px] mx-auto px-5 pt-3">
-    <div class="mr-auto items-center flex flex-row gap-2 opacity-70">
-        <label class="swap mr-auto">
-            <input type="checkbox" id="toggle-outlines" bind:checked={show_outlines} />
-            <svg class="swap-on w-6 h-6 opacity-70" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <g data-name="Layer 2"> <g data-name="eye"> <rect width="24" height="24" opacity="0"></rect> <circle cx="12" cy="12" r="1.5"></circle> <path d="M21.87 11.5c-.64-1.11-4.16-6.68-10.14-6.5-5.53.14-8.73 5-9.6 6.5a1 1 0 0 0 0 1c.63 1.09 4 6.5 9.89 6.5h.25c5.53-.14 8.74-5 9.6-6.5a1 1 0 0 0 0-1zm-9.87 4a3.5 3.5 0 1 1 3.5-3.5 3.5 3.5 0 0 1-3.5 3.5z"></path> </g> </g> </g></svg>
-            <svg class="swap-off w-6 h-6 opacity-70" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <g data-name="Layer 2"> <g data-name="eye-off"> <rect width="24" height="24" opacity="0"></rect> <circle cx="12" cy="12" r="1.5"></circle> <path d="M15.29 18.12L14 16.78l-.07-.07-1.27-1.27a4.07 4.07 0 0 1-.61.06A3.5 3.5 0 0 1 8.5 12a4.07 4.07 0 0 1 .06-.61l-2-2L5 7.87a15.89 15.89 0 0 0-2.87 3.63 1 1 0 0 0 0 1c.63 1.09 4 6.5 9.89 6.5h.25a9.48 9.48 0 0 0 3.23-.67z"></path> <path d="M8.59 5.76l2.8 2.8A4.07 4.07 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 4.07 4.07 0 0 1-.06.61l2.68 2.68.84.84a15.89 15.89 0 0 0 2.91-3.63 1 1 0 0 0 0-1c-.64-1.11-4.16-6.68-10.14-6.5a9.48 9.48 0 0 0-3.23.67z"></path> <path d="M20.71 19.29L19.41 18l-2-2-9.52-9.53L6.42 5 4.71 3.29a1 1 0 0 0-1.42 1.42L5.53 7l1.75 1.7 7.31 7.3.07.07L16 17.41l.59.59 2.7 2.71a1 1 0 0 0 1.42 0 1 1 0 0 0 0-1.42z"></path> </g> </g> </g></svg>
-        </label>
-        <label class="swap mr-auto">
-            <input type="checkbox" id="toggle-mode" disabled={Object.keys(point_colors).length > 0} class="{Object.keys(point_colors).length > 0 ? 'tooltip tooltip-top' : ''}" data-tip="Erase Grid to Change" onclick={() => {if (ginkgo_mode) {grid_style = 'Standard'} else {grid_style = 'Echo1536'}; ginkgo_mode = !ginkgo_mode;}} />
-            <svg class="swap-on w-5 h-5 opacity-75" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="8" cy="16" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="16" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="16" r="1" fill="currentColor" stroke="none" /></svg>
-            <svg class="swap-off w-5 h-5 opacity-75" fill="currentColor" viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path d="M 7.7148 49.5742 L 48.2852 49.5742 C 53.1836 49.5742 55.6446 47.1367 55.6446 42.3086 L 55.6446 13.6914 C 55.6446 8.8633 53.1836 6.4258 48.2852 6.4258 L 7.7148 6.4258 C 2.8398 6.4258 .3554 8.8398 .3554 13.6914 L .3554 42.3086 C .3554 47.1602 2.8398 49.5742 7.7148 49.5742 Z M 4.1288 13.8789 C 4.1288 11.4414 5.4413 10.1992 7.7851 10.1992 L 18.1210 10.1992 L 18.1210 19.8555 L 4.1288 19.8555 Z M 21.6601 19.8555 L 21.6601 10.1992 L 34.2460 10.1992 L 34.2460 19.8555 Z M 37.7851 19.8555 L 37.7851 10.1992 L 48.2147 10.1992 C 50.5350 10.1992 51.8708 11.4414 51.8708 13.8789 L 51.8708 19.8555 Z M 21.8241 32.8398 L 21.8241 23.1602 L 34.4101 23.1602 L 34.4101 32.8398 Z M 37.7851 32.8398 L 37.7851 23.1602 L 51.8708 23.1602 L 51.8708 32.8398 Z M 18.1210 23.1602 L 18.1210 32.8398 L 4.1288 32.8398 L 4.1288 23.1602 Z M 48.2147 45.8008 L 37.7851 45.8008 L 37.7851 36.1445 L 51.8708 36.1445 L 51.8708 42.1211 C 51.8708 44.5586 50.5350 45.8008 48.2147 45.8008 Z M 7.7851 45.8008 C 5.4413 45.8008 4.1288 44.5586 4.1288 42.1211 L 4.1288 36.1445 L 18.1210 36.1445 L 18.1210 45.8008 Z M 21.6601 36.1445 L 34.2460 36.1445 L 34.2460 45.8008 L 21.6601 45.8008 Z"></path></g></svg>
-        </label>
+<div class="flex flex-row w-full max-w-[90vw] sm:max-w-[440px] mx-auto pt-0">
+    <div class="items-center flex flex-row gap-2 opacity-70 h-4 text-xs whitespace-nowrap">
         {#if current_point.x != null && current_point.y != null}
-            {roundPoint(current_point.x)}, {roundPoint(current_point.y)}
+            {echoWellFromPoint(current_point.x, current_point.y)}
             <div class="div text-xs" style="color: {well_colors[point_colors[`${current_point.x}, ${current_point.y}`]]};">{hover_point}</div>
+        {:else}
+            <span class="invisible">A1</span>
         {/if}
     </div>
-    {#if ginkgo_mode}
-        <a href='/gallery' class="mr-0 flex flex-row gap-2 items-center opacity-70 text-sm"> Gallery <svg class="w-5 h-5" fill="currentColor" viewBox="0 -0.5 33 33" version="1.1" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <title>pictures1</title> <path d="M26.604 29.587l-2.624-0.72-0.006-7.258 2.51 0.706 3.619-13.509-18.332-4.912-1.208 4.506h-2.068l1.863-6.952 22.193 5.946-5.947 22.193zM23.039 32h-23.039v-22.977h23.039v22.977zM21.041 11.021h-19.043v13.985h19.043v-13.985zM7.849 20.993l2.283-3.692 2.283 2.301 3.139-4.727 3.283 8.134h-14.556l1.855-3.71 1.713 1.694zM6.484 17.086c-0.828 0-1.499-0.67-1.499-1.498s0.671-1.498 1.499-1.498 1.498 0.67 1.498 1.498-0.67 1.498-1.498 1.498z"></path> </g></svg></a>
-    {:else}
-        <a href='/gallery?htgaa=true' class="mr-0 flex flex-row gap-2 items-center opacity-70 text-sm"> Gallery <svg class="w-5 h-5" fill="currentColor" viewBox="0 -0.5 33 33" version="1.1" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <title>pictures1</title> <path d="M26.604 29.587l-2.624-0.72-0.006-7.258 2.51 0.706 3.619-13.509-18.332-4.912-1.208 4.506h-2.068l1.863-6.952 22.193 5.946-5.947 22.193zM23.039 32h-23.039v-22.977h23.039v22.977zM21.041 11.021h-19.043v13.985h19.043v-13.985zM7.849 20.993l2.283-3.692 2.283 2.301 3.139-4.727 3.283 8.134h-14.556l1.855-3.71 1.713 1.694zM6.484 17.086c-0.828 0-1.499-0.67-1.499-1.498s0.671-1.498 1.499-1.498 1.498 0.67 1.498 1.498-0.67 1.498-1.498 1.498z"></path> </g></svg></a>
-    {/if}
 </div>
 
 <!-- AGAR PLATE -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="mb-2 flex items-center mx-auto w-full max-w-[94vw] sm:max-w-[460px] ${(grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === "Echo1536" || grid_style === "Echo1536Image") ? 'aspect-[3/2] mt-4' : 'aspect-square'} rounded-xl">
+<div class="mb-2 flex items-center mx-auto w-full max-w-[94vw] sm:max-w-[460px] ${(grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === "Echo1536" || grid_style === "Echo1536Image") ? 'aspect-[3/2] mt-2' : 'aspect-square'} rounded-xl">
 <div class={`touch-none relative border border-neutral mx-auto w-full max-w-[90vw] 
           sm:max-w-[440px]
           ${grid_style === "Echo384" || grid_style === "Echo384Image" || grid_style === "Echo1536" || grid_style === "Echo1536Image"
@@ -2297,6 +2646,7 @@ async function rebuildFramesNow() {
             ontouchcancel={() => isDrawing = false}
             draggable="false"
             id="grid-container"
+            oncontextmenu={(e) => e.preventDefault()}
             onpointerdown={handlePointerDown}
             onpointermove={handlePointerMove}
             onpointerup={handlePointerUp}
@@ -2402,28 +2752,7 @@ async function rebuildFramesNow() {
     {/if}
 
     {#if grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image'}
-        <div class="flex flex-row w-full items-center mx-auto">
-            <input type="file" id="gif-upload" class="hidden" onchange={handleFileChange} />
-            <div class="join w-full">
-                <label for="gif-upload" type="file" class="btn btn-sm rounded-l rounded-r-none gap-1 bg-neutral-800 hover:bg-neutral-700 text-base-content hover:bg-neutral-600 hover:text-base-content join-item">
-                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path fill-rule="evenodd" clip-rule="evenodd" d="M23 4C23 2.34315 21.6569 1 20 1H4C2.34315 1 1 2.34315 1 4V20C1 21.6569 2.34315 23 4 23H20C21.6569 23 23 21.6569 23 20V4ZM21 4C21 3.44772 20.5523 3 20 3H4C3.44772 3 3 3.44772 3 4V20C3 20.5523 3.44772 21 4 21H20C20.5523 21 21 20.5523 21 20V4Z" fill="currentColor"></path> <path d="M4.80665 17.5211L9.1221 9.60947C9.50112 8.91461 10.4989 8.91461 10.8779 9.60947L14.0465 15.4186L15.1318 13.5194C15.5157 12.8476 16.4843 12.8476 16.8682 13.5194L19.1451 17.5039C19.526 18.1705 19.0446 19 18.2768 19H5.68454C4.92548 19 4.44317 18.1875 4.80665 17.5211Z" fill="currentColor"></path> <path d="M18 8C18 9.10457 17.1046 10 16 10C14.8954 10 14 9.10457 14 8C14 6.89543 14.8954 6 16 6C17.1046 6 18 6.89543 18 8Z" fill="currentColor"></path> </g></svg>
-                    Select
-                </label>
-                <input
-                    class="input input-sm join-item w-full bg-base-200 text-white"
-                    placeholder="https://example.com/animated.png"
-                    bind:value={gifUrlInput}
-                    class:input-success={gifUrlStatus === "valid"}
-                    class:input-error={gifUrlStatus === "invalid"}
-                />
-                <button
-                    class="btn btn-sm rounded-r rounded-l-none gap-1 bg-neutral-800 hover:bg-neutral-700"
-                    onclick={submitGifUrl}
-                >
-                Submit
-                </button>
-            </div>
-        </div>
+        <input type="file" bind:this={mediaUploadInput} class="hidden" accept="image/*,video/mp4" onchange={handleFileChange} />
         {#if animate}
             <div class="flex items-center w-full gap-2 mt-2">
                 <input
@@ -2452,18 +2781,6 @@ async function rebuildFramesNow() {
                 </div>
             </div>
         {/if}
-
-        <div class="flex flex-row w-full mr-auto items-center">        
-            {#if !pixelatedSrc}
-                <div class="w-full text-center">
-                    <span class="opacity-70 text-[9px] leading-tight leading-[1.5] block break-words pt-1">
-                        white background works best <br />
-                        contrast & saturation = colorful results
-                    </span>
-                </div>
-            {/if}
-        </div>
-        {#if !pixelatedSrc} <div class="pb-3"></div> {/if}
     {/if}
 
     {#if img || animationImages?.length}
@@ -2478,7 +2795,7 @@ async function rebuildFramesNow() {
                 {/if}
                 <button class="btn btn-xs btn-primary ..." onclick={() => {if (animate) { randomizeGifColors(); } else { color_mapping = getColorMapping(well_colors, true); processImage(canvasSize, pixelation);} }}>Random</button>
 
-                <button class="btn btn-xs btn-primary gap-1 flex items-center text-[9px] sm:text-xs" onclick={() => {color_mapping = getColorMapping(well_colors, false); brightness = 90; contrast = 120; saturation = 120; zoom = 1; pixelation = 4; rotation = 0; whiteBgReplacement = 'Invisible'; blackBgReplacement = 'Invisible'; processImage(canvasSize, pixelation);}}>
+                <button class="btn btn-xs btn-primary gap-1 flex items-center text-[9px] sm:text-xs" onclick={() => {color_mapping = getColorMapping(well_colors, false); brightness = 90; contrast = 120; saturation = 120; zoom = 1; pixelation = 4; rotation = 0; imagePanX = 0; imagePanY = 0; whiteBgReplacement = 'Invisible'; blackBgReplacement = 'Invisible'; processImage(canvasSize, pixelation);}}>
                     <svg class="w-3 h-3 sm:w-4 sm:h-4"  viewBox="-0.5 0 25 25" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path d="M18.8887 10.25C18.5395 10.2462 18.1974 10.151 17.8964 9.97387C17.5954 9.79677 17.3461 9.54393 17.1731 9.24053C17.0002 8.93714 16.9097 8.59372 16.9107 8.2445C16.9117 7.89528 17.0041 7.55241 17.1787 7.24999L17.2987 7.03997C17.4297 6.81781 17.5133 6.57097 17.5443 6.31493C17.5753 6.0589 17.553 5.79924 17.4788 5.55224C17.4046 5.30524 17.2801 5.07626 17.1132 4.87969C16.9462 4.68312 16.7404 4.52317 16.5087 4.40996V4.40996C16.0227 4.17652 15.467 4.13332 14.9507 4.28875C14.4345 4.44418 13.995 4.78704 13.7187 5.24999V5.24999C13.5404 5.54389 13.2894 5.78686 12.9899 5.9555C12.6903 6.12413 12.3524 6.21276 12.0087 6.21276C11.665 6.21276 11.327 6.12413 11.0275 5.9555C10.728 5.78686 10.4769 5.54389 10.2987 5.24999C10.0224 4.78704 9.58291 4.44418 9.06665 4.28875C8.5504 4.13332 7.99469 4.17652 7.5087 4.40996V4.40996C7.27697 4.52317 7.07116 4.68312 6.90421 4.87969C6.73726 5.07626 6.61277 5.30524 6.53858 5.55224C6.46438 5.79924 6.44209 6.0589 6.47309 6.31493C6.50408 6.57097 6.5877 6.81781 6.71869 7.03997L6.83869 7.24999C7.01332 7.55241 7.10571 7.89528 7.10669 8.2445C7.10767 8.59372 7.01721 8.93714 6.84427 9.24053C6.67134 9.54393 6.42196 9.79677 6.12097 9.97387C5.81999 10.151 5.4779 10.2462 5.12869 10.25C4.64217 10.238 4.16698 10.3979 3.78659 10.7015C3.40621 11.005 3.14493 11.4329 3.04868 11.91C2.99868 12.1996 3.01314 12.4967 3.09101 12.7801C3.16887 13.0635 3.30826 13.3263 3.49921 13.5497C3.69016 13.7731 3.92799 13.9516 4.1958 14.0727C4.46362 14.1937 4.75481 14.2543 5.04868 14.25H5.1687C5.5179 14.2538 5.86 14.349 6.16098 14.5261C6.46196 14.7032 6.71131 14.9561 6.88425 15.2595C7.05718 15.5628 7.14768 15.9063 7.1467 16.2555C7.14572 16.6047 7.05333 16.9476 6.87869 17.25L6.82868 17.33C6.56685 17.7935 6.4956 18.3407 6.62998 18.8558C6.76435 19.3709 7.0938 19.8135 7.54868 20.09V20.09C8.00218 20.351 8.53992 20.4239 9.04654 20.293C9.55316 20.1622 9.98834 19.838 10.2587 19.39L10.2787 19.25C10.457 18.9561 10.708 18.7131 11.0075 18.5445C11.307 18.3759 11.6449 18.2872 11.9887 18.2872C12.3324 18.2872 12.6704 18.3759 12.9699 18.5445C13.2694 18.7131 13.5204 18.9561 13.6987 19.25L13.7687 19.39C14.0391 19.8407 14.4761 20.1668 14.9851 20.2978C15.4942 20.4288 16.0343 20.3542 16.4887 20.09C16.9367 19.8197 17.2609 19.3845 17.3917 18.8779C17.5226 18.3712 17.4497 17.8335 17.1887 17.38L17.1287 17.27C16.9541 16.9676 16.8617 16.6247 16.8607 16.2754C16.8597 15.9262 16.9502 15.5829 17.1231 15.2795C17.296 14.9761 17.5454 14.7232 17.8464 14.5461C18.1474 14.369 18.4895 14.2738 18.8387 14.27H18.9587C19.2525 14.2743 19.5438 14.2138 19.8116 14.0927C20.0794 13.9717 20.3172 13.793 20.5082 13.5696C20.6991 13.3462 20.8385 13.0835 20.9164 12.8001C20.9942 12.5167 21.0087 12.2196 20.9587 11.93C20.8669 11.451 20.6088 11.0198 20.2301 10.7124C19.8514 10.405 19.3763 10.2413 18.8887 10.25V10.25Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path> <path d="M12 14.79C13.3807 14.79 14.5 13.6707 14.5 12.29C14.5 10.9093 13.3807 9.78998 12 9.78998C10.6193 9.78998 9.5 10.9093 9.5 12.29C9.5 13.6707 10.6193 14.79 12 14.79Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path> </g></svg>
                     Default
                 </button>
@@ -2596,22 +2913,10 @@ async function rebuildFramesNow() {
         <!-- GRID TYPE -->
         <div class="flex flex-col w-[50%] gap-2 mx-auto">
             <div class="flex flex-row justify-between">
-                {#if Object.keys(point_colors).length > 0}
-                    <span class="font-semibold">Move</span>
-                {:else}
-                    <span class="font-semibold">Mode</span>
-                {/if}
-                <div class="join">
-                    <button class="btn btn-xs text-xs rounded-r-none text-base-content hover:bg-neutral-700 {interaction_mode === 'draw' ? 'bg-neutral-600' : 'bg-neutral-800'}" onclick={() => setInteractionMode('draw')}>Draw</button>
-                    <button class="btn btn-xs text-xs rounded-l-none text-base-content hover:bg-neutral-700 {interaction_mode === 'select' ? 'bg-neutral-600' : 'bg-neutral-800'}" onclick={() => setInteractionMode('select')}>Select</button>
-                </div>
+                <span class="font-semibold">Tools</span>
             </div>
-            {#if interaction_mode === 'select' && Object.keys(selected_point_keys).length > 0}
-                <div class="text-[10px] text-center opacity-70 pb-1">{Object.keys(selected_point_keys).length} selected</div>
-            {/if}
-            <!-- Arrow keys for non-circular agar plates -->
-            {#if Object.keys(point_colors).length > 0 && (grid_style === "Echo384" || grid_style === "Echo384Image" || grid_style === "Echo1536" || grid_style === "Echo1536Image")}
-                <div class="flex flex-col mt-auto" in:fade={{ duration: 300 }}>
+            {#if Object.keys(point_colors).length > 0 || (interaction_mode === 'select' && Object.keys(selected_point_keys).length > 0)}
+                <div class="flex flex-col" in:fade={{ duration: 300 }}>
                     <div class="flex w-full justify-center">
                         <button class="kbd" onclick={() => movePointsByDirection("up")}>▲</button>
                     </div>
@@ -2621,38 +2926,39 @@ async function rebuildFramesNow() {
                         <button class="kbd" onclick={() => movePointsByDirection("right")}>▶︎</button>
                     </div>
                 </div>
-            {:else}
-                {#if ginkgo_mode}
-                    <div class="flex flex-col gap-2 flex-wrap justify-center {Object.keys(point_colors).length > 0 ? 'tooltip tooltip-top' : ''}" data-tip="Erase to edit" in:fade={{ duration: 300 }}>
-                        <div class="w-full flex justify-between items-center">
-                            <div class="join mx-auto">
-                                <button class="btn btn-xs sm:btn-sm text-xs rounded-r-none hover:bg-neutral-700 {grid_style === 'Echo1536' ? 'bg-neutral-600' : 'bg-neutral-800'} {Object.keys(point_colors).length > 0 ? 'cursor-not-allowed' : ''}" type="button" onclick={() => {grid_style = "Echo1536"; point_size = 0.75; img = null; animationImages = 0;}} aria-label="Echo1536" disabled={Object.keys(point_colors).length > 0}>
-                                    <svg class="w-4 h-4 sm:w-5 sm:h-5 opacity-75"  height="200px" width="200px" version="1.1" id="_x32_" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" xml:space="preserve" fill="currentColor"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <style type="text/css"> .st0{fill:currentColor;} </style> <g> <path class="st0" d="M229.806,376.797l-58.165-40.976l-1.128-0.112c-26.889-2.741-53.247,9.248-68.79,31.31 c-14.743,20.928-20.101,43.743-25.282,65.812c-3.528,15.064-7.181,30.64-13.805,45.613c-5.483,12.382-9.156,16.802-9.169,16.822 l-3.784,4.283l5.148,2.479c23.958,11.542,56.31,13.143,88.766,4.394c34.09-9.182,62.639-28.109,80.372-53.28 c15.543-22.062,17.963-50.919,6.322-75.316L229.806,376.797z M208.721,442.4c-4.171,5.915-9.148,11.483-14.795,16.605 c-0.892,0.597-1.81,1.259-2.774,2.007c-10.657,8.382-24.548,4.775-16.101-12.224c8.447-17.012-6.44-22.456-18.534-11.286 c-15.175,14.022-22.298,2.826-19.491-4.913c2.8-7.738,12.881-18.291,4.446-25.111c-5.076-4.112-11.628,1.895-22.082,10.041 c-5.988,4.662-19.773,3.148-14.186-17.55c3.023-7.693,6.768-15.11,11.766-22.206c10.847-15.412,29.244-24.462,48.105-23.741 l49.81,35.087C221.923,406.631,219.575,426.988,208.721,442.4z"></path> <path class="st0" d="M191.519,277.032c-6.238,7.943-8.939,18.095-7.484,28.09c1.47,9.994,6.972,18.946,15.229,24.764l26.83,18.9 c8.257,5.817,18.547,7.988,28.45,6.007c9.903-1.993,18.554-7.962,23.938-16.5l24.357-38.734l-83.047-58.506L191.519,277.032z"></path> <path class="st0" d="M447.22,6.635l-0.204-0.138c-15.484-10.907-36.792-7.778-48.492,7.109L229.839,228.265l81.658,57.523 L456.847,54.687C466.934,38.658,462.697,17.541,447.22,6.635z"></path> </g> </g></svg>
-                                    Draw
-                                </button>
-                                <button class="btn btn-xs sm:btn-sm text-xs rounded-l-none hover:bg-neutral-700 {grid_style === 'Echo1536Image' ? 'bg-neutral-600' : 'bg-neutral-800'} {Object.keys(point_colors).length > 0 ? 'cursor-not-allowed' : ''}" type="button" onclick={() => {grid_style = "Echo1536Image"; point_size = 0.75; canvasSize = 384; pixelation = 384;}} aria-label="Echo1536Image" disabled={Object.keys(point_colors).length > 0}>
-                                    <svg class="w-4 h-4 sm:w-6 sm:h-6 opacity-75" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path d="M4 10V6C4 4.89543 4.89543 4 6 4H12M4.02693 18.329C4.18385 19.277 5.0075 20 6 20H18C19.1046 20 20 19.1046 20 18V14.1901M4.02693 18.329C4.00922 18.222 4 18.1121 4 18V15M4.02693 18.329L7.84762 14.5083C8.52765 13.9133 9.52219 13.8481 10.274 14.3494L10.7832 14.6888C11.5078 15.1719 12.4619 15.1305 13.142 14.5864L15.7901 12.4679C16.4651 11.9279 17.4053 11.8855 18.1228 12.3484C18.2023 12.3997 18.2731 12.4632 18.34 12.5301L20 14.1901M20 14.1901V6C20 4.89543 19.1046 4 18 4H17M11 9C11 10.1046 10.1046 11 9 11C7.89543 11 7 10.1046 7 9C7 7.89543 7.89543 7 9 7C10.1046 7 11 7.89543 11 9Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path> </g></svg>
-                                    Image
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                {:else}
-                    <div class="flex flex-col gap-2 flex-wrap justify-center {Object.keys(point_colors).length > 0 ? 'tooltip tooltip-top' : ''}" data-tip="Erase to edit" in:fade={{ duration: 300 }}>
-                        <div class="w-full flex justify-between items-center">
-                            <div class="join mx-auto">
-                                <button class="btn btn-xs sm:btn-sm text-xs rounded-r-none hover:bg-neutral-700 {grid_style === 'Standard' ? 'bg-neutral-600' : 'bg-neutral-800'} {Object.keys(point_colors).length > 0 ? 'cursor-not-allowed' : ''}" type="button" onclick={() => {grid_style = "Standard"; point_size = 0.75; img = null; animationImages = 0;}} aria-label="Echo1536" disabled={Object.keys(point_colors).length > 0}>
-                                    <svg class="w-4 h-4 sm:w-5 sm:h-5 opacity-75"  height="200px" width="200px" version="1.1" id="_x32_" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" xml:space="preserve" fill="currentColor"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <style type="text/css"> .st0{fill:currentColor;} </style> <g> <path class="st0" d="M229.806,376.797l-58.165-40.976l-1.128-0.112c-26.889-2.741-53.247,9.248-68.79,31.31 c-14.743,20.928-20.101,43.743-25.282,65.812c-3.528,15.064-7.181,30.64-13.805,45.613c-5.483,12.382-9.156,16.802-9.169,16.822 l-3.784,4.283l5.148,2.479c23.958,11.542,56.31,13.143,88.766,4.394c34.09-9.182,62.639-28.109,80.372-53.28 c15.543-22.062,17.963-50.919,6.322-75.316L229.806,376.797z M208.721,442.4c-4.171,5.915-9.148,11.483-14.795,16.605 c-0.892,0.597-1.81,1.259-2.774,2.007c-10.657,8.382-24.548,4.775-16.101-12.224c8.447-17.012-6.44-22.456-18.534-11.286 c-15.175,14.022-22.298,2.826-19.491-4.913c2.8-7.738,12.881-18.291,4.446-25.111c-5.076-4.112-11.628,1.895-22.082,10.041 c-5.988,4.662-19.773,3.148-14.186-17.55c3.023-7.693,6.768-15.11,11.766-22.206c10.847-15.412,29.244-24.462,48.105-23.741 l49.81,35.087C221.923,406.631,219.575,426.988,208.721,442.4z"></path> <path class="st0" d="M191.519,277.032c-6.238,7.943-8.939,18.095-7.484,28.09c1.47,9.994,6.972,18.946,15.229,24.764l26.83,18.9 c8.257,5.817,18.547,7.988,28.45,6.007c9.903-1.993,18.554-7.962,23.938-16.5l24.357-38.734l-83.047-58.506L191.519,277.032z"></path> <path class="st0" d="M447.22,6.635l-0.204-0.138c-15.484-10.907-36.792-7.778-48.492,7.109L229.839,228.265l81.658,57.523 L456.847,54.687C466.934,38.658,462.697,17.541,447.22,6.635z"></path> </g> </g></svg>
-                                    Draw
-                                </button>
-                                <button class="btn btn-xs sm:btn-sm text-xs rounded-l-none hover:bg-neutral-700 {grid_style === 'Standard' ? 'bg-neutral-600' : 'bg-neutral-800'} {Object.keys(point_colors).length > 0 ? 'cursor-not-allowed' : ''}" type="button" onclick={() => {resetValues(); grid_style = "Image"; point_size = 0.75; canvasSize = 40; pixelation = 40;}} aria-label="Image" disabled={Object.keys(point_colors).length > 0}>
-                                    <svg class="w-4 h-4 sm:w-6 sm:h-6 opacity-75" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path d="M4 10V6C4 4.89543 4.89543 4 6 4H12M4.02693 18.329C4.18385 19.277 5.0075 20 6 20H18C19.1046 20 20 19.1046 20 18V14.1901M4.02693 18.329C4.00922 18.222 4 18.1121 4 18V15M4.02693 18.329L7.84762 14.5083C8.52765 13.9133 9.52219 13.8481 10.274 14.3494L10.7832 14.6888C11.5078 15.1719 12.4619 15.1305 13.142 14.5864L15.7901 12.4679C16.4651 11.9279 17.4053 11.8855 18.1228 12.3484C18.2023 12.3997 18.2731 12.4632 18.34 12.5301L20 14.1901M20 14.1901V6C20 4.89543 19.1046 4 18 4H17M11 9C11 10.1046 10.1046 11 9 11C7.89543 11 7 10.1046 7 9C7 7.89543 7.89543 7 9 7C10.1046 7 11 7.89543 11 9Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path> </g></svg>
-                                    Image
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                {/if}
+            {/if}
+            <div class="flex flex-col gap-2 my-auto">
+                <button
+                    class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content bg-neutral-800 hover:bg-neutral-700"
+                    onclick={promptImageUpload}
+                >
+                    <span class="w-full h-full flex items-center justify-center gap-1.5 text-sm">
+                        <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="3.5" y="4.5" width="17" height="15" rx="2" stroke="currentColor" stroke-width="1.8"/>
+                            <circle cx="9" cy="10" r="1.4" fill="currentColor"/>
+                            <path d="M6 17L10.5 12.5L13.5 15.5L16 13L19 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Image
+                    </span>
+                </button>
+                <button
+                    class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content hover:bg-neutral-700 {interaction_mode === 'select' && grid_style !== 'Echo1536Image' ? 'bg-neutral-600' : 'bg-neutral-800'}"
+                    onclick={() => {
+                        grid_style = 'Echo1536';
+                        if (interaction_mode === 'select') setInteractionMode('draw');
+                        else setInteractionMode('select');
+                    }}
+                >
+                    <span class="w-full h-full flex items-center justify-center gap-1.5 text-sm">
+                        <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M4 3L20 12L13 13L12 20L4 3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                        </svg>
+                        Select Area
+                    </span>
+                </button>
+            </div>
+            {#if interaction_mode === 'select' && Object.keys(selected_point_keys).length > 0}
+                <div class="text-[10px] text-center opacity-70 pb-1">{Object.keys(selected_point_keys).length} selected</div>
             {/if}
         </div>
         <!-- BACTERIA COLOR & CONTROLS -->
@@ -2667,7 +2973,7 @@ async function rebuildFramesNow() {
             </div>
             <div class="grid grid-cols-6 gap-2 place-items-center my-auto">
                 {#each Object.entries(current_well_colors).filter(([name, val]) => name !== 'White' && val) as [name]}
-                    <div role="radio" tabindex="0" aria-checked={current_color === name} onclick={() => current_color = name} onkeydown={(e) => e.key === 'Enter' && (current_color = name)}
+                    <div role="radio" tabindex="0" aria-checked={current_color === name} onclick={(e) => chooseBacteriaColor(name, e)} ondblclick={() => cycleColorRight(name)} onkeydown={(e) => e.key === 'Enter' && chooseBacteriaColor(name)}
                         class="w-[24px] h-[24px] rounded-full cursor-pointer border-[1px] transition outline-none focus:ring-2 ring-offset-2 flex items-center justify-center"
                         style="background-color: #fffff; border-color: {well_colors[name]}; box-shadow: {current_color === name ? '0 0 0 0px #000 inset' : 'none'};"
                         title={name}
@@ -2770,68 +3076,6 @@ async function rebuildFramesNow() {
             </div>
         </div>
     {/if}
-
-    <!-- SHOW POINTS -->
-    <div class="flex flex-col w-full mt-3 gap-2 mx-auto bg-base-200 rounded px-3 {Object.keys(points_by_color).length >= 1 ? 'pb-2' : ''}">
-        <div class="flex flex-row justify-between pt-2 items-center">
-            <span class="font-semibold">Coordinates</span>
-            <div class="flex flex-row flex-wrap justify-end gap-2 max-w-full overflow-hidden">
-                {#if grid_style === 'Echo1536' || grid_style === 'Echo1536Image' || grid_style === 'Echo384' || grid_style === 'Echo384Image'}
-                    <button class="btn btn-sm rounded gap-1 bg-base-100 text-base-content hover:bg-neutral hover:text-white opacity-70" onclick={download_echo_csv.showModal()}>
-                        <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
-                    </button>
-                {:else}
-                    <button class="btn btn-sm rounded gap-1 bg-base-100 text-base-content hover:bg-neutral hover:text-white" onclick={download_modal.showModal()}>
-                        <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
-                    </button>
-                {/if}
-                <button class="btn btn-sm rounded bg-base-100 gap-1 hover:bg-neutral hover:text-white px-1 tooltip tooltip-top" aria-label="Copy Points" data-tip="Copy To Clipboard" onclick={copyPointsToClipboard}>
-                    <svg class="w-7 h-7 opacity-70" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path d="M10 8V7C10 6.05719 10 5.58579 10.2929 5.29289C10.5858 5 11.0572 5 12 5H17C17.9428 5 18.4142 5 18.7071 5.29289C19 5.58579 19 6.05719 19 7V12C19 12.9428 19 13.4142 18.7071 13.7071C18.4142 14 17.9428 14 17 14H16M7 19H12C12.9428 19 13.4142 19 13.7071 18.7071C14 18.4142 14 17.9428 14 17V12C14 11.0572 14 10.5858 13.7071 10.2929C13.4142 10 12.9428 10 12 10H7C6.05719 10 5.58579 10 5.29289 10.2929C5 10.5858 5 11.0572 5 12V17C5 17.9428 5 18.4142 5.29289 18.7071C5.58579 19 6.05719 19 7 19Z" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>
-                </button>
-            </div>
-        </div>
-        {#if grid_style !== 'Echo384' && grid_style !== 'Echo384Image' && grid_style !== 'Echo1536' && grid_style !== 'Echo1536Image'}
-            <div class="text-xs opacity-70" bind:this={contentToCopy}>
-                {#if Object.keys(points_by_color).length >= 1}
-                    {#each Object.entries(points_by_color) as [color, points]}
-                        <div>
-                            <span class="inline">{color}</span> =
-                            [{#each points as {point}, i}
-                                ({point[0]}, {point[1]}){#if i < points.length - 1},{/if}
-                            {/each}]
-                        </div>
-                    {/each}
-                {/if}
-            </div>
-        {:else if grid_style === 'Echo384' || grid_style === 'Echo384Image'}
-            <div class="text-xs break-all whitespace-normal opacity-70" bind:this={contentToCopy}>
-                {#if Object.keys(points_by_color).length >= 1}
-                    {#each Object.entries(points_by_color) as [color, points]}
-                        <div>
-                            <span class="inline">{color}</span> =
-                            [{#each points as {point}, i}
-                                {String.fromCharCode(65 + point[1] / 5)}{point[0] / 5 + 1}{#if i < points.length - 1},{/if}
-                            {/each}]
-                        </div>
-                    {/each}
-                {/if}
-            </div>
-        {:else if grid_style === 'Echo1536' || grid_style === 'Echo1536Image'}
-            <div class="text-xs break-all whitespace-pre overflow-hidden overflow-scroll opacity-70" bind:this={contentToCopy}>
-                {#if Object.keys(points_by_color).length >= 1}
-                    Source Plate Name, Source Plate Barcode, Source Plate Type, Source Well, Destination Plate Name, Destination Plate Barcode, Destination Plate Type, Destination Well, Transfer Volume
-                    {#each Object.entries(points_by_color) as [color, points]}
-                        <div>
-                            {#each points as {point}, i}
-                                Echo_Artwork_Source, {source_id}, 384-well Plate Echo PP, {source_384_well_colors[stripAfterLastUnderscore(color)]}1, Echo_Artwork_Dest, {destination_id}, 1-flat-thermo-264728-omni-1536, {rowLabel1536(point[1] / 2.5)}{point[0] / 2.5 + 1}, 100
-                                <br />
-                            {/each}
-                        </div>
-                    {/each}
-                {/if}
-            </div>
-        {/if}
-    </div>
 
     <!-- ABOUT SECTION -->
     {#if !ginkgo_mode}
