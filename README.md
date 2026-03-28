@@ -20,8 +20,12 @@ CSV files are downloadable for all designs and support upload to:
 - Echo 525 
 - Opentrons OT-2
 
+## HTGAA 2026 Results
+<img src="./static/2026_images/2026_HTGAA_Nebula_Artwork.png" alt="Nebula 2026 Artworks" width="600" style="border-radius: 5%;">
+<img src="./static/2026_images/2026_HTGAA_OT_Artwork.png" alt="OT 2026 Artworks" width="600" style="border-radius: 5%;">
+
 ## HTGAA 2025 Results
-<img src="./static/2025_images/2025_Student_Grid_11x6.png" alt="Artworks Logo" width="600" style="border-radius: 5%;">
+<img src="./static/2025_images/2025_Student_Grid_11x6.png" alt="OT 2025 Artworks" width="600" style="border-radius: 5%;">
 
 ## Ginkgo Nebula Automation Videos
 *Source plate being loaded into Echo525*

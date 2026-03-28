@@ -44,13 +44,17 @@
 
         const center = radius_px / 2;
         const scale = center / record.radius_mm - (0.1);
+        const isEcho6144 = record.grid_style === 'Echo6144' || record.grid_style === 'Echo6144Image';
+        const pointRadius = isEcho6144
+            ? Math.max(0.75, (Number(record.point_size) || 1) * 0.7)
+            : Math.max(record.point_size, 1.5);
 
         for (const [key, colorName] of Object.entries(record.point_colors)) {
         const [x, y] = key.split(', ').map(Number);
         const color = well_colors[colorName] || old_well_colors[colorName] || 'transparent';
 
         ctx.beginPath();
-        ctx.arc(center + x * scale, center - y * scale, Math.max(record.point_size, 1.5), 0, Math.PI * 2);
+        ctx.arc(center + x * scale, center - y * scale, pointRadius, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
         }

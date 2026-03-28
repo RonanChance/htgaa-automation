@@ -51,12 +51,17 @@ function drawPoints() {
     const scaleX = (canvas.width / 3) / record.radius_mm - 0.1;
     const scaleY = scaleX * 1.5; // reduce vertical compression (0.7 = 70% of X scale)
 
+    const isEcho6144 = record.grid_style === 'Echo6144' || record.grid_style === 'Echo6144Image';
+    const pointRadius = isEcho6144
+        ? Math.max(0.75, (Number(record.point_size) || 1) * 0.7)
+        : Math.max(record.point_size, 2);
+
     for (const [key, colorName] of Object.entries(record.point_colors)) {
         const [x, y] = key.split(', ').map(Number);
         const color = well_colors[colorName] || old_well_colors[colorName] || 'transparent';
 
         ctx.beginPath();
-        ctx.arc(centerX + x * scaleX, centerY + y * scaleY, Math.max(record.point_size, 2), 0, Math.PI * 2);
+        ctx.arc(centerX + x * scaleX, centerY + y * scaleY, pointRadius, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
     }
@@ -80,4 +85,3 @@ function drawPoints() {
         will-change: transform;
     }
 </style>
-

@@ -6,6 +6,20 @@
     import { browser } from '$app/environment';
     import { page } from '$app/stores';
     import { current_well_colors_import, well_colors, old_well_colors, source_384_well_colors } from '$lib/proteins.js';
+    import {
+        ECHO_1536_MAX_X,
+        ECHO_1536_MAX_Y,
+        ECHO_1536_MIN_X,
+        ECHO_1536_MIN_Y,
+        ECHO_1536_RENDER_COLS,
+        ECHO_1536_RENDER_ROWS,
+        ECHO_1536_SUBPITCH_X,
+        ECHO_1536_SUBPITCH_Y,
+        getEcho1536DestinationWell,
+        isEcho6144GridStyle,
+        normalizeEcho1536PointColors,
+        snapEcho1536Point
+    } from '$lib/echo-grid.js';
     import { fade } from 'svelte/transition';
     import { parseGIF, decompressFrames } from "gifuct-js";
 
@@ -14,12 +28,12 @@
     let ginkgo_mode = $state(true);
 
     // GRID DATA
-    let grid_style = $state('Echo1536Image');
+    let grid_style = $state('Echo6144Image');
     let radius_mm = $state(39.9);
     let grid_spacing_mm = $state(2.2);
     let prev_grid_spacing_mm = $state(3);
     let point_size = $state(1);
-    let points = $state({});
+    let points = $state([]);
     let point_colors = $state({}); // Typical workflow: edit point_colors then call groupByColors()
     let points_by_color = $state({});
     let hover_point = $state();
@@ -51,6 +65,8 @@
     let didMove = false;
     let downX = 0;
     let downY = 0;
+    let lastPaintClientX = 0;
+    let lastPaintClientY = 0;
     let rightClickErasing = false;
     let rightClickRestoreColor = null;
     let undoStack = $state([]);
@@ -128,17 +144,101 @@
     const SAMPLE_H = 192;
     let sampleCanvas;
     let sampleCtx;
+    let renderedPointKeys = new Set();
+    let renderedPointKeysSource = null;
+    let pointSampleLookup = [];
+    let pointSampleLookupSource = null;
+    let pointSampleLookupGridStyle = '';
     const WHITE_THRESHOLD = 245;
     const BLACK_THRESHOLD = 10;
+
+    function isSavedAsClassicEcho1536PointKey(key) {
+        const [xRaw, yRaw] = String(key).split(',').map((part) => Number(part.trim()));
+        if (!Number.isFinite(xRaw) || !Number.isFinite(yRaw)) return false;
+        const isMultipleOf2_5 = (value) => Math.abs(value / 2.5 - Math.round(value / 2.5)) < 1e-6;
+        return isMultipleOf2_5(xRaw) && isMultipleOf2_5(yRaw);
+    }
+
+    function isDefinitelyFaux6144PointKey(key) {
+        const [xRaw, yRaw] = String(key).split(',').map((part) => Number(part.trim()));
+        if (!Number.isFinite(xRaw) || !Number.isFinite(yRaw)) return false;
+        if (xRaw < 0 || yRaw < 0) return true;
+
+        const isSubwellOffset = (value) => {
+            const mod = ((value % 2.5) + 2.5) % 2.5;
+            return Math.abs(mod - 0.625) < 1e-6 || Math.abs(mod - 1.875) < 1e-6;
+        };
+
+        return isSubwellOffset(xRaw) || isSubwellOffset(yRaw);
+    }
+
+    function inferLoadedGridStyle(record) {
+        const savedStyle = record?.grid_style || 'Echo1536Image';
+        if (savedStyle !== 'Echo1536' && savedStyle !== 'Echo1536Image') return savedStyle;
+
+        const keys = Object.keys(record?.point_colors || {});
+        const fauxKeyCount = keys.filter((key) => isDefinitelyFaux6144PointKey(key)).length;
+        const clearlyFaux = fauxKeyCount >= 4 && fauxKeyCount >= Math.ceil(keys.length * 0.25);
+        if (!clearlyFaux) return savedStyle;
+
+        return savedStyle === 'Echo1536Image' ? 'Echo6144Image' : 'Echo6144';
+    }
+
+    function canonicalGridStyleForStorage(style) {
+        if (style === 'Echo6144' || style === 'Echo6144Image') return style;
+        if (style === 'Echo1536' || style === 'Echo1536Image') return style;
+        return style;
+    }
+
+    function getPreferredEchoImageGridStyle(style = grid_style) {
+        if (style === 'Echo1536' || style === 'Echo1536Image') return 'Echo1536Image';
+        if (style === 'Echo6144' || style === 'Echo6144Image') return 'Echo6144Image';
+        return isEcho6144GridStyle(style) ? 'Echo6144Image' : 'Echo1536Image';
+    }
+
+    function toggleEchoDensity() {
+        if (Object.keys(point_colors).length > 0) return;
+
+        if (grid_style === 'Echo1536') {
+            grid_style = 'Echo6144';
+            return;
+        }
+        if (grid_style === 'Echo1536Image') {
+            grid_style = 'Echo6144Image';
+            return;
+        }
+        if (grid_style === 'Echo6144') {
+            grid_style = 'Echo1536';
+            return;
+        }
+        if (grid_style === 'Echo6144Image') {
+            grid_style = 'Echo1536Image';
+        }
+    }
+
+    function syncRenderedPointCaches(nextPoints = points) {
+        if (renderedPointKeysSource === nextPoints) return;
+
+        renderedPointKeysSource = nextPoints;
+        renderedPointKeys = new Set((nextPoints || []).map(({ x, y }) => `${x}, ${y}`));
+        pointSampleLookupSource = null;
+    }
+
+    function setRenderedPoints(nextPoints) {
+        points = nextPoints;
+        renderedPointKeysSource = null;
+        pointSampleLookupSource = null;
+    }
     
 
     onMount(async () => {
         if (browser) {
             let loadRecordId = $page.url.searchParams.get('id');
             if (loadRecordId) {
-                loadRecord(loadRecordId);
+                await loadRecord(loadRecordId);
+            } else {
+                grid_style = 'Echo6144Image';
             }
-            grid_style = 'Echo1536Image';
             
             window.addEventListener('keydown', function(event) {
                 const activeElement = document.activeElement;
@@ -164,7 +264,7 @@
                     return;
                 }
 
-                if (Object.keys(point_colors).length > 0 && ['Standard', 'Grid', 'Image', 'Echo384', 'Echo384Image', 'Echo1536', 'Echo1536Image'].includes(grid_style)) {
+                if (Object.keys(point_colors).length > 0 && ['Standard', 'Grid', 'Image', 'Echo384', 'Echo384Image', 'Echo1536', 'Echo1536Image', 'Echo6144', 'Echo6144Image'].includes(grid_style)) {
                     const directions = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right'};
                     const direction = directions[event.key];
                     if (direction) {
@@ -194,7 +294,7 @@
                     }
                 }
             });
-            if (animate) grid_style = 'Echo1536Image';
+            if (animate && !loadRecordId) grid_style = 'Echo6144Image';
         }
     });
 
@@ -203,14 +303,14 @@
         if (Object.keys(point_colors).length > 0) {
             return !['Standard', 'Grid', 'QRCode', 'Image'].includes(grid_style)
         }
-        if (grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === 'Echo1536' || grid_style === 'Echo1536Image') {
+        if (grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === 'Echo1536' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144' || grid_style === 'Echo6144Image') {
             return true
         }
         return false;
     }
 
     function getImageCanvasDimensions(baseSize = canvasSize) {
-        const isEchoImageGrid = grid_style === 'Echo384Image' || grid_style === 'Echo1536Image';
+        const isEchoImageGrid = grid_style === 'Echo384Image' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144Image';
         if (!isEchoImageGrid) {
             return { width: baseSize, height: baseSize };
         }
@@ -254,7 +354,6 @@
         selected_point_keys = {};
         colorCycleGroups = {};
         undoStack = [];
-        grid_style = 'Echo1536';
         interaction_mode = 'draw';
         isSelectingRegion = false;
         selectionStart = null;
@@ -263,7 +362,7 @@
 
         radius_mm = 40;
         animationImages = null;
-        points = generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors);
+        setRenderedPoints(generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors));
     }
 
 
@@ -279,9 +378,10 @@
             grid_spacing_mm = prev_grid_spacing_mm = r.record.grid_spacing_mm;
             radius_mm = r.record.radius_mm;
             point_size = r.record.point_size || 1;
-            grid_style = 'Echo1536Image';
+            grid_style = inferLoadedGridStyle(r.record);
+            setRenderedPoints(generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors));
             
-            if (r.record.grid_style === 'Image' || r.record.grid_style === 'Echo384Image' || r.record.grid_style === 'Echo1536Image') {
+            if (r.record.grid_style === 'Image' || r.record.grid_style === 'Echo384Image' || r.record.grid_style === 'Echo1536Image' || r.record.grid_style === 'Echo6144Image') {
                 brightness = r.record.brightness;
                 contrast = r.record.contrast;
                 saturation = r.record.saturation;
@@ -335,7 +435,7 @@
                 title,
                 author,
                 points,
-                grid_style,
+                grid_style: canonicalGridStyleForStorage(grid_style),
                 radius_mm,
                 grid_spacing_mm,
                 point_colors,
@@ -389,21 +489,34 @@
     }
     
     function groupByColors() {
-        const renderedKeys = new Set((points || []).map(({ x, y }) => `${x}, ${y}`));
-        const entries = Object.entries(point_colors)
-            .map(([point, color]) => [normalizePointKey(point), color])
-            .filter(([point]) => renderedKeys.has(point));
+        syncRenderedPointCaches();
 
-        // Keep internal state in sync with what is currently renderable.
-        if (entries.length !== Object.keys(point_colors).length) {
-            point_colors = Object.fromEntries(entries);
+        const sourcePointColors = isEcho6144GridStyle(grid_style)
+            ? normalizeEcho1536PointColors(point_colors)
+            : point_colors;
+        const nextPointColors = {};
+        const groupedEntries = {};
+
+        for (const [point, color] of Object.entries(sourcePointColors || {})) {
+            const normalizedPoint = normalizePointKey(point);
+            if (!renderedPointKeys.has(normalizedPoint)) continue;
+
+            nextPointColors[normalizedPoint] = color;
+            const colorKey = `${color.toLowerCase()}_points`;
+            if (!groupedEntries[colorKey]) groupedEntries[colorKey] = [];
+            groupedEntries[colorKey].push({
+                point: normalizedPoint.split(',').map(roundPoint),
+                color
+            });
         }
+
+        point_colors = nextPointColors;
+
         if (Object.keys(selected_point_keys).length > 0) {
-            const currentKeys = new Set((points || []).map(({ x, y }) => `${x}, ${y}`));
             const nextSelection = {};
             for (const key of Object.keys(selected_point_keys)) {
                 const normalized = normalizePointKey(key);
-                if (currentKeys.has(normalized)) nextSelection[normalized] = true;
+                if (renderedPointKeys.has(normalized)) nextSelection[normalized] = true;
             }
             if (Object.keys(nextSelection).length !== Object.keys(selected_point_keys).length) {
                 selected_point_keys = nextSelection;
@@ -415,7 +528,7 @@
                 const kept = {};
                 for (const key of Object.keys(groupKeys || {})) {
                     const normalized = normalizePointKey(key);
-                    if (renderedKeys.has(normalized)) kept[normalized] = true;
+                    if (renderedPointKeys.has(normalized)) kept[normalized] = true;
                 }
                 if (Object.keys(kept).length > 0) nextGroups[groupName] = kept;
             }
@@ -424,22 +537,14 @@
             }
         }
 
-        const uniqueColors = new Set(entries.map(([, color]) => color));
-
         points_by_color = {};
-        for (const color of uniqueColors) {
-            const key = `${color.toLowerCase()}_points`;
-            points_by_color[key] = entries
-                .filter(([, c]) => c === color)
-                .map(([point]) => ({
-                    point: point.split(',').map(roundPoint),
-                    color
-                }))
-                .sort((a, b) => {
-                    const [ax, ay] = a.point;
-                    const [bx, by] = b.point;
-                    return by - ay || ax - bx;
-                });
+        for (const [colorKey, groupedPoints] of Object.entries(groupedEntries)) {
+            groupedPoints.sort((a, b) => {
+                const [ax, ay] = a.point;
+                const [bx, by] = b.point;
+                return by - ay || ax - bx;
+            });
+            points_by_color[colorKey] = groupedPoints;
         }
     }
 
@@ -800,7 +905,7 @@ def run(protocol):
     }
 
     function downloadWellPlatePng() {
-        const isEcho = grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === 'Echo1536' || grid_style === 'Echo1536Image';
+        const isEcho = grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === 'Echo1536' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144' || grid_style === 'Echo6144Image';
         const width = isEcho ? 1400 : 1200;
         const height = isEcho ? 940 : 1200;
         const padding = isEcho ? 36 : 28;
@@ -819,7 +924,8 @@ def run(protocol):
             1.75: 11, 2: 12, 2.25: 13, 2.5: 14, 2.75: 15, 3: 16
         };
         const baseDotPx = pxByPointSize[Number(point_size)] || 8;
-        const dotPx = baseDotPx * (isEcho ? (width / 440) : (height / 440));
+        const echoDotScale = isEcho6144GridStyle(grid_style) ? 0.38 : 1;
+        const dotPx = baseDotPx * (isEcho ? (width / 440) : (height / 440)) * echoDotScale;
         const dotRadius = Math.max(1, dotPx / 2);
 
         const drawPoint = (x, y, color) => {
@@ -944,9 +1050,7 @@ def run(protocol):
                 const sourceWell = `${sourceWellPrefix}${currentWellIndex + 1}`; // A1 = index 0
 
                 // Compute destination well
-                const destRow = rowLabel1536(point[1] / 2.5);
-                const destCol = point[0] / 2.5 + 1;
-                const destWell = `${destRow}${destCol}`;
+                const destWell = getEcho1536DestinationWell(point[0], point[1]);
 
                 if (ProtocolLauncher) {
                     csv += `11111,PipeSlot0,1-flat-thermo-264728-omni-1536,${destination_id},${destWell},0,0,SourceSlot0,384-well Plate Echo PP,${source_id},${sourceWell},0,0,0.1\n`;
@@ -1007,7 +1111,7 @@ def run(protocol):
 
         
     $effect(() => {
-        points = generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors);
+        setRenderedPoints(generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors));
         tick().then(() => {
             if (grid_style === 'QRCode') {
                     const new_colors = {};
@@ -1017,7 +1121,7 @@ def run(protocol):
                     point_colors = new_colors;
                     groupByColors();
                 }
-            if (['Standard', 'Grid', 'Image', 'Echo384', 'Echo384Image', 'Echo1536', 'Echo1536Image'].includes(grid_style)) {
+            if (['Standard', 'Grid', 'Image', 'Echo384', 'Echo384Image', 'Echo1536', 'Echo1536Image', 'Echo6144', 'Echo6144Image'].includes(grid_style)) {
                 const current = grid_spacing_mm;
                 const previous = prev_grid_spacing_mm;
                 if (current !== previous && !loadingURLRecord) {
@@ -1027,14 +1131,20 @@ def run(protocol):
                     prev_grid_spacing_mm = current;
                 }
             }
-            if (grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image') {
+            if (grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144Image') {
             // allow point_colors to be computed during precompute/hydration
             if (animate && !isPrecomputing) return;
 
             if (img) {
                 const new_colors = {};
+                const rgbCache = new Map();
+                const namedColorCache = new Map();
                 for (const point of points) {
-                    const rgb = hexToRgb(point.color);
+                    let rgb = rgbCache.get(point.color);
+                    if (!rgb) {
+                        rgb = hexToRgb(point.color);
+                        if (rgb) rgbCache.set(point.color, rgb);
+                    }
                     const special = rgb ? specialReplacementForRgb(rgb[0], rgb[1], rgb[2]) : null;
                     if (special !== null) {
                         if (special !== 'Invisible') {
@@ -1043,7 +1153,11 @@ def run(protocol):
                         continue;
                     }
 
-                    const c = closestNamedColor(point.color, current_well_colors, well_colors, color_mapping);
+                    let c = namedColorCache.get(point.color);
+                    if (!c) {
+                        c = closestNamedColor(point.color, current_well_colors, well_colors, color_mapping);
+                        namedColorCache.set(point.color, c);
+                    }
                     if (c !== 'White' && c !== 'Erase') {
                     new_colors[`${point.x}, ${point.y}`] = c;
                     } else if ((c === 'White' || c === 'Erase') && whiteBgReplacement !== 'Invisible') {
@@ -1128,7 +1242,7 @@ def run(protocol):
 
         isPrecomputing = true;
         animationFrames = [];
-        grid_style = "Echo1536Image";
+        grid_style = getPreferredEchoImageGridStyle();
         
         brightness = 90;
         contrast = 120;
@@ -1291,7 +1405,7 @@ def run(protocol):
         if (isGif || isMp4) {
             gifHydrating = true;
             try {
-                grid_style = "Echo1536Image";
+                grid_style = getPreferredEchoImageGridStyle();
                 img = null;
                 animate = true;
 
@@ -1565,21 +1679,8 @@ def run(protocol):
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
 
-    function rowLabel1536(n) {
-        let s = "";
-        n = Math.floor(n);
-
-        while (n >= 0) {
-            s = String.fromCharCode((n % 26) + 65) + s;
-            n = Math.floor(n / 26) - 1;
-        }
-        return s;
-    }
-
     function echoWellFromPoint(x, y) {
-        const rowIndex = Math.max(0, Math.round(y / 2.5));
-        const colIndex = Math.max(0, Math.round(x / 2.5));
-        return `${rowLabel1536(rowIndex)}${colIndex + 1}`;
+        return getEcho1536DestinationWell(x, y);
     }
 
     function stripAfterLastUnderscore(label) {
@@ -1589,19 +1690,50 @@ def run(protocol):
 
     function normalizePointKey(key) {
         const [xRaw, yRaw] = String(key).split(',').map((s) => s.trim());
-        return `${xRaw}, ${yRaw}`;
+        const x = Number(xRaw);
+        const y = Number(yRaw);
+
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            return `${xRaw}, ${yRaw}`;
+        }
+
+        return `${roundPoint(x).toFixed(3)}, ${roundPoint(y).toFixed(3)}`;
     }
 
     function pointLeftPercent(x) {
         if (grid_style === 'Echo384' || grid_style === 'Echo384Image') return (x / 128 * 105 + 2.8);
-        if (grid_style === 'Echo1536' || grid_style === 'Echo1536Image') return (x / 128 * 105 + 1.68);
+        if (grid_style === 'Echo1536' || grid_style === 'Echo1536Image') {
+            return (x / 128 * 105 + 1.68);
+        }
+        if (grid_style === 'Echo6144' || grid_style === 'Echo6144Image') {
+            return (x / 128 * 105 + 1.68);
+        }
         return (50.5 + x / (radius_mm + 4) * 50);
     }
 
     function pointTopPercent(y) {
         if (grid_style === 'Echo384' || grid_style === 'Echo384Image') return (y / 86 * 105 + 4.1);
-        if (grid_style === 'Echo1536' || grid_style === 'Echo1536Image') return (y / 86 * 105 + 2.65);
+        if (grid_style === 'Echo1536' || grid_style === 'Echo1536Image') {
+            return (y / 86 * 105 + 2.65);
+        }
+        if (grid_style === 'Echo6144' || grid_style === 'Echo6144Image') {
+            return (y / 86 * 105 + 2.65);
+        }
         return (50.5 - y / (radius_mm + 4) * 50);
+    }
+
+    function pointDiameterPx() {
+        const pxByPointSize = {
+            0.25: 3, 0.5: 6, 0.75: 7, 1: 8, 1.25: 9, 1.5: 10,
+            1.75: 11, 2: 12, 2.25: 13, 2.5: 14, 2.75: 15, 3: 16
+        };
+        const base = pxByPointSize[Number(point_size)] || 8;
+
+        if (isEcho6144GridStyle(grid_style)) {
+            return Math.max(2, base * 0.38) + 1;
+        }
+
+        return base;
     }
 
     function pointerPositionInContainer(e) {
@@ -1637,9 +1769,8 @@ def run(protocol):
     }
 
     async function promptImageUpload() {
-        grid_style = 'Echo1536Image';
+        grid_style = getPreferredEchoImageGridStyle();
         interaction_mode = 'draw';
-        await tick();
         if (mediaUploadInput) {
             mediaUploadInput.value = '';
             mediaUploadInput.click();
@@ -1669,7 +1800,7 @@ def run(protocol):
     }
 
     function isImageGridStyle() {
-        return grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image';
+        return grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144Image';
     }
 
     function getActiveImageDimensions() {
@@ -1698,8 +1829,8 @@ def run(protocol):
         const { maxPanX, maxPanY } = getImagePanLimitsFor(iw, ih, targetW, targetH);
         if (maxPanX <= 0 && maxPanY <= 0) return;
 
-        const stepX = targetW / 48; // one 1536-col step at default canvas scale
-        const stepY = targetH / 32; // one 1536-row step at default canvas scale
+        const stepX = isEcho6144GridStyle(grid_style) ? (targetW / ECHO_1536_RENDER_COLS) : (targetW / 48);
+        const stepY = isEcho6144GridStyle(grid_style) ? (targetH / ECHO_1536_RENDER_ROWS) : (targetH / 32);
 
         let nextPanX = imagePanX;
         let nextPanY = imagePanY;
@@ -1904,8 +2035,10 @@ def run(protocol):
     }
 
     function totalFluorescentPoints() {
-        return fluorescentSummary().reduce((sum, { count }) => sum + count, 0);
-    }
+        return fluorescentSummary()
+            .reduce((sum, { count }) => sum + count, 0)
+            .toLocaleString('en-US');
+    } 
 
     function scheduleGroupByColors() {
         if (groupScheduled) return;
@@ -1917,10 +2050,77 @@ def run(protocol):
         });
     }
 
+    function clampValue(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    function formatPointKey(x, y) {
+        return `${roundPoint(x).toFixed(3)}, ${roundPoint(y).toFixed(3)}`;
+    }
+
     function keyFromEvent(e) {
-        const el = document.elementFromPoint(e.clientX, e.clientY);
+        return keyFromClientPoint(e.clientX, e.clientY, e.currentTarget);
+    }
+
+    function fallbackKeyFromClientPoint(clientX, clientY) {
+        const el = document.elementFromPoint(clientX, clientY);
         if (!el || !el.dataset?.key) return null;
         return normalizePointKey(el.dataset.key);
+    }
+
+    function keyFromClientPoint(clientX, clientY, containerEl = null) {
+        const isEchoGrid =
+            grid_style === 'Echo384' || grid_style === 'Echo384Image' ||
+            grid_style === 'Echo1536' || grid_style === 'Echo1536Image' ||
+            grid_style === 'Echo6144' || grid_style === 'Echo6144Image';
+
+        if (!isEchoGrid) {
+            return fallbackKeyFromClientPoint(clientX, clientY);
+        }
+
+        const rect = containerEl?.getBoundingClientRect?.();
+        if (!rect?.width || !rect?.height) {
+            return fallbackKeyFromClientPoint(clientX, clientY);
+        }
+
+        const relX = clampValue(clientX - rect.left, 0, rect.width);
+        const relY = clampValue(clientY - rect.top, 0, rect.height);
+        const leftPercent = (relX / rect.width) * 100;
+        const topPercent = (relY / rect.height) * 100;
+
+        if (grid_style === 'Echo384' || grid_style === 'Echo384Image') {
+            const rawX = ((leftPercent - 2.8) / 105) * 128;
+            const rawY = ((topPercent - 4.1) / 105) * 86;
+            const x = clampValue(Math.round(rawX / 5) * 5, 0, 115);
+            const y = clampValue(Math.round(rawY / 5) * 5, 0, 75);
+            return formatPointKey(x, y);
+        }
+
+        if (grid_style === 'Echo1536' || grid_style === 'Echo1536Image') {
+            const rawX = ((leftPercent - 1.68) / 105) * 128;
+            const rawY = ((topPercent - 2.65) / 105) * 86;
+            const x = clampValue(Math.round(rawX / 2.5) * 2.5, 0, 117.5);
+            const y = clampValue(Math.round(rawY / 2.5) * 2.5, 0, 77.5);
+            return formatPointKey(x, y);
+        }
+
+        const rawX = ((leftPercent - 1.68) / 105) * 128;
+        const rawY = ((topPercent - 2.65) / 105) * 86;
+        const snapped = snapEcho1536Point(rawX, rawY);
+        return formatPointKey(snapped.x, snapped.y);
+    }
+
+    function paintSegment(fromX, fromY, toX, toY, containerEl) {
+        const dx = toX - fromX;
+        const dy = toY - fromY;
+        const distance = Math.hypot(dx, dy);
+        const steps = Math.max(1, Math.ceil(distance / 2));
+
+        for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const key = keyFromClientPoint(fromX + dx * t, fromY + dy * t, containerEl);
+            paintKey(key);
+        }
     }
 
     function paintKey(key) {
@@ -1998,6 +2198,8 @@ def run(protocol):
         didMove = false;
         downX = e.clientX;
         downY = e.clientY;
+        lastPaintClientX = e.clientX;
+        lastPaintClientY = e.clientY;
 
         downKey = keyFromEvent(e);
 
@@ -2024,7 +2226,9 @@ def run(protocol):
         }
 
         if (didMove) {
-            paintKey(keyFromEvent(e));
+            paintSegment(lastPaintClientX, lastPaintClientY, e.clientX, e.clientY, e.currentTarget);
+            lastPaintClientX = e.clientX;
+            lastPaintClientY = e.clientY;
         }
     }
 
@@ -2049,6 +2253,8 @@ def run(protocol):
         }
 
         downKey = null;
+        lastPaintClientX = 0;
+        lastPaintClientY = 0;
         pendingPointerUndoSnapshot = null;
         pointerMutationRecorded = false;
 
@@ -2112,7 +2318,7 @@ async function rebuildFramesNow() {
     isPrecomputing = true;
 
     const newFrames = [];
-    grid_style = "Echo1536Image";
+    grid_style = getPreferredEchoImageGridStyle();
 
     try {
         for (const frameImg of animationImages) {
@@ -2223,12 +2429,52 @@ async function rebuildFramesNow() {
         }
     }
 
+    function rebuildPointSampleLookup() {
+        if (pointSampleLookupSource === points && pointSampleLookupGridStyle === grid_style) return;
+
+        pointSampleLookupSource = points;
+        pointSampleLookupGridStyle = grid_style;
+        pointSampleLookup = [];
+
+        if (!points?.length) return;
+
+        const minX = isEcho6144GridStyle(grid_style) ? ECHO_1536_MIN_X : 0;
+        const maxX = isEcho6144GridStyle(grid_style) ? ECHO_1536_MAX_X : 127;
+        const minY = isEcho6144GridStyle(grid_style) ? ECHO_1536_MIN_Y : 0;
+        const maxY = isEcho6144GridStyle(grid_style) ? ECHO_1536_MAX_Y : 85;
+        const invGW = isEcho6144GridStyle(grid_style)
+            ? 1 / (maxX - minX + ECHO_1536_SUBPITCH_X)
+            : 1 / (maxX - minX + 1);
+        const invGH = isEcho6144GridStyle(grid_style)
+            ? 1 / (maxY - minY + ECHO_1536_SUBPITCH_Y)
+            : 1 / (maxY - minY + 1);
+        const wMinus1 = SAMPLE_W - 1;
+        const hMinus1 = SAMPLE_H - 1;
+
+        pointSampleLookup = new Array(points.length);
+        for (let i = 0; i < points.length; i++) {
+            const point = points[i];
+            const x = Number(point.x);
+            const y = Number(point.y);
+            const u = ((x - minX) + 0.5) * invGW;
+            const v = ((y - minY) + 0.5) * invGH;
+            const sx = ((u * wMinus1) | 0) + 8;
+            const sy = ((v * hMinus1) | 0) + 8;
+
+            pointSampleLookup[i] = {
+                key: `${point.x}, ${point.y}`,
+                dataIndex: ((sy * SAMPLE_W + sx) << 2)
+            };
+        }
+    }
+
     function frameToPointColors(frame) {
         ensureSampleCtx();
+        rebuildPointSampleLookup();
 
         const iw = frame?.width ?? 0;
         const ih = frame?.height ?? 0;
-        if (!iw || !ih || !points?.length) return {};
+        if (!iw || !ih || !pointSampleLookup.length) return {};
 
         // Clear to white
         sampleCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2265,31 +2511,13 @@ async function rebuildFramesNow() {
 
         // Read pixels
         const data = sampleCtx.getImageData(0, 0, SAMPLE_W, SAMPLE_H).data;
-
-        // Echo grid bounds
-        const minX = 0, maxX = 127;
-        const minY = 0, maxY = 85;
-        const invGW = 1 / (maxX - minX + 1); // 1/128
-        const invGH = 1 / (maxY - minY + 1); // 1/86
-
         const out = {};
         const useInvert = !!invertColors;
+        const namedColorCache = new Map();
 
-        // precompute these
-        const wMinus1 = SAMPLE_W - 1;
-        const hMinus1 = SAMPLE_H - 1;
-
-        for (let i = 0; i < points.length; i++) {
-            const p = points[i];
-
-            // Normalize grid point -> [0,1)
-            const u = ((p.x - minX) + 0.5) * invGW;
-            const v = ((p.y - minY) + 0.5) * invGH;
-
-            let sx = ((u * wMinus1) | 0) + 8;
-            let sy = ((v * hMinus1) | 0) + 8;
-
-            const di = ((sy * SAMPLE_W + sx) << 2);
+        for (let i = 0; i < pointSampleLookup.length; i++) {
+            const sample = pointSampleLookup[i];
+            const di = sample.dataIndex;
 
             let r = data[di], g = data[di + 1], b = data[di + 2];
             // alpha will basically always be 255 now because we filled white
@@ -2298,18 +2526,22 @@ async function rebuildFramesNow() {
             const special = specialReplacementForRgb(r, g, b);
             if (special !== null) {
                 if (special !== "Invisible") {
-                    out[`${p.x}, ${p.y}`] = special;
+                    out[sample.key] = special;
                 }
                 continue;
             }
 
             const hex = rgbToHex(r, g, b);
-            const cName = closestNamedColor(hex, current_well_colors, well_colors, color_mapping);
+            let cName = namedColorCache.get(hex);
+            if (!cName) {
+                cName = closestNamedColor(hex, current_well_colors, well_colors, color_mapping);
+                namedColorCache.set(hex, cName);
+            }
 
             if (cName !== "White" && cName !== "Erase") {
-            out[`${p.x}, ${p.y}`] = cName;
+            out[sample.key] = cName;
             } else if (whiteBgReplacement !== "Invisible") {
-            out[`${p.x}, ${p.y}`] = whiteBgReplacement;
+            out[sample.key] = whiteBgReplacement;
             }
         }
 
@@ -2631,10 +2863,10 @@ async function rebuildFramesNow() {
 
 <!-- AGAR PLATE -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="mb-2 flex items-center mx-auto w-full max-w-[94vw] sm:max-w-[460px] ${(grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === "Echo1536" || grid_style === "Echo1536Image") ? 'aspect-[3/2] mt-2' : 'aspect-square'} rounded-xl">
+<div class="mb-2 flex items-center mx-auto w-full max-w-[94vw] sm:max-w-[460px] ${(grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === "Echo1536" || grid_style === "Echo1536Image" || grid_style === "Echo6144" || grid_style === "Echo6144Image") ? 'aspect-[3/2] mt-2' : 'aspect-square'} rounded-xl">
 <div class={`touch-none relative border border-neutral mx-auto w-full max-w-[90vw] 
           sm:max-w-[440px]
-          ${grid_style === "Echo384" || grid_style === "Echo384Image" || grid_style === "Echo1536" || grid_style === "Echo1536Image"
+          ${grid_style === "Echo384" || grid_style === "Echo384Image" || grid_style === "Echo1536" || grid_style === "Echo1536Image" || grid_style === "Echo6144" || grid_style === "Echo6144Image"
             ? 'aspect-[128/86] rounded' 
             : 'aspect-square rounded-full max-h-[90vw] sm:max-h-[440px]'}
           ${loadingURLRecord || loadingAIRecord ? 'blur' : ''}`}
@@ -2659,7 +2891,7 @@ async function rebuildFramesNow() {
             <!-- svelte-ignore a11y_mouse_events_have_key_events -->
             <input type="checkbox" id="dot-{x}-{y}" data-key={`${x},${y}`}
                 class="checkbox
-                    {point_size === 0.25 ? 'w-[3px] h-[3px]' : ''}
+                    {point_size === 0.25 ? 'w-[4px] h-[4px]' : ''}
                     {point_size === 0.5 ? 'w-[6px] h-[6px]' : ''}
                     {point_size === 0.75 ? 'w-[7px] h-[7px]' : ''}
                     {point_size === 1 ? 'w-[8px] h-[8px]' : ''}
@@ -2671,10 +2903,12 @@ async function rebuildFramesNow() {
                     {point_size === 2.5 ? 'w-[14px] h-[14px]' : ''} 
                     {point_size === 2.75 ? 'w-[15px] h-[15px]' : ''}
                     {point_size === 3 ? 'w-[16px] h-[16px]' : ''}
-                    absolute {grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === "Echo1536" || grid_style === "Echo1536Image" ? '' : 'rounded-full'} [--chkfg:invisible] transition-[box-shadow] duration-200 ease-in-out {point_colors[`${x}, ${y}`] ? 'border-0' : 'opacity-10'} {!show_outlines ? 'border-0' : point_colors[`${x}, ${y}`] ? 'border-1' : 'border border-white opacity-10'}"
+                    absolute {grid_style === 'Echo384' || grid_style === 'Echo384Image' || grid_style === "Echo1536" || grid_style === "Echo1536Image" || grid_style === "Echo6144" || grid_style === "Echo6144Image" ? '' : 'rounded-full'} [--chkfg:invisible] transition-[box-shadow] duration-200 ease-in-out {point_colors[`${x}, ${y}`] ? 'border-0' : 'opacity-10'} {!show_outlines ? 'border-0' : point_colors[`${x}, ${y}`] ? 'border-1' : 'border border-white opacity-10'}"
                     style="
                     left: {pointLeftPercent(x)}%;
                     top: {pointTopPercent(y)}%;
+                    width: {pointDiameterPx()}px;
+                    height: {pointDiameterPx()}px;
                     transform: translate(-50%, -50%);
                     background-color: {well_colors[point_colors[`${x}, ${y}`]] || old_well_colors[point_colors[`${x}, ${y}`]] || 'transparent'};
                     border: {!show_outlines ? 'none' : well_colors[point_colors[`${x}, ${y}`]] ? `1px solid ${well_colors[point_colors[`${x}, ${y}`]]}` : '1px solid white'};
@@ -2688,14 +2922,14 @@ async function rebuildFramesNow() {
             <div class="absolute pointer-events-none border border-cyan-300 bg-cyan-300/15" style={selectionBoxStyle()}></div>
         {/if}
         <!-- TIME ESTIMATION -->
-        {#if Object.keys(point_colors).length > 0 && grid_style !== "Echo384" && grid_style !== "Echo384Image" && grid_style !== "Echo1536" && grid_style !== "Echo1536Image"}
+        {#if Object.keys(point_colors).length > 0 && grid_style !== "Echo384" && grid_style !== "Echo384Image" && grid_style !== "Echo1536" && grid_style !== "Echo1536Image" && grid_style !== "Echo6144" && grid_style !== "Echo6144Image"}
             <div class="flex flex-row items-center gap-1 justify-center align-middle absolute top-0 left-0 origin-bottom-left opacity-50 tooltip tooltip-bottom" data-tip="Estimated Print Duration" transition:fade={{ duration: 200 }}>
                 <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <path d="M23 12C23 18.0751 18.0751 23 12 23C5.92487 23 1 18.0751 1 12C1 5.92487 5.92487 1 12 1C18.0751 1 23 5.92487 23 12ZM3.00683 12C3.00683 16.9668 7.03321 20.9932 12 20.9932C16.9668 20.9932 20.9932 16.9668 20.9932 12C20.9932 7.03321 16.9668 3.00683 12 3.00683C7.03321 3.00683 3.00683 7.03321 3.00683 12Z" fill="currentColor"></path> <path d="M12 5C11.4477 5 11 5.44771 11 6V12.4667C11 12.4667 11 12.7274 11.1267 12.9235C11.2115 13.0898 11.3437 13.2343 11.5174 13.3346L16.1372 16.0019C16.6155 16.278 17.2271 16.1141 17.5032 15.6358C17.7793 15.1575 17.6155 14.5459 17.1372 14.2698L13 11.8812V6C13 5.44772 12.5523 5 12 5Z" fill="currentColor"></path> </g></svg>
                 <div class="">{formatSeconds(estimatedPrintDuration)}</div>
             </div>
         {/if}
         <!-- ARROW KEYS FOR CIRCULAR PLATES -->
-        {#if Object.keys(point_colors).length > 0 && grid_style !== "Echo384" && grid_style !== "Echo384Image" && grid_style !== "Echo1536" && grid_style !== "Echo1536Image"}
+        {#if Object.keys(point_colors).length > 0 && grid_style !== "Echo384" && grid_style !== "Echo384Image" && grid_style !== "Echo1536" && grid_style !== "Echo1536Image" && grid_style !== "Echo6144" && grid_style !== "Echo6144Image"}
             <div class="absolute bottom-0 right-0 scale-[60%] origin-bottom-right" transition:fade={{ duration: 200 }}>
                 <div class="flex w-full justify-center">
                     <button class="kbd" onclick={() => movePointsByDirection("up")}>▲</button>
@@ -2751,8 +2985,8 @@ async function rebuildFramesNow() {
         </div>
     {/if}
 
-    {#if grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image'}
-        <input type="file" bind:this={mediaUploadInput} class="hidden" accept="image/*,video/mp4" onchange={handleFileChange} />
+    <input type="file" bind:this={mediaUploadInput} class="hidden" accept="image/*,video/mp4" onchange={handleFileChange} />
+    {#if grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144Image'}
         {#if animate}
             <div class="flex items-center w-full gap-2 mt-2">
                 <input
@@ -2929,6 +3163,22 @@ async function rebuildFramesNow() {
             {/if}
             <div class="flex flex-col gap-2 my-auto">
                 <button
+                    class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content hover:bg-neutral-700 {Object.keys(point_colors).length > 0 ? 'bg-neutral-700 opacity-50 cursor-not-allowed' : 'bg-neutral-800'}"
+                    type="button"
+                    onclick={toggleEchoDensity}
+                    disabled={Object.keys(point_colors).length > 0}
+                >
+                    <span class="w-full h-full flex items-center justify-center gap-1.5 text-sm">
+                        <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <circle cx="8" cy="8" r="2.25" fill="currentColor"/>
+                            <circle cx="16" cy="8" r="2.25" fill="currentColor"/>
+                            <circle cx="8" cy="16" r="2.25" fill="currentColor"/>
+                            <circle cx="16" cy="16" r="2.25" fill="currentColor"/>
+                        </svg>
+                        Coordinate: {isEcho6144GridStyle(grid_style) ? '6144' : '1536'}
+                    </span>
+                </button>
+                <button
                     class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content bg-neutral-800 hover:bg-neutral-700"
                     onclick={promptImageUpload}
                 >
@@ -2942,9 +3192,9 @@ async function rebuildFramesNow() {
                     </span>
                 </button>
                 <button
-                    class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content hover:bg-neutral-700 {interaction_mode === 'select' && grid_style !== 'Echo1536Image' ? 'bg-neutral-600' : 'bg-neutral-800'}"
+                    class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content hover:bg-neutral-700 {interaction_mode === 'select' && grid_style !== 'Echo1536Image' && grid_style !== 'Echo6144Image' ? 'bg-neutral-600' : 'bg-neutral-800'}"
                     onclick={() => {
-                        grid_style = 'Echo1536';
+                        grid_style = isEcho6144GridStyle(grid_style) ? 'Echo6144' : 'Echo1536';
                         if (interaction_mode === 'select') setInteractionMode('draw');
                         else setInteractionMode('select');
                     }}
@@ -3029,7 +3279,7 @@ async function rebuildFramesNow() {
     {/if}
 
     <div class="flex flex-row w-full gap-6">
-        {#if grid_style !== 'Echo1536' && grid_style !== 'Echo1536Image' && grid_style !== 'Echo384' && grid_style !== 'Echo384Image'}
+        {#if grid_style !== 'Echo1536' && grid_style !== 'Echo1536Image' && grid_style !== 'Echo6144' && grid_style !== 'Echo6144Image' && grid_style !== 'Echo384' && grid_style !== 'Echo384Image'}
             <!-- POINT SIZE -->
             <div class="flex flex-col w-full gap-2 mx-auto">
                 <div class="flex flex-row justify-between">
@@ -3039,7 +3289,7 @@ async function rebuildFramesNow() {
             </div>
         {/if}
         <!-- GRID SPACING -->
-        {#if grid_style === 'Echo1536' || grid_style === 'Echo1536Image' || grid_style === 'Echo384' || grid_style === 'Echo384Image'}
+        {#if grid_style === 'Echo1536' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144' || grid_style === 'Echo6144Image' || grid_style === 'Echo384' || grid_style === 'Echo384Image'}
             <div class="flex flex-col w-full gap-2 mx-auto"></div>
         {:else}
             <div class="flex flex-col w-full gap-2 mx-auto">
@@ -3067,12 +3317,12 @@ async function rebuildFramesNow() {
         <div class="flex flex-col w-full mt-3 gap-1 mx-auto bg-base-200 rounded px-3 py-2">
             <span class="font-semibold">Summary</span>
             <div class="list-disc text-xs opacity-80">
-                This {totalFluorescentPoints()} pixel design uses {fluorescentSummary().length} fluorescent protein{fluorescentSummary().length === 1 ? '' : 's'}:
+                This {totalFluorescentPoints()}-pixel artwork is created from bacteria expressing {fluorescentSummary().length} fluorescent protein{fluorescentSummary().length === 1 ? '' : 's'}:
                 {#each fluorescentSummary() as { protein, count }, i}
                     <a class="underline" href={fpbaseUrlFor(protein)} target="_blank" rel="noopener noreferrer">{protein}</a> ({count} pixel{count === 1 ? '' : 's'}){#if i < fluorescentSummary().length - 1},{' '}{/if}
                 {/each}. 
                 <br /> <br />
-                Artwork is dispensed as 25nL pixels via Echo 525 onto LB–chloramphenicol–charcoal agar (1536-well coordinates) and incubated 30°C (16 h) then 4°C (12 h) to maximize fluorescence.
+                Each pixel is a 25 nL droplet of bacterial culture, acoustically transferred by an Echo 525 onto an LB–chloramphenicol–charcoal agar plate, then incubated at 30°C (16 h) then 4°C (12 h) to maximize fluorescent protein expression and maturation.
             </div>
         </div>
     {/if}

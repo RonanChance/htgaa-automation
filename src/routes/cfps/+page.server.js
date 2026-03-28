@@ -22,6 +22,18 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function toBooleanOrDefault(value, fallback = true) {
+  if (value == null) return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n'].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
 function normalizeReagent(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const id = raw.id || raw.reagent_id || raw.slug || raw.key;
@@ -36,6 +48,11 @@ function normalizeReagent(raw) {
     name: String(name),
     concentration: String(raw.concentration ?? raw.units ?? 'N/A'),
     costPerMl: toNumber(raw.costPerMl ?? raw.cost_per_ml ?? raw.cost_per_mL ?? 0, 0),
+    in_stock: toBooleanOrDefault(raw.in_stock ?? raw.inStock, true),
+    molecular_weight_g_mol: toNumber(
+      raw.molecular_weight_g_mol ?? raw.molecularWeightGmol ?? raw.molecular_weight ?? raw.mw_g_mol,
+      null
+    ),
     molecule_id: raw.molecule_id ?? raw.moleculeId ?? null,
     reagent_id: raw.reagent_id ?? raw.reagentId ?? null,
     entity_type: raw.entity_type ?? raw.entityType ?? null,

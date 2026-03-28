@@ -1,7 +1,16 @@
 import QRCode from 'qrcode';
+import {
+    buildEcho1536Points,
+    ECHO_1536_RENDER_COLS,
+    ECHO_1536_RENDER_ROWS,
+    getEcho1536PointMetadata
+} from '$lib/echo-grid.js';
+
+const ECHO_384_BASE_POINTS = buildRectGridPoints(16, 24, 5, 5);
+const ECHO_1536_BASE_POINTS = buildRectGridPoints(32, 48, 2.5, 2.5);
+const ECHO_6144_POINT_METADATA = getEcho1536PointMetadata();
 
 export function generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors) {
-    console.log('generate grid called');
     if (grid_style === 'Grid' || grid_style === 'Standard') return grid(radius_mm, grid_spacing_mm);
     else if (grid_style === 'Radial') return radial(radius_mm, grid_spacing_mm);
     else if (grid_style === 'Honeycomb') return honeycomb(radius_mm, grid_spacing_mm);
@@ -11,6 +20,37 @@ export function generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text
     else if (grid_style === 'Echo384Image') return Echo384Image(imageColors);
     else if (grid_style === 'Echo1536') return Echo1536();
     else if (grid_style === 'Echo1536Image') return Echo1536Image(imageColors);
+    else if (grid_style === 'Echo6144') return Echo6144();
+    else if (grid_style === 'Echo6144Image') return Echo6144Image(imageColors);
+}
+
+function buildRectGridPoints(rows, cols, xSpacing, ySpacing) {
+    const points = new Array(rows * cols);
+    let index = 0;
+
+    for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+            points[index++] = Object.freeze({
+                x: (col * xSpacing).toFixed(3),
+                y: (row * ySpacing).toFixed(3)
+            });
+        }
+    }
+
+    return Object.freeze(points);
+}
+
+function colorizeBasePoints(basePoints, colorForIndex) {
+    const points = new Array(basePoints.length);
+    for (let i = 0; i < basePoints.length; i++) {
+        const point = basePoints[i];
+        points[i] = {
+            x: point.x,
+            y: point.y,
+            color: colorForIndex(i, point)
+        };
+    }
+    return points;
 }
 
 function grid(radius_mm, grid_spacing_mm) {
@@ -193,140 +233,78 @@ function echo525(grid_spacing_mm) {
 }
 
 function echo384() {
-    const width_mm = 128;
-    const height_mm = 86;
-    const rows = 16;
-    const cols = 24;
-    const points = [];
-
-    // Calculate spacing between wells
-    const x_spacing = 5;
-    const y_spacing = 5;
-
-    // Fill points row by row
-    for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-            const x = col * x_spacing;
-            const y = row * y_spacing;
-            points.push({ x: x.toFixed(3), y: y.toFixed(3) });
-        }
-    }
-
-    return points;
+    return ECHO_384_BASE_POINTS;
 }
 
 function Echo384Image(imageColors) {
-    const points = [];
     const rows = 16;
     const cols = 24;
-    if (!imageColors || !imageColors.length || !imageColors[0].length) return points;
-
-    const x_spacing = 5;  // mm between columns
-    const y_spacing = 5;  // mm between rows
+    if (!imageColors || !imageColors.length || !imageColors[0].length) return [];
 
     const imgH = imageColors.length;
     const imgW = imageColors[0].length;
 
     const { padX, padY, drawCols, drawRows } = containRect(cols, rows, imgW, imgH);
-
-    for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-            const color = sampleContainedImage(imageColors, col, row, {
-                padX,
-                padY,
-                drawCols,
-                drawRows
-            });
-
-            const xPos = col * x_spacing;  // same as echo384
-            const yPos = row * y_spacing;  // same as echo384
-
-            points.push({
-                x: xPos.toFixed(3),
-                y: yPos.toFixed(3),
-                color
-            });
-        }
-    }
-
-    return points;
+    return colorizeBasePoints(ECHO_384_BASE_POINTS, (index) => {
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+        return sampleContainedImage(imageColors, col, row, {
+            padX,
+            padY,
+            drawCols,
+            drawRows
+        });
+    });
 }
 
 function Echo1536() {
-    const width_mm = 128;
-    const height_mm = 86;
-    const rows = 32;
-    const cols = 48;
-    const points = [];
-
-    // 1536-well pitch
-    const x_spacing = 2.5;
-    const y_spacing = 2.5;
-
-    for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-            const x = col * x_spacing;
-            const y = row * y_spacing;
-            points.push({ x: x.toFixed(3), y: y.toFixed(3) });
-        }
-    }
-
-    return points;
-}
-
-const E1536_GRID = [];
-const ROWS = 32;
-const COLS = 48;
-const X_SPACING = 2.5;
-const Y_SPACING = 2.5;
-
-// Precompute positions
-for (let row = 0; row < ROWS; row++) {
-    for (let col = 0; col < COLS; col++) {
-        E1536_GRID.push({
-            x: +(col * X_SPACING).toFixed(3),
-            y: +(row * Y_SPACING).toFixed(3),
-            row,
-            col
-        });
-    }
+    return ECHO_1536_BASE_POINTS;
 }
 
 function Echo1536Image(imageColors) {
-    const points = [];
     const rows = 32;
     const cols = 48;
-    if (!imageColors || !imageColors.length || !imageColors[0].length) return points;
+    if (!imageColors || !imageColors.length || !imageColors[0].length) return [];
 
-    const x_spacing = 2.5;  // mm between columns for 1536
-    const y_spacing = 2.5;  // mm between rows for 1536
+    const imgH = imageColors.length;
+    const imgW = imageColors[0].length;
+    const { padX, padY, drawCols, drawRows } = containRect(cols, rows, imgW, imgH);
+    return colorizeBasePoints(ECHO_1536_BASE_POINTS, (index) => {
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+        return sampleContainedImage(imageColors, col, row, {
+            padX,
+            padY,
+            drawCols,
+            drawRows
+        });
+    });
+}
+
+function Echo6144() {
+    return buildEcho1536Points();
+}
+
+function Echo6144Image(imageColors) {
+    if (!imageColors || !imageColors.length || !imageColors[0].length) return [];
 
     const imgH = imageColors.length;
     const imgW = imageColors[0].length;
 
-    const { padX, padY, drawCols, drawRows } = containRect(cols, rows, imgW, imgH);
+    const { padX, padY, drawCols, drawRows } = containRect(ECHO_1536_RENDER_COLS, ECHO_1536_RENDER_ROWS, imgW, imgH);
 
-    for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-            const color = sampleContainedImage(imageColors, col, row, {
-                padX,
-                padY,
-                drawCols,
-                drawRows
-            });
+    return colorizeBasePoints(buildEcho1536Points(), (index) => {
+        const point = ECHO_6144_POINT_METADATA[index];
+        const sampleCol = point.col * 2 + point.subCol;
+        const sampleRow = point.row * 2 + point.subRow;
 
-            const xPos = col * x_spacing;
-            const yPos = row * y_spacing;
-
-            points.push({
-                x: xPos.toFixed(3),
-                y: yPos.toFixed(3),
-                color
-            });
-        }
-    }
-
-    return points;
+        return sampleContainedImage(imageColors, sampleCol, sampleRow, {
+            padX,
+            padY,
+            drawCols,
+            drawRows
+        });
+    });
 }
 
 function containRect(targetCols, targetRows, sourceW, sourceH) {
