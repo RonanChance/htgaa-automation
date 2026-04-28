@@ -5,132 +5,74 @@
   const MAX_TOTAL_NL = 20_000;
   const WATER_ID = 'nuclease_free_water';
   const BASE_BUFFER_ID = 'base_buffer';
-  const reagentGroups = Array.isArray(data?.reagentGroups) ? data.reagentGroups : [];
+  const MASTER_MIX_NL = 10_000;
+  const HIDDEN_REAGENT_IDS = new Set([BASE_BUFFER_ID]);
+  const reagentGroups = (Array.isArray(data?.reagentGroups) ? data.reagentGroups : [])
+    .map((group) => ({
+      ...group,
+      reagents: (Array.isArray(group?.reagents) ? group.reagents : []).filter(
+        (reagent) => reagent?.in_stock !== false
+      )
+    }))
+    .filter((group) => group.reagents.length > 0);
+
+  const FIXED_VOLUME_OVERRIDES = {
+    cell_lysate: 6000,
+    dna_template: 2000,
+    base_buffer: MASTER_MIX_NL
+  };
+
+  function withFixedVolumeOverrides(reagent, groupName) {
+    return {
+      ...reagent,
+      ...(groupName ? { group: groupName } : {}),
+      ...(Object.prototype.hasOwnProperty.call(FIXED_VOLUME_OVERRIDES, reagent.id)
+        ? { fixedNl: FIXED_VOLUME_OVERRIDES[reagent.id] }
+        : {})
+    };
+  }
 
   const allReagents = reagentGroups.flatMap((group) =>
-    group.reagents.map((reagent) => ({ ...reagent, group: group.name }))
+    group.reagents.map((reagent) => withFixedVolumeOverrides(reagent, group.name))
   );
+  const visibleReagentGroups = reagentGroups
+    .map((group) => ({
+      ...group,
+      reagents: group.reagents
+        .map((reagent) => withFixedVolumeOverrides(reagent, group.name))
+        .filter((reagent) => !HIDDEN_REAGENT_IDS.has(reagent.id))
+    }))
+    .filter((group) => group.reagents.length > 0);
+  const visibleReagents = allReagents.filter((reagent) => !HIDDEN_REAGENT_IDS.has(reagent.id));
 
-  const baseTargetMm_1777863_77 = {
-    hepes_koh: 45,
-    potassium_glutamate: 312.6,
-    magnesium_glutamate: 7.0,
-    glucose: 6.9,
-    aa_mix_17: 4.1,
-    tyrosine: 4.1,
+  const baselineTargetMm_1777863 = {
+    potassium_glutamate: 312.5625,
+    magnesium_glutamate: 6.975,
+    hepes_koh: 45.0,
+    amp: 0.625,
+    ump: 0.375,
+    cmp: 0.375,
+    guanine: 0.15625,
+    aa_mix_17: 4.0625,
+    tyrosine: 4.0625,
     cysteine: 4.0,
-    potassium_phosphate_ratio_dibasic_monobasic: 5.6,
-    potassium_phosphate_ratio_monobasic_dibasic: 5.6,
-    nicotinamide: 3.1,
-    ribose: 77.4,
-    amp: 0.6,
-    cmp: 0.4,
-    gmp: 0,
-    ump: 0.4,
-    guanine: 0.2,
+    potassium_phosphate_monobasic: 5.625,
+    potassium_phosphate_dibasic: 5.625,
+    nicotinamide: 3.125
   };
-
-  const baseTargetMm_1784943_26 = {
-    hepes_koh: 50,
-    potassium_glutamate: 299.8,
-    magnesium_glutamate: 7,
-    aa_mix_17: 3.2,
-    tyrosine: 3.2,
-    cysteine: 3.2,
-    potassium_phosphate_ratio_dibasic_monobasic: 7.5,
-    potassium_phosphate_ratio_monobasic_dibasic: 7.5,
-    nicotinamide: 4.0,
-    ribose: 69.9,
-    amp: 0.8,
-    cmp: 0.5,
-    gmp: 0.5,
-    ump: 0.5
-  };
-
-  const baseTargetMm_1793122_35 = {
-    hepes_koh: 67.5,
-    potassium_glutamate: 273.2,
-    magnesium_glutamate: 8.8,
-    glucose: 8.3,
-    sodium_pyruvate: 9.1,
-    aa_mix_17: 4.8,
-    tyrosine: 1.2,
-    cysteine: 5.0,
-    potassium_phosphate_ratio_dibasic_monobasic: 7.5,
-    potassium_phosphate_ratio_monobasic_dibasic: 7.5,
-    nicotinamide: 4.0,
-    spermidine: 1.2,
-    ribose: 40.0,
-    amp: 0.5,
-    cmp: 1.0,
-    gmp: 1.0,
-    ump: 1.0,
-    adenosine: 0.4
-  };
-  const baseTargetUnitsPerMl_1793122_35 = { catalase: 187.5 };
-
-const baseTargetMm_1793665_74 = {
-    hepes_koh: 75,
-    potassium_glutamate: 299.8,
-    magnesium_glutamate: 8.2,
-    glucose: 8.3,
-    oxaloacetic_acid: 5.0,
-    aa_mix_17: 4.8,
-    tyrosine: 1.2,
-    cysteine: 4.0,
-    potassium_phosphate_ratio_dibasic_monobasic: 15.0,
-    nicotinamide: 4.0,
-    spermidine: 1.2,
-    ribose: 40.0,
-    amp: 1.5,
-    cmp: 1.0,
-    ump: 1.0,
-    guanine: 0.6
-  };
-
-  const baseTargetMm_1793119_36 = {
-    hepes_koh: 75,
-    potassium_glutamate: 277.5,
-    magnesium_glutamate: 8.2,
-    glucose: 9.7,
-    sodium_pyruvate: 18.2,
-    aa_mix_17: 3.0,
-    tyrosine: 3.0,
-    potassium_phosphate_ratio_dibasic_monobasic: 15.0,
-    dilithium_acetyl_phosphate: 0.2,
-    nicotinamide: 0.4,
-    ribose: 50.0,
-    amp: 1.0,
-    cmp: 1.0,
-    gmp: 1.0,
-    ump: 1.0
-  };
-
-  const baseTargetMm_1794089_36 = {
-    hepes_koh: 60.0,
-    potassium_glutamate: 273.2,
-    magnesium_glutamate: 8.2,
-    glucose: 8.3,
-    aa_mix_17: 4.8,
-    tyrosine: 3.2,
-    cysteine: 4.0,
-    potassium_phosphate_ratio_dibasic_monobasic: 7.5,
-    potassium_phosphate_ratio_monobasic_dibasic: 7.5,
-    nicotinamide: 3.0,
-    spermidine: 1.2,
-    ribose: 40.0,
-    cmp: 1.1,
-    gmp: 1.1,
-    ump: 1.1
+  const baselineTargetGramsPerLiter_1777863 = {
+    ribose: 11.625,
+    glucose: 1.25
   };
 
   const defaultTargetProfiles = {
-    '1777863_77': { label: '1777863_77', targetMm: { ...baseTargetMm_1777863_77 }, targetUnitsPerMl: { } },
-    '1784943_26': { label: '1784943_26', targetMm: { ...baseTargetMm_1784943_26 }, targetUnitsPerMl: { } },
-    '1793122_35': { label: '1793122_35', targetMm: { ...baseTargetMm_1793122_35 }, targetUnitsPerMl: { ...baseTargetUnitsPerMl_1793122_35 } },
-    '1793665_74': { label: '1793665_74', targetMm: { ...baseTargetMm_1793665_74 }, targetUnitsPerMl: { } },
-    '1793119_36': { label: '1793119_36', targetMm: { ...baseTargetMm_1793119_36 }, targetUnitsPerMl: { } },
-    '1794089_36': { label: '1794089_36', targetMm: { ...baseTargetMm_1794089_36 }, targetUnitsPerMl: { } }
+    '1777863_77': {
+      label: '1777863',
+      targetMm: { ...baselineTargetMm_1777863 },
+      targetUnitsPerMl: {},
+      targetGramsPerLiter: { ...baselineTargetGramsPerLiter_1777863 },
+      targetVolumePercent: {}
+    }
   };
   const DEFAULT_PROFILE_KEY = '1777863_77';
   const HTGAA_NODE_OPTIONS = [
@@ -151,17 +93,7 @@ const baseTargetMm_1793665_74 = {
     'Hartnell College (Salinas, CA, USA)'
   ];
 
-  // Components pre-mixed inside the fixed 2 uL base buffer; values are stock mM in that mix.
-  // This lets us subtract base-buffer contribution from defaults and show true final concentrations.
-  const baseBufferComponentStockMm = {
-    aa_mix_17: 10.0,
-    tyrosine: 10.0,
-    cysteine: 10.0,
-    hepes_koh: 300.0,
-    magnesium_glutamate: 26.0,
-    potassium_glutamate: 1500.0
-  };
-  const fixedVolumeSummaryIds = new Set(['cell_lysate', 'base_buffer', 'dna_template']);
+  const fixedVolumeSummaryIds = new Set(['cell_lysate', 'dna_template']);
   const excludedFromExportIds = new Set(['cell_lysate', 'base_buffer', 'dna_template']);
 
   const initialVolumes = computeInitialVolumes();
@@ -172,7 +104,6 @@ const baseTargetMm_1793665_74 = {
   let selectedNodeDisplay = $state('');
   let publishFormError = $state('');
   let selectedProfileKey = $state(DEFAULT_PROFILE_KEY);
-  let profileDropdown;
   let uploadModal;
   let draggingReagent = null;
   let dragLeft = 0;
@@ -190,8 +121,8 @@ const baseTargetMm_1793665_74 = {
 
   let uniqueReagentCount = $derived(
     new Set(
-      allReagents
-        .filter((reagent) => (Number(volumesNl[reagent.id]) || 0) > 0)
+      visibleReagents
+        .filter((reagent) => effectiveVolumeNlForReagent(reagent.id) > 0)
         .map((reagent) => reagent.id)
     ).size
   );
@@ -199,10 +130,7 @@ const baseTargetMm_1793665_74 = {
   let remainingNl = $derived(Math.max(0, MAX_TOTAL_NL - totalVolumeNl));
 
   let totalCostUsd = $derived(
-    allReagents.reduce(
-      (sum, reagent) => sum + ((Number(volumesNl[reagent.id]) || 0) / 1_000_000) * reagent.costPerMl,
-      0
-    )
+    visibleReagents.reduce((sum, reagent) => sum + effectiveCostUsdForReagent(reagent), 0)
   );
 
   let costPerMlReaction = $derived(
@@ -213,24 +141,20 @@ const baseTargetMm_1793665_74 = {
   let pieSlices = $derived(buildPieSlices());
   let summaryRows = $derived(buildSummaryRows());
   let exportedComposition = $derived(
-    allReagents
+    visibleReagents
+      .filter((reagent) => !excludedFromExportIds.has(reagent.id))
       .map((reagent) => {
-        const volumeNl = Number(volumesNl[reagent.id]) || 0;
-        const identity = identityForReagent(reagent.id);
+        const supplementalVolumeNl = Number(volumesNl[reagent.id]) || 0;
         return {
           id: reagent.id,
-          name: reagent.name,
-          volume_nl: volumeNl,
-          entity_type: identity.entity_type,
-          entity_id: identity.entity_id,
-          molecule_id: identity.molecule_id,
-          reagent_id: identity.reagent_id
+          supplemental_volume_nl: supplementalVolumeNl
         };
       })
-      .filter((item) => item.volume_nl > 0 && !excludedFromExportIds.has(item.id))
+      .filter((item) => item.supplemental_volume_nl > 0)
   );
   let exportedCompositionJson = $derived(JSON.stringify(exportedComposition, null, 2));
   let concentrationRankEntries = $derived(buildConcentrationRankEntries());
+  let costRankEntries = $derived(buildCostRankEntries());
 
   function toStepNl(value) {
     const numeric = Number(value);
@@ -246,6 +170,97 @@ const baseTargetMm_1793665_74 = {
     return `$${value.toFixed(4)}`;
   }
 
+  function costUsdForReagent(reagent) {
+    const volumeNl = Number(volumesNl[reagent.id]) || 0;
+    return (volumeNl / 1_000_000) * Number(reagent.costPerMl || 0);
+  }
+
+  function activeProfile(profileKey = selectedProfileKey) {
+    return defaultTargetProfiles[profileKey] || defaultTargetProfiles[DEFAULT_PROFILE_KEY];
+  }
+
+  function masterMixScaleFromVolumes(volumes) {
+    const masterMixNl = Number(volumes?.[BASE_BUFFER_ID]) || 0;
+    if (MASTER_MIX_NL <= 0) return 0;
+    return masterMixNl / MASTER_MIX_NL;
+  }
+
+  function equivalentSourceVolumeNlForReagentFromProfile(reagent, profile = activeProfile()) {
+    if (!reagent || reagent.id === BASE_BUFFER_ID) return 0;
+
+    const targetMm = profile?.targetMm || {};
+    const targetUnitsPerMl = profile?.targetUnitsPerMl || {};
+    const targetGramsPerLiter = profile?.targetGramsPerLiter || {};
+    const targetVolumePercent = profile?.targetVolumePercent || {};
+
+    if (targetMm[reagent.id] != null) {
+      const stockM = stockMolarityForReagent(reagent);
+      if (stockM && stockM > 0) {
+        return ((targetMm[reagent.id] * 1e-3) / stockM) * MAX_TOTAL_NL;
+      }
+    }
+
+    if (targetUnitsPerMl[reagent.id] != null) {
+      const stockUnitsPerMl = parseUnitsPerMl(reagent.concentration);
+      if (stockUnitsPerMl && stockUnitsPerMl > 0) {
+        return (targetUnitsPerMl[reagent.id] / stockUnitsPerMl) * MAX_TOTAL_NL;
+      }
+    }
+
+    if (targetGramsPerLiter[reagent.id] != null) {
+      const stockGL = parseGramsPerLiter(reagent.concentration);
+      if (stockGL && stockGL > 0) {
+        return (targetGramsPerLiter[reagent.id] / stockGL) * MAX_TOTAL_NL;
+      }
+    }
+
+    if (targetVolumePercent[reagent.id] != null) {
+      const stockPercent = stockVolumePercentForReagent(reagent);
+      if (stockPercent && stockPercent > 0) {
+        return (targetVolumePercent[reagent.id] / stockPercent) * MAX_TOTAL_NL;
+      }
+    }
+
+    return 0;
+  }
+
+  function baseBufferAllocationEntries() {
+    const profile = activeProfile();
+    return visibleReagents
+      .map((reagent) => [reagent.id, equivalentSourceVolumeNlForReagentFromProfile(reagent, profile)])
+      .filter(([, equivalentNl]) => equivalentNl > 0);
+  }
+
+  function apportionedBaseBufferVolumeMap(volumes) {
+    const baseBufferNl = Number(volumes?.[BASE_BUFFER_ID]) || 0;
+    if (baseBufferNl <= 0) return new Map();
+
+    const entries = baseBufferAllocationEntries();
+    const totalEquivalentNl = entries.reduce((sum, [, equivalentNl]) => sum + equivalentNl, 0);
+    if (totalEquivalentNl <= 0) return new Map();
+
+    return new Map(
+      entries.map(([reagentId, equivalentNl]) => [reagentId, (baseBufferNl * equivalentNl) / totalEquivalentNl])
+    );
+  }
+
+  function effectiveVolumeNlForReagentFromVolumes(reagentId, volumes) {
+    if (reagentId === BASE_BUFFER_ID) return 0;
+    const directNl = Number(volumes?.[reagentId]) || 0;
+    const apportionedNl = apportionedBaseBufferVolumeMap(volumes).get(reagentId) || 0;
+    return directNl + apportionedNl;
+  }
+
+  function effectiveVolumeNlForReagent(reagentId) {
+    return effectiveVolumeNlForReagentFromVolumes(reagentId, volumesNl);
+  }
+
+  function effectiveCostUsdForReagent(reagent) {
+    const directCostUsd = costUsdForReagent(reagent);
+    const apportionedNl = apportionedBaseBufferVolumeMap(volumesNl).get(reagent.id) || 0;
+    return directCostUsd + ((apportionedNl / 1_000_000) * Number(reagent.costPerMl || 0));
+  }
+
   function reagentMetaLabel(reagent) {
     const parts = [];
     if (Number(reagent.costPerMl) > 0) {
@@ -253,11 +268,36 @@ const baseTargetMm_1793665_74 = {
       parts.push(`$${Number(reagent.costPerMl).toFixed(2)}/mL`);
     }
 
-    parts.push(formatUl(volumesNl[reagent.id] || 0));
+    parts.push(formatUl(effectiveVolumeNlForReagent(reagent.id)));
 
-    const finalLabel = formatConcentration(finalNmForReagent(reagent));
-    if (finalLabel !== 'n/a') {
-      parts.push(`final ${finalLabel}`);
+    const targetGramsPerLiter = activeProfile()?.targetGramsPerLiter || {};
+    const targetVolumePercent = activeProfile()?.targetVolumePercent || {};
+
+    if (targetGramsPerLiter[reagent.id] != null) {
+      const finalGL = finalGramsPerLiterForReagent(reagent);
+      if (finalGL != null) {
+        parts.push(`final ${finalGL.toFixed(3)} g/L`);
+      }
+    } else if (targetVolumePercent[reagent.id] != null) {
+      const finalPercent = finalVolumePercentForReagent(reagent);
+      if (finalPercent != null) {
+        parts.push(`final ${finalPercent.toFixed(2)}% v/v`);
+      }
+    } else {
+      const finalNm = finalNmForReagent(reagent);
+      if (finalNm != null) {
+        parts.push(`final ${formatConcentration(finalNm)}`);
+      } else {
+        const finalGL = finalGramsPerLiterForReagent(reagent);
+        if (finalGL != null) {
+          parts.push(`final ${finalGL.toFixed(3)} g/L`);
+        } else {
+          const finalPercent = finalVolumePercentForReagent(reagent);
+          if (finalPercent != null) {
+            parts.push(`final ${finalPercent.toFixed(2)}% v/v`);
+          }
+        }
+      }
     }
 
     return parts.join(' | ');
@@ -330,51 +370,53 @@ const baseTargetMm_1793665_74 = {
     return Number(match[1]);
   }
 
+  function parseVolumePercent(concentration) {
+    const match = String(concentration || '')
+      .trim()
+      .match(/^([0-9]*\.?[0-9]+)\s*%\s*v\/v$/i);
+    if (!match) return null;
+    return Number(match[1]);
+  }
+
+  function stockMolarityForReagent(reagent) {
+    const directM = parseMolarityM(reagent?.concentration);
+    if (directM != null) return directM;
+
+    const gramsPerLiter = parseGramsPerLiter(reagent?.concentration);
+    const molecularWeight = Number(reagent?.molecular_weight_g_mol);
+    if (gramsPerLiter == null || !Number.isFinite(molecularWeight) || molecularWeight <= 0) return null;
+
+    // M = (g/L) / (g/mol)
+    return gramsPerLiter / molecularWeight;
+  }
+
+  function stockVolumePercentForReagent(reagent) {
+    return parseVolumePercent(reagent?.concentration);
+  }
+
   function totalVolumeFor(volumes) {
     return allReagents.reduce((sum, reagent) => sum + (Number(volumes[reagent.id]) || 0), 0);
   }
 
   function baseBufferContributionMmFromVolumes(reagentId, volumes) {
-    const stockMm = baseBufferComponentStockMm[reagentId];
-    const totalNl = totalVolumeFor(volumes);
-    if (stockMm == null || totalNl <= 0) return 0;
-    const baseBufferNl = Number(volumes[BASE_BUFFER_ID]) || 0;
-    return stockMm * (baseBufferNl / totalNl);
+    const targetMm = activeProfile()?.targetMm || {};
+    return (targetMm[reagentId] || 0) * masterMixScaleFromVolumes(volumes);
   }
 
-  function baseBufferContributionMm(reagentId) {
-    return baseBufferContributionMmFromVolumes(reagentId, volumesNl);
+  function baseBufferContributionGramsPerLiterFromVolumes(reagentId, volumes) {
+    const targetGramsPerLiter = activeProfile()?.targetGramsPerLiter || {};
+    return (targetGramsPerLiter[reagentId] || 0) * masterMixScaleFromVolumes(volumes);
+  }
+
+  function baseBufferContributionVolumePercentFromVolumes(reagentId, volumes) {
+    const targetVolumePercent = activeProfile()?.targetVolumePercent || {};
+    return (targetVolumePercent[reagentId] || 0) * masterMixScaleFromVolumes(volumes);
   }
 
   function computeDefaultVolumes(profileKey = DEFAULT_PROFILE_KEY) {
-    const profile = defaultTargetProfiles[profileKey] || defaultTargetProfiles[DEFAULT_PROFILE_KEY];
-    const targetMm = profile?.targetMm || {};
-    const targetUnitsPerMl = profile?.targetUnitsPerMl || {};
-
     const volumes = Object.fromEntries(
       allReagents.map((reagent) => [reagent.id, reagent.fixedNl ?? 0])
     );
-
-    for (const reagent of allReagents) {
-      if (reagent.fixedNl != null) continue;
-
-      let targetNl = 0;
-      if (targetMm[reagent.id] != null) {
-        const stockM = parseMolarityM(reagent.concentration);
-        if (stockM && stockM > 0) {
-          const baseContributionMm = (baseBufferComponentStockMm[reagent.id] || 0) * ((Number(volumes[BASE_BUFFER_ID]) || 0) / MAX_TOTAL_NL);
-          const additionalTargetMm = Math.max(0, targetMm[reagent.id] - baseContributionMm);
-          targetNl = ((additionalTargetMm * 1e-3) / stockM) * MAX_TOTAL_NL;
-        }
-      } else if (targetUnitsPerMl[reagent.id] != null) {
-        const stockUnitsPerMl = parseUnitsPerMl(reagent.concentration);
-        if (stockUnitsPerMl && stockUnitsPerMl > 0) {
-          targetNl = (targetUnitsPerMl[reagent.id] / stockUnitsPerMl) * MAX_TOTAL_NL;
-        }
-      }
-
-      volumes[reagent.id] = floorToStepNl(targetNl);
-    }
 
     const currentTotal = allReagents.reduce((sum, reagent) => sum + (Number(volumes[reagent.id]) || 0), 0);
     const waterCurrent = Number(volumes[WATER_ID]) || 0;
@@ -390,22 +432,15 @@ const baseTargetMm_1793665_74 = {
     volumesNl = { ...computeDefaultVolumes(profileKey) };
   }
 
-  function closeProfileDropdownOnOutsideClick(event) {
-    if (!profileDropdown?.open) return;
-    const target = event.target;
-    if (target instanceof Node && !profileDropdown.contains(target)) {
-      profileDropdown.removeAttribute('open');
-    }
-  }
-
   function finalNmForReagentFromVolumes(reagent, volumes) {
-    const stockM = parseMolarityM(reagent.concentration);
-    const totalNl = totalVolumeFor(volumes);
-    if (stockM == null || totalNl <= 0) return null;
+    const stockM = stockMolarityForReagent(reagent);
     const volumeNl = Number(volumes[reagent.id]) || 0;
-    const directNm = stockM * (volumeNl / totalNl) * 1_000_000_000;
+    const totalNl = totalVolumeFor(volumes);
+    const directNm = stockM == null || totalNl <= 0 ? 0 : stockM * (volumeNl / totalNl) * 1_000_000_000;
     const baseNm = baseBufferContributionMmFromVolumes(reagent.id, volumes) * 1_000_000;
-    return directNm + baseNm;
+    const totalNm = directNm + baseNm;
+    if (totalNm <= 0 && stockM == null && baseNm <= 0) return null;
+    return totalNm;
   }
 
   function finalNmForReagent(reagent) {
@@ -417,16 +452,48 @@ const baseTargetMm_1793665_74 = {
     return nm == null ? null : nm / 1_000_000;
   }
 
-  function finalGramsPerLiterForReagent(reagent) {
+  function finalGramsPerLiterForReagentFromVolumes(reagent, volumes) {
     const stockGL = parseGramsPerLiter(reagent.concentration);
-    const totalNl = totalVolumeFor(volumesNl);
-    if (stockGL == null || totalNl <= 0) return null;
-    const volumeNl = Number(volumesNl[reagent.id]) || 0;
-    return stockGL * (volumeNl / totalNl);
+    const totalNl = totalVolumeFor(volumes);
+    const volumeNl = Number(volumes[reagent.id]) || 0;
+    const directGL = stockGL == null || totalNl <= 0 ? 0 : stockGL * (volumeNl / totalNl);
+    const baseGL = baseBufferContributionGramsPerLiterFromVolumes(reagent.id, volumes);
+    const totalGL = directGL + baseGL;
+    if (totalGL <= 0 && stockGL == null && baseGL <= 0) return null;
+    return totalGL;
+  }
+
+  function finalGramsPerLiterForReagent(reagent) {
+    return finalGramsPerLiterForReagentFromVolumes(reagent, volumesNl);
+  }
+
+  function finalVolumePercentForReagentFromVolumes(reagent, volumes) {
+    const stockPercent = stockVolumePercentForReagent(reagent);
+    const volumeNl = Number(volumes[reagent.id]) || 0;
+    const totalNl = totalVolumeFor(volumes);
+    const directPercent = stockPercent == null || totalNl <= 0 ? 0 : stockPercent * (volumeNl / totalNl);
+    const basePercent = baseBufferContributionVolumePercentFromVolumes(reagent.id, volumes);
+    const totalPercent = directPercent + basePercent;
+    if (totalPercent <= 0 && stockPercent == null && basePercent <= 0) return null;
+    return totalPercent;
+  }
+
+  function finalVolumePercentForReagent(reagent) {
+    return finalVolumePercentForReagentFromVolumes(reagent, volumesNl);
+  }
+
+  function baselineVolumePercentForReagent(reagent) {
+    return finalVolumePercentForReagentFromVolumes(reagent, presetVolumesNl);
+  }
+
+  function baselineGramsPerLiterForReagent(reagent) {
+    const targetGramsPerLiter = activeProfile()?.targetGramsPerLiter || {};
+    if (targetGramsPerLiter[reagent.id] == null) return null;
+    return finalGramsPerLiterForReagentFromVolumes(reagent, presetVolumesNl);
   }
 
   function baselineMmForReagent(reagent) {
-    const isMolar = parseMolarityM(reagent.concentration) != null;
+    const isMolar = stockMolarityForReagent(reagent) != null;
     if (!isMolar) return null;
     const nm = finalNmForReagentFromVolumes(reagent, presetVolumesNl);
     return nm == null ? null : nm / 1_000_000;
@@ -436,6 +503,12 @@ const baseTargetMm_1793665_74 = {
     if (value == null) return 'n/a';
     if (isZeroValue(value)) return '-';
     return `${value.toFixed(3)} mM`;
+  }
+
+  function formatVolumePercent(value) {
+    if (value == null) return 'n/a';
+    if (isZeroValue(value)) return '-';
+    return `${value.toFixed(2)}% v/v`;
   }
 
   function formatPercentDelta(baseMm, deltaMm) {
@@ -465,14 +538,16 @@ const baseTargetMm_1793665_74 = {
   }
 
   function buildSummaryRows() {
-    return allReagents.map((reagent) => {
+    return visibleReagents.map((reagent) => {
       if (fixedVolumeSummaryIds.has(reagent.id) || reagent.id === WATER_ID) {
-        const baselineUl = (Number(presetVolumesNl[reagent.id]) || 0) / 1000;
-        const currentUl = (Number(volumesNl[reagent.id]) || 0) / 1000;
+        const baselineUl = effectiveVolumeNlForReagentFromVolumes(reagent.id, presetVolumesNl) / 1000;
+        const currentUl = effectiveVolumeNlForReagentFromVolumes(reagent.id, volumesNl) / 1000;
         const delta = currentUl - baselineUl;
         return {
           id: reagent.id,
           name: reagent.name,
+          reagent,
+          adjustable: false,
           unit: 'uL',
           baselineValue: baselineUl,
           currentValue: currentUl,
@@ -486,14 +561,74 @@ const baseTargetMm_1793665_74 = {
 
       const baselineMm = baselineMmForReagent(reagent);
       const currentMm = finalMmForReagent(reagent);
+      const baselineGL = baselineGramsPerLiterForReagent(reagent);
+      const currentGL = finalGramsPerLiterForReagent(reagent);
+      const baselinePercent = baselineVolumePercentForReagent(reagent);
+      const currentPercent = finalVolumePercentForReagent(reagent);
 
-      if (baselineMm == null || currentMm == null) {
-        const baselineUl = (Number(presetVolumesNl[reagent.id]) || 0) / 1000;
-        const currentUl = (Number(volumesNl[reagent.id]) || 0) / 1000;
+      if (baselineGL != null && currentGL != null) {
+        const delta = currentGL - baselineGL;
+        return {
+          id: reagent.id,
+          name: reagent.name,
+          reagent,
+          adjustable: reagent.fixedNl == null && reagent.id !== WATER_ID,
+          unit: 'g/L',
+          baselineValue: baselineGL,
+          currentValue: currentGL,
+          delta,
+          baselineLabel: `${baselineGL.toFixed(3)} g/L`,
+          currentLabel: `${currentGL.toFixed(3)} g/L`,
+          deltaLabel: formatDeltaLabel(delta, 'g/L'),
+          deltaPctLabel: formatPercentDelta(baselineGL, delta)
+        };
+      }
+
+      if (baselineMm != null && currentMm != null) {
+        const delta = currentMm - baselineMm;
+        return {
+          id: reagent.id,
+          name: reagent.name,
+          reagent,
+          adjustable: reagent.fixedNl == null && reagent.id !== WATER_ID,
+          unit: 'mM',
+          baselineValue: baselineMm,
+          currentValue: currentMm,
+          delta,
+          baselineLabel: formatMm(baselineMm),
+          currentLabel: formatMm(currentMm),
+          deltaLabel: formatDeltaLabel(delta, 'mM'),
+          deltaPctLabel: formatPercentDelta(baselineMm, delta)
+        };
+      }
+
+      if (baselinePercent != null && currentPercent != null) {
+        const delta = currentPercent - baselinePercent;
+        return {
+          id: reagent.id,
+          name: reagent.name,
+          reagent,
+          adjustable: reagent.fixedNl == null && reagent.id !== WATER_ID,
+          unit: '% v/v',
+          baselineValue: baselinePercent,
+          currentValue: currentPercent,
+          delta,
+          baselineLabel: formatVolumePercent(baselinePercent),
+          currentLabel: formatVolumePercent(currentPercent),
+          deltaLabel: formatDeltaLabel(delta, '% v/v'),
+          deltaPctLabel: formatPercentDelta(baselinePercent, delta)
+        };
+      }
+
+      {
+        const baselineUl = effectiveVolumeNlForReagentFromVolumes(reagent.id, presetVolumesNl) / 1000;
+        const currentUl = effectiveVolumeNlForReagentFromVolumes(reagent.id, volumesNl) / 1000;
         const delta = currentUl - baselineUl;
         return {
           id: reagent.id,
           name: reagent.name,
+          reagent,
+          adjustable: reagent.fixedNl == null && reagent.id !== WATER_ID,
           unit: 'uL',
           baselineValue: baselineUl,
           currentValue: currentUl,
@@ -504,20 +639,6 @@ const baseTargetMm_1793665_74 = {
           deltaPctLabel: formatPercentDelta(baselineUl, delta)
         };
       }
-
-      const delta = baselineMm == null || currentMm == null ? null : currentMm - baselineMm;
-      return {
-        id: reagent.id,
-        name: reagent.name,
-        unit: 'mM',
-        baselineValue: baselineMm,
-        currentValue: currentMm,
-        delta,
-        baselineLabel: formatMm(baselineMm),
-        currentLabel: formatMm(currentMm),
-        deltaLabel: formatDeltaLabel(delta, 'mM'),
-        deltaPctLabel: formatPercentDelta(baselineMm, delta)
-      };
     });
   }
 
@@ -537,6 +658,17 @@ const baseTargetMm_1793665_74 = {
       };
     }
 
+    const targetGramsPerLiter = activeProfile()?.targetGramsPerLiter || {};
+    if (targetGramsPerLiter[reagent.id] != null) {
+      const finalGL = finalGramsPerLiterForReagent(reagent);
+      if (finalGL != null) {
+        return {
+          label: `${finalGL.toFixed(3)} g/L`,
+          rankValue: finalGL
+        };
+      }
+    }
+
     const finalNm = finalNmForReagent(reagent);
     if (finalNm != null) {
       return {
@@ -550,6 +682,14 @@ const baseTargetMm_1793665_74 = {
       return {
         label: `${finalGL.toFixed(3)} g/L`,
         rankValue: finalGL
+      };
+    }
+
+    const finalPercent = finalVolumePercentForReagent(reagent);
+    if (finalPercent != null) {
+      return {
+        label: `${finalPercent.toFixed(2)}% v/v`,
+        rankValue: finalPercent
       };
     }
 
@@ -681,10 +821,30 @@ const baseTargetMm_1793665_74 = {
     }
   }
 
+  function costRankText() {
+    if (costRankEntries.length === 0) {
+      return 'No non-zero reagents in composition.';
+    }
+    return costRankEntries
+      .map((entry) => `${entry.rank}. ${entry.name} ${entry.costLabel} (${entry.volumeLabel})`)
+      .join('\n');
+  }
+
+  async function copyCostRank() {
+    copyMessage = '';
+    copyError = '';
+    try {
+      await navigator.clipboard.writeText(costRankText());
+      copyMessage = 'Copied cost rank to clipboard.';
+    } catch {
+      copyError = 'Failed to copy cost rank.';
+    }
+  }
+
   function buildConcentrationRankEntries() {
-    return allReagents
+    return visibleReagents
       .filter((reagent) => {
-        const volumeNl = Number(volumesNl[reagent.id]) || 0;
+        const volumeNl = effectiveVolumeNlForReagent(reagent.id);
         return volumeNl > 0 && !excludedFromExportIds.has(reagent.id);
       })
       .map((reagent) => {
@@ -699,6 +859,22 @@ const baseTargetMm_1793665_74 = {
       .map((entry, index) => ({ ...entry, rank: index + 1 }));
   }
 
+  function buildCostRankEntries() {
+    return visibleReagents
+      .filter((reagent) => effectiveVolumeNlForReagent(reagent.id) > 0)
+      .map((reagent) => {
+        const costUsd = effectiveCostUsdForReagent(reagent);
+        return {
+          name: reagent.name,
+          costUsd,
+          costLabel: formatUsd(costUsd),
+          volumeLabel: formatUl(effectiveVolumeNlForReagent(reagent.id))
+        };
+      })
+      .sort((a, b) => b.costUsd - a.costUsd)
+      .map((entry, index) => ({ ...entry, rank: index + 1 }));
+  }
+
   function buildPieSlices() {
     if (totalVolumeNl <= 0) return [];
 
@@ -707,23 +883,9 @@ const baseTargetMm_1793665_74 = {
 
     for (const reagent of allReagents) {
       if (reagent.id === BASE_BUFFER_ID) continue;
-      const volumeNl = Number(volumesNl[reagent.id]) || 0;
+      const volumeNl = effectiveVolumeNlForReagent(reagent.id);
       if (volumeNl <= 0) continue;
       sliceVolumeById.set(reagent.id, volumeNl);
-    }
-
-    const baseBufferNl = Number(volumesNl[BASE_BUFFER_ID]) || 0;
-    if (baseBufferNl > 0) {
-      const componentEntries = Object.entries(baseBufferComponentStockMm).filter(([, stockMm]) => stockMm > 0);
-      const totalStockMm = componentEntries.reduce((sum, [, stockMm]) => sum + stockMm, 0);
-
-      if (totalStockMm > 0) {
-        for (const [componentId, stockMm] of componentEntries) {
-          const apportionedNl = (baseBufferNl * stockMm) / totalStockMm;
-          const currentNl = sliceVolumeById.get(componentId) || 0;
-          sliceVolumeById.set(componentId, currentNl + apportionedNl);
-        }
-      }
     }
 
     const includedSlices = Array.from(sliceVolumeById.entries())
@@ -819,9 +981,17 @@ const baseTargetMm_1793665_74 = {
     publishFormError = '';
     publishMessage = '';
     publishError = '';
+    const humanAuthor = author?.trim() || '';
+    const aiAuthor = 'manual_ui';
 
     if (!selectedNodeDisplay) {
       publishFormError = 'Please select an HTGAA Node.';
+      isPublishing = false;
+      return;
+    }
+
+    if (!humanAuthor) {
+      publishFormError = 'Please enter your HTGAA username.';
       isPublishing = false;
       return;
     }
@@ -834,7 +1004,9 @@ const baseTargetMm_1793665_74 = {
 
     const payload = {
       title: designTitle?.trim() || `CFPS-${new Date().toISOString()}`,
-      author: author?.trim() || null,
+      author: humanAuthor,
+      human_author: humanAuthor,
+      ai_author: aiAuthor,
       rationale: rationale?.trim() || null,
       htgaaNode: nodeShortName(selectedNodeDisplay),
       design: {
@@ -904,31 +1076,17 @@ const baseTargetMm_1793665_74 = {
     <section class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md bg-base-200/40 px-3 py-2 text-xs">
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-base-content/70">Preset</span>
-        <details class="dropdown relative z-50" bind:this={profileDropdown}>
-          <summary class="rounded-md bg-neutral-700 px-2 py-1 text-xs text-white hover:bg-neutral-600">
-            {defaultTargetProfiles[selectedProfileKey]?.label ?? selectedProfileKey}
-          </summary>
-          <ul class="menu dropdown-content bg-base-100 rounded-box z-[999] w-52 p-2 shadow-sm">
-            {#each Object.entries(defaultTargetProfiles) as [profileKey, profile]}
-              <li>
-                <a
-                  class={selectedProfileKey === profileKey ? 'active' : ''}
-                  onclick={() => applyDefaultProfile(profileKey)}
-                >
-                  {profile.label}
-                </a>
-              </li>
-            {/each}
-          </ul>
-        </details>
+        <span class="rounded-md bg-neutral-700 px-2 py-1 text-xs text-white">
+          {defaultTargetProfiles[selectedProfileKey]?.label ?? selectedProfileKey}
+        </span>
       </div>
 
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-base-content/80">
         <span><span class="text-base-content/60">Total</span> {formatUl(totalVolumeNl)}</span>
         <span><span class="text-base-content/60">Reagents</span> {uniqueReagentCount}</span>
-        <span><span class="text-base-content/60">Cost/Reaction</span> {formatUsd(totalCostUsd)}</span>
-        <span><span class="text-base-content/60">Cost/mL</span> {formatUsd(costPerMlReaction)}</span>
-        <button
+        <!-- <span><span class="text-base-content/60">Cost/Reaction</span> {formatUsd(totalCostUsd)}</span> -->
+        <!-- <span><span class="text-base-content/60">Cost/mL</span> {formatUsd(costPerMlReaction)}</span> -->
+        <!-- <button
           class="rounded-md bg-neutral-700 px-2 py-1 text-xs text-white hover:bg-neutral-600 disabled:opacity-60"
           onclick={() => {
             if (!isPublishing) {
@@ -939,30 +1097,44 @@ const baseTargetMm_1793665_74 = {
           disabled={isPublishing}
         >
           {isPublishing ? 'Publishing...' : 'Publish Design'}
-        </button>
+        </button> -->
       </div>
 
-      <a href="/cfps-gallery" class="rounded-md bg-neutral-700 px-2 py-1 text-xs text-white hover:bg-neutral-600">Gallery</a>
+      <!-- <a href="/cfps-gallery" class="rounded-md bg-neutral-700 px-2 py-1 text-xs text-white hover:bg-neutral-600">Gallery</a> -->
     </section>
-
     <section class="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
       <div class="order-2 md:order-1">
-        <h3 class="pb-2 text-md font-semibold text-primary text-center underline">Summary Statistics</h3>
+        <h3 class="pb-2 text-md font-semibold text-primary text-center underline">Cell-Free Reaction Composition</h3>
         <div class="h-72 overflow-x-auto overflow-y-scroll rounded-md bg-base-200/60">
           <table class="table table-xs tabular-nums table-fixed">
             <thead>
               <tr>
-                <th class="w-[30%]">Reagent</th>
-                <th class="w-[17.5%]">Preset</th>
-                <th class="w-[17.5%]">Current</th>
-                <th class="w-[20%]">Delta</th>
-                <th class="w-[15%]">Delta %</th>
+                <th class="w-[34%]">Reagent</th>
+                <th class="w-[16%]">Preset</th>
+                <th class="w-[16%]">Current</th>
+                <th class="w-[14%]">Delta</th>
+                <th class="w-[10%]">Delta %</th>
+                <th class="w-[10%] text-right">Adjust</th>
               </tr>
             </thead>
             <tbody>
               {#each summaryRows as row}
                 <tr>
-                  <td class="whitespace-normal break-words leading-tight">{row.name}</td>
+                  <td class="whitespace-normal break-words leading-tight">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span>{row.name}</span>
+                      {#if identityLinkForReagent(row.id)}
+                        <a
+                          class="shrink-0 text-[10px] text-primary/50 hover:text-primary"
+                          href={identityLinkForReagent(row.id)?.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {identityLinkForReagent(row.id)?.value}
+                        </a>
+                      {/if}
+                    </div>
+                  </td>
                   <td>
                     <span class={isZeroValue(row.baselineValue) ? 'text-base-content/70' : ''}>
                       {row.baselineLabel}
@@ -1001,6 +1173,28 @@ const baseTargetMm_1793665_74 = {
                       <span class="text-base-content/70">{row.deltaPctLabel}</span>
                     {/if}
                   </td>
+                  <td class="text-right">
+                    {#if row.adjustable}
+                      <div class="inline-flex items-center gap-1">
+                        <button
+                          class="btn btn-xs min-h-0 h-5 w-5 rounded bg-primary/20 px-0"
+                          onclick={() => adjustVolumeNl(row.reagent, -STEP_NL)}
+                          disabled={!canDecrease(row.reagent)}
+                          aria-label={`Decrease ${row.name}`}
+                        >
+                          -
+                        </button>
+                        <button
+                          class="btn btn-xs min-h-0 h-5 w-5 rounded bg-primary/20 px-0"
+                          onclick={() => adjustVolumeNl(row.reagent, STEP_NL)}
+                          disabled={!canIncrease(row.reagent)}
+                          aria-label={`Increase ${row.name}`}
+                        >
+                          +
+                        </button>
+                      </div>
+                    {/if}
+                  </td>
                 </tr>
               {/each}
             </tbody>
@@ -1009,7 +1203,7 @@ const baseTargetMm_1793665_74 = {
       </div>
 
       <div class="order-1 md:order-2 flex flex-col md:h-72">
-        <h3 class="pb-2 text-md font-semibold text-primary text-center underline">Reaction Composition</h3>
+        <h3 class="pb-2 text-md font-semibold text-primary text-center underline">Composition Pie Chart</h3>
         <svg viewBox="0 0 1000 440" class="block w-full flex-1 min-h-0">
           {#if pieSlices.length === 0}
             <text x="500" y="220" text-anchor="middle" class="fill-slate-600 text-xs">No volume selected</text>
@@ -1058,67 +1252,6 @@ const baseTargetMm_1793665_74 = {
       </div>
     </section>
 
-    <div class="space-y-4">
-      {#each reagentGroups as group}
-        <section>
-          <h2 class="py-2 text-md font-semibold uppercase tracking-wide text-primary/90">{group.name}</h2>
-          <div class="grid grid-cols-1 gap-2 md:grid-cols-3 2xl:grid-cols-3">
-            {#each group.reagents as reagent}
-              <div
-                class="rounded-md p-2 {isLockedAtCap(reagent) ? '' : 'cursor-ew-resize'}"
-                style={reagentCardStyle(reagent.id)}
-                onpointerdown={(event) => beginReagentDrag(reagent, event)}
-              >
-                <div class="flex items-center gap-2">
-                  <div class="w-3/4 min-w-0">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <p class="text-sm font-medium leading-tight break-words">{reagent.name}</p>
-                      {#if identityLinkForReagent(reagent.id)}
-                        <a
-                          class="shrink-0 text-[10px] text-primary/50 hover:text-primary"
-                          href={identityLinkForReagent(reagent.id)?.href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onpointerdown={(event) => event.stopPropagation()}
-                        >
-                          {identityLinkForReagent(reagent.id)?.value}
-                        </a>
-                      {/if}
-                    </div>
-                    <p class="truncate text-xs text-primary/50">
-                      {reagentMetaLabel(reagent)}
-                    </p>
-                  </div>
-
-                  {#if reagent.fixedNl == null}
-                    <div class="w-1/4 flex justify-end gap-0.5">
-                      <button
-                        class="btn btn-xs min-h-0 h-6 px-2 bg-primary/20 rounded"
-                        onclick={() => adjustVolumeNl(reagent, -STEP_NL)}
-                        onpointerdown={(event) => event.stopPropagation()}
-                        disabled={!canDecrease(reagent)}
-                      >
-                        -
-                      </button>
-
-                      <button
-                        class="btn btn-xs min-h-0 h-6 px-2 bg-primary/20 rounded"
-                        onclick={() => adjustVolumeNl(reagent, STEP_NL)}
-                        onpointerdown={(event) => event.stopPropagation()}
-                        disabled={!canIncrease(reagent)}
-                      >
-                        +
-                      </button>
-                    </div>
-                  {/if}
-                </div>
-              </div>
-            {/each}
-          </div>
-        </section>
-      {/each}
-    </div>
-
     <section class="mt-4 rounded-md bg-base-200/60 p-3">
       <div class="grid grid-cols-1 gap-3 md:grid-cols-2 md:items-stretch">
         <div class="flex flex-col min-h-0">
@@ -1139,7 +1272,7 @@ const baseTargetMm_1793665_74 = {
 
         <div class="flex flex-col min-h-0">
           <div class="mb-2 flex items-center justify-between gap-2">
-            <h3 class="text-sm font-semibold text-primary">Composition JSON</h3>
+            <h3 class="text-sm font-semibold text-primary">Reagent Supplement JSON</h3>
             <button class="btn btn-xs" onclick={copyCompositionJson}>Copy JSON</button>
           </div>
           <pre class="h-56 overflow-auto rounded bg-base-300/50 p-2 text-xs">{exportedCompositionJson}</pre>
@@ -1163,7 +1296,7 @@ const baseTargetMm_1793665_74 = {
 <dialog id="upload_modal" class="modal modal-middle" bind:this={uploadModal}>
   <div class="modal-box">
     <h3 class="text-lg font-bold">Ready to publish?</h3>
-    <p class="pt-2 text-sm text-base-content/70">Select HTGAA Node and add author/rationale for this CFPS design.</p>
+    <p class="pt-2 text-sm text-base-content/70">Select HTGAA Node and add your HTGAA username/rationale for this CFPS design.</p>
 
     <div class="flex flex-col w-full gap-2 pt-4">
       <label class="form-control">
@@ -1176,11 +1309,11 @@ const baseTargetMm_1793665_74 = {
         </select>
       </label>
       <label class="input input-bordered flex items-center gap-2 text-sm">
-        <span class="opacity-70">Author</span>
+        <span class="opacity-70">HTGAA Username</span>
         <input
           type="text"
           class="rounded-sm grow no-autofill px-1 py-0.5"
-          placeholder="Name"
+          placeholder="username"
           autocomplete="off"
           maxlength="100"
           bind:value={author}
@@ -1217,4 +1350,4 @@ const baseTargetMm_1793665_74 = {
   </form>
 </dialog>
 
-<svelte:window onclick={closeProfileDropdownOnOutsideClick} onpointermove={handlePointerMove} onpointerup={endReagentDrag} />
+<svelte:window onpointermove={handlePointerMove} onpointerup={endReagentDrag} />

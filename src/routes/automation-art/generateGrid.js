@@ -239,7 +239,7 @@ function echo384() {
 function Echo384Image(imageColors) {
     const rows = 16;
     const cols = 24;
-    if (!imageColors || !imageColors.length || !imageColors[0].length) return [];
+    if (!imageColors || !imageColors.length || !imageColors[0].length) return ECHO_384_BASE_POINTS;
 
     const imgH = imageColors.length;
     const imgW = imageColors[0].length;
@@ -264,7 +264,7 @@ function Echo1536() {
 function Echo1536Image(imageColors) {
     const rows = 32;
     const cols = 48;
-    if (!imageColors || !imageColors.length || !imageColors[0].length) return [];
+    if (!imageColors || !imageColors.length || !imageColors[0].length) return ECHO_1536_BASE_POINTS;
 
     const imgH = imageColors.length;
     const imgW = imageColors[0].length;
@@ -286,7 +286,7 @@ function Echo6144() {
 }
 
 function Echo6144Image(imageColors) {
-    if (!imageColors || !imageColors.length || !imageColors[0].length) return [];
+    if (!imageColors || !imageColors.length || !imageColors[0].length) return buildEcho1536Points();
 
     const imgH = imageColors.length;
     const imgW = imageColors[0].length;

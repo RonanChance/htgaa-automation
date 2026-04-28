@@ -1,0 +1,644 @@
+[
+  {
+    "name": "Core Components & Diluent",
+    "reagents": [
+      {
+        "id": "cell_lysate",
+        "name": "Cell Lysate",
+        "concentration": "1X",
+        "costPerMl": 4,
+        "fixedNl": 5000,
+        "molecule_id": null,
+        "reagent_id": null,
+        "entity_type": "unmapped",
+        "entity_id": null,
+        "in_stock": true
+      },
+      {
+        "id": "dna_template",
+        "name": "DNA Template",
+        "concentration": "50nM",
+        "costPerMl": 1.93,
+        "fixedNl": 2000,
+        "molecule_id": null,
+        "reagent_id": null,
+        "entity_type": "unmapped",
+        "entity_id": null,
+        "in_stock": true
+      },
+      {
+        "id": "base_buffer",
+        "name": "Base Buffer",
+        "concentration": "10X",
+        "costPerMl": 0.22,
+        "fixedNl": 2000,
+        "molecule_id": null,
+        "reagent_id": null,
+        "entity_type": "unmapped",
+        "entity_id": null,
+        "in_stock": true
+      },
+      {
+        "id": "nuclease_free_water",
+        "name": "Nuclease-Free Water",
+        "concentration": "N/A",
+        "costPerMl": 0,
+        "molecule_id": null,
+        "reagent_id": 11040,
+        "entity_type": "reagent",
+        "entity_id": 11040,
+        "in_stock": true
+      }
+    ]
+  },
+  {
+    "name": "Core Salt & Buffer Components",
+    "reagents": [
+      {
+        "id": "potassium_glutamate",
+        "name": "Potassium Glutamate",
+        "concentration": "0.875M",
+        "costPerMl": 0.07,
+        "molecule_id": 9063889,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9063889,
+        "in_stock": true
+      },
+      {
+        "id": "magnesium_glutamate",
+        "name": "Magnesium Glutamate",
+        "concentration": "0.5M",
+        "costPerMl": 0.07,
+        "molecule_id": 8827570,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 8827570,
+        "in_stock": true
+      },
+      {
+        "id": "hepes_koh",
+        "name": "HEPES-KOH pH 7.5",
+        "concentration": "1M",
+        "costPerMl": 0.13,
+        "molecule_id": null,
+        "reagent_id": 12138,
+        "entity_type": "reagent",
+        "entity_id": 12138,
+        "in_stock": true
+      }
+    ]
+  },
+  {
+    "name": "Core Transcription Components",
+    "reagents": [
+      {
+        "id": "atp",
+        "name": "ATP",
+        "concentration": "0.1M",
+        "costPerMl": 1.54,
+        "molecule_id": 29357,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 29357,
+        "in_stock": true
+      },
+      {
+        "id": "ctp",
+        "name": "CTP",
+        "concentration": "0.1M",
+        "costPerMl": 27.94,
+        "molecule_id": 3327215,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 3327215,
+        "in_stock": true
+      },
+      {
+        "id": "gtp",
+        "name": "GTP",
+        "concentration": "0.1M",
+        "costPerMl": 39.34,
+        "molecule_id": 3327209,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 3327209,
+        "in_stock": true
+      },
+      {
+        "id": "utp",
+        "name": "UTP",
+        "concentration": "0.1M",
+        "costPerMl": 37.85,
+        "molecule_id": 3327246,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 3327246,
+        "in_stock": true
+      }
+    ]
+  },
+  {
+    "name": "Core Translation Components",
+    "reagents": [
+      {
+        "id": "aa_mix_17",
+        "name": "17 Amino Acid Mix",
+        "concentration": "0.05M",
+        "costPerMl": 0.08,
+        "molecule_id": null,
+        "reagent_id": 12030,
+        "entity_type": "reagent",
+        "entity_id": 12030,
+        "in_stock": true
+      },
+      {
+        "id": "tyrosine",
+        "name": "Tyrosine pH 12",
+        "concentration": "0.05M",
+        "costPerMl": 0.01,
+        "molecule_id": 29868,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 29868,
+        "in_stock": true
+      },
+      {
+        "id": "cysteine",
+        "name": "Cysteine",
+        "concentration": "0.2M",
+        "costPerMl": 0.02,
+        "molecule_id": 29857,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 29857,
+        "in_stock": true
+      }
+    ]
+  },
+  {
+    "name": "Core ATP Regeneration Components",
+    "reagents": [
+      {
+        "id": "sodium_pyruvate",
+        "name": "Sodium Pyruvate",
+        "concentration": "100g/L",
+        "costPerMl": 0.16,
+        "molecule_id": null,
+        "reagent_id": 1276,
+        "entity_type": "reagent",
+        "entity_id": 1276,
+        "in_stock": true,
+        "molecular_weight_g_mol": 110.04
+      },
+      {
+        "id": "maltose",
+        "name": "Maltose",
+        "concentration": "50g/L",
+        "costPerMl": 0.02,
+        "molecule_id": null,
+        "reagent_id": 11994,
+        "entity_type": "reagent",
+        "entity_id": 11994,
+        "in_stock": true,
+        "molecular_weight_g_mol": 342.3
+      },
+      {
+        "id": "ribose",
+        "name": "Ribose",
+        "concentration": "100g/L",
+        "costPerMl": 0.18,
+        "molecule_id": null,
+        "reagent_id": 1310,
+        "entity_type": "reagent",
+        "entity_id": 1310,
+        "in_stock": true,
+        "molecular_weight_g_mol": 150.13
+      },
+      {
+        "id": "maltodextrin_17",
+        "name": "Maltodextrin 17",
+        "concentration": "300g/L",
+        "costPerMl": 0.12,
+        "molecule_id": null,
+        "reagent_id": 12044,
+        "entity_type": "reagent",
+        "entity_id": 12044,
+        "in_stock": true,
+        "molecular_weight_g_mol": 1000
+      }
+    ]
+  },
+  {
+    "name": "Core Cofactors & Stabilizers",
+    "reagents": [
+      {
+        "id": "folinic_acid",
+        "name": "Folinic Acid",
+        "concentration": "10g/L",
+        "costPerMl": 8.98,
+        "molecule_id": 9063890,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9063890,
+        "in_stock": true,
+        "molecular_weight_g_mol": 473.44
+      },
+      {
+        "id": "nad",
+        "name": "NAD",
+        "concentration": "0.1M",
+        "costPerMl": 33.35,
+        "molecule_id": null,
+        "reagent_id": 2583,
+        "entity_type": "reagent",
+        "entity_id": 2583,
+        "in_stock": true
+      },
+      {
+        "id": "camp",
+        "name": "cAMP",
+        "concentration": "0.2M",
+        "costPerMl": 7.48,
+        "molecule_id": null,
+        "reagent_id": 3269,
+        "entity_type": "reagent",
+        "entity_id": 3269,
+        "in_stock": true
+      },
+      {
+        "id": "spermidine",
+        "name": "Spermidine",
+        "concentration": "0.25M",
+        "costPerMl": 1.05,
+        "molecule_id": 3327247,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 3327247,
+        "in_stock": true
+      }
+    ]
+  },
+  {
+    "name": "Detergents",
+    "reagents": [
+      {
+        "id": "brij_35",
+        "name": "Brij-35",
+        "concentration": "10% v/v",
+        "costPerMl": 0.03,
+        "molecule_id": null,
+        "reagent_id": 12038,
+        "entity_type": "reagent",
+        "entity_id": 12038,
+        "in_stock": true
+      }
+    ]
+  },
+  {
+    "name": "Solvents",
+    "reagents": [
+      {
+        "id": "dmso",
+        "name": "Dimethyl Sulfoxide (DMSO)",
+        "concentration": "60% v/v",
+        "costPerMl": 0.2,
+        "molecule_id": null,
+        "reagent_id": 514,
+        "entity_type": "reagent",
+        "entity_id": 514,
+        "in_stock": true
+      }
+    ]
+  },
+  {
+    "name": "Nucleotide Building Blocks & Enzyme Supports",
+    "reagents": [
+      {
+        "id": "pyruvate_oxidase",
+        "name": "Pyruvate oxidase (1.5U/mg)",
+        "concentration": "10g/L",
+        "costPerMl": 48.15,
+        "molecule_id": null,
+        "reagent_id": 12098,
+        "entity_type": "reagent",
+        "entity_id": 12098,
+        "in_stock": false,
+        "molecular_weight_g_mol": 260000
+      },
+      {
+        "id": "catalase",
+        "name": "Catalase",
+        "concentration": "50000U/ml",
+        "costPerMl": 5,
+        "molecule_id": null,
+        "reagent_id": 12099,
+        "entity_type": "reagent",
+        "entity_id": 12099,
+        "in_stock": false
+      },
+      {
+        "id": "sodium_hexametaphosphate",
+        "name": "Sodium Hexametaphosphate",
+        "concentration": "0.15M",
+        "costPerMl": 0,
+        "molecule_id": 9113074,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113074,
+        "in_stock": true
+      },
+      {
+        "id": "dilithium_acetyl_phosphate",
+        "name": "Dilithium Acetyl Phosphate",
+        "concentration": "0.05M",
+        "costPerMl": 0.27,
+        "molecule_id": 9113077,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113077,
+        "in_stock": true
+      },
+      {
+        "id": "amp",
+        "name": "AMP",
+        "concentration": "0.1M",
+        "costPerMl": 0.7,
+        "molecule_id": 9113078,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113078,
+        "in_stock": false
+      },
+      {
+        "id": "cmp",
+        "name": "CMP",
+        "concentration": "0.1M",
+        "costPerMl": 1.27,
+        "molecule_id": 9113079,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113079,
+        "in_stock": false
+      },
+      {
+        "id": "gmp",
+        "name": "GMP",
+        "concentration": "0.1M",
+        "costPerMl": 0.53,
+        "molecule_id": 9113097,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113097,
+        "in_stock": false
+      },
+      {
+        "id": "ump",
+        "name": "UMP",
+        "concentration": "0.1M",
+        "costPerMl": 0.84,
+        "molecule_id": 9113098,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113098,
+        "in_stock": false
+      },
+      {
+        "id": "adenosine",
+        "name": "Adenosine",
+        "concentration": "0.025M",
+        "costPerMl": 0,
+        "molecule_id": 9113099,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113099,
+        "in_stock": false
+      },
+      {
+        "id": "guanosine",
+        "name": "Guanosine",
+        "concentration": "0.025M",
+        "costPerMl": 0.01,
+        "molecule_id": 9113100,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113100,
+        "in_stock": false
+      },
+      {
+        "id": "cytidine",
+        "name": "Cytidine",
+        "concentration": "0.025M",
+        "costPerMl": 0.05,
+        "molecule_id": 9113101,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113101,
+        "in_stock": false
+      },
+      {
+        "id": "uridine",
+        "name": "Uridine",
+        "concentration": "0.025M",
+        "costPerMl": 0,
+        "molecule_id": 9113102,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113102,
+        "in_stock": false
+      },
+      {
+        "id": "thymidine",
+        "name": "Thymidine",
+        "concentration": "0.025M",
+        "costPerMl": 0.11,
+        "molecule_id": 9113103,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113103,
+        "in_stock": false
+      },
+      {
+        "id": "adenine",
+        "name": "Adenine",
+        "concentration": "0.025M",
+        "costPerMl": 0.01,
+        "molecule_id": 9113104,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113104,
+        "in_stock": false
+      },
+      {
+        "id": "guanine",
+        "name": "Guanine",
+        "concentration": "0.025M",
+        "costPerMl": 0,
+        "molecule_id": 9113105,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113105,
+        "in_stock": false
+      },
+      {
+        "id": "cytosine",
+        "name": "Cytosine",
+        "concentration": "0.025M",
+        "costPerMl": 0.03,
+        "molecule_id": 9113106,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113106,
+        "in_stock": false
+      },
+      {
+        "id": "uracil",
+        "name": "Uracil",
+        "concentration": "0.025M",
+        "costPerMl": 0,
+        "molecule_id": 9113107,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113107,
+        "in_stock": false
+      },
+      {
+        "id": "thymine",
+        "name": "Thymine",
+        "concentration": "0.025M",
+        "costPerMl": 0.01,
+        "molecule_id": 9113108,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113108,
+        "in_stock": false
+      }
+    ]
+  },
+  {
+    "name": "Carbon Source & Phosphate Buffer Tuning",
+    "reagents": [
+      {
+        "id": "glucose",
+        "name": "Glucose",
+        "concentration": "200g/L",
+        "costPerMl": 0,
+        "molecule_id": null,
+        "reagent_id": 11006,
+        "entity_type": "reagent",
+        "entity_id": 11006,
+        "in_stock": true,
+        "molecular_weight_g_mol": 180.156
+      },
+      {
+        "id": "potassium_phosphate_dibasic",
+        "name": "Potassium phosphate dibasic",
+        "concentration": "0.5M",
+        "costPerMl": 0.04,
+        "molecule_id": 9113076,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113076,
+        "in_stock": true
+      },
+      {
+        "id": "potassium_phosphate_monobasic",
+        "name": "Potassium phosphate monobasic",
+        "concentration": "0.5M",
+        "costPerMl": 0.01,
+        "molecule_id": 9113075,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 9113075,
+        "in_stock": true
+      },
+      {
+        "id": "potassium_phosphate_ratio_dibasic_monobasic",
+        "name": "Potassium phosphate 1.6:1 dibasic:monobasic (molar ratio)",
+        "concentration": "0.5M",
+        "costPerMl": 0.02,
+        "molecule_id": null,
+        "reagent_id": 12144,
+        "entity_type": "reagent",
+        "entity_id": 12144,
+        "in_stock": true
+      },
+      {
+        "id": "potassium_phosphate_ratio_monobasic_dibasic",
+        "name": "Potassium phosphate 1.6:1 monobasic:dibasic (molar ratio)",
+        "concentration": "0.5M",
+        "costPerMl": 0.02,
+        "molecule_id": null,
+        "reagent_id": 12145,
+        "entity_type": "reagent",
+        "entity_id": 12145,
+        "in_stock": true
+      }
+    ]
+  },
+  {
+    "name": "Energy & Redox Support Additives",
+    "reagents": [
+      {
+        "id": "phosphoenolpyruvic_acid_cyclohexylammonium_salt",
+        "name": "Phosphoenolpyruvic acid cyclohexylammonium salt",
+        "concentration": "0.1M",
+        "costPerMl": 2.2,
+        "molecule_id": 30809,
+        "reagent_id": null,
+        "entity_type": "molecule",
+        "entity_id": 30809,
+        "in_stock": true
+      },
+      {
+        "id": "nicotinamide",
+        "name": "Nicotinamide",
+        "concentration": "0.1M",
+        "costPerMl": 0,
+        "molecule_id": null,
+        "reagent_id": 877,
+        "entity_type": "reagent",
+        "entity_id": 877,
+        "in_stock": true
+      }
+    ]
+  },
+  {
+    "name": "Metabolic Pathway Modulators",
+    "reagents": [
+      {
+        "id": "oxaloacetic_acid",
+        "name": "Oxaloacetic acid",
+        "concentration": "0.5M",
+        "costPerMl": 0.93,
+        "molecule_id": null,
+        "reagent_id": 8229,
+        "entity_type": "reagent",
+        "entity_id": 8229,
+        "in_stock": true
+      },
+      {
+        "id": "succinic_acid",
+        "name": "Succinic acid",
+        "concentration": "0.5M",
+        "costPerMl": 0,
+        "molecule_id": null,
+        "reagent_id": 5198,
+        "entity_type": "reagent",
+        "entity_id": 5198,
+        "in_stock": true
+      },
+      {
+        "id": "potassium_formate",
+        "name": "Potassium formate",
+        "concentration": "0.5M",
+        "costPerMl": 0,
+        "molecule_id": null,
+        "reagent_id": 12230,
+        "entity_type": "reagent",
+        "entity_id": 12230,
+        "in_stock": true
+      }
+    ]
+  }
+]

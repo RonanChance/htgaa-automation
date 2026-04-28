@@ -28,7 +28,7 @@
     let ginkgo_mode = $state(true);
 
     // GRID DATA
-    let grid_style = $state('Echo6144Image');
+    let grid_style = $state('Echo1536Image');
     let radius_mm = $state(39.9);
     let grid_spacing_mm = $state(2.2);
     let prev_grid_spacing_mm = $state(3);
@@ -97,6 +97,18 @@
     let file = null;
     let mediaUploadInput;
     let img = $state(null);
+    let cameraVideo;
+    let cameraStream = null;
+    let cameraCaptureCanvas = null;
+    let cameraActive = $state(false);
+    let cameraError = $state('');
+    let cameraMirror = $state(false);
+    let cameraTargetFps = $state(24);
+    let cameraFrameRequestId = null;
+    let cameraLoopTimer = null;
+    let cameraLastSampleTs = 0;
+    let cameraFramePending = false;
+    let cameraLastPreviewTs = 0;
     let whiteBgReplacement = $state('Invisible');
     let blackBgReplacement = $state('Invisible');
     let sliderValue = Math.log(pixelation);
@@ -237,7 +249,7 @@
             if (loadRecordId) {
                 await loadRecord(loadRecordId);
             } else {
-                grid_style = 'Echo6144Image';
+                grid_style = 'Echo1536Image';
             }
             
             window.addEventListener('keydown', function(event) {
@@ -294,7 +306,7 @@
                     }
                 }
             });
-            if (animate && !loadRecordId) grid_style = 'Echo6144Image';
+            if (animate && !loadRecordId) grid_style = 'Echo1536Image';
         }
     });
 
@@ -321,6 +333,8 @@
     }
 
     function resetValues() {
+        stopCameraStream();
+
         // --- clear animation / GIF state ---
         stopPlayback?.();
         rebuildToken++;
@@ -363,6 +377,36 @@
         radius_mm = 40;
         animationImages = null;
         setRenderedPoints(generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors));
+    }
+
+    function stopCameraStream() {
+        if (cameraFrameRequestId) {
+            cancelAnimationFrame(cameraFrameRequestId);
+            cameraFrameRequestId = null;
+        }
+
+        if (cameraLoopTimer) {
+            clearTimeout(cameraLoopTimer);
+            cameraLoopTimer = null;
+        }
+
+        if (cameraStream) {
+            for (const track of cameraStream.getTracks()) {
+                track.stop();
+            }
+            cameraStream = null;
+        }
+
+        if (cameraVideo) {
+            cameraVideo.pause?.();
+            cameraVideo.srcObject = null;
+        }
+
+        cameraActive = false;
+        cameraMirror = false;
+        cameraLastSampleTs = 0;
+        cameraLastPreviewTs = 0;
+        cameraFramePending = false;
     }
 
 
@@ -488,10 +532,10 @@
         uploading = false;
     }
     
-    function groupByColors() {
+    function groupByColors(options = {}) {
         syncRenderedPointCaches();
 
-        const sourcePointColors = isEcho6144GridStyle(grid_style)
+        const sourcePointColors = isEcho6144GridStyle(grid_style) && !options.skipEchoNormalization
             ? normalizeEcho1536PointColors(point_colors)
             : point_colors;
         const nextPointColors = {};
@@ -1135,7 +1179,7 @@ def run(protocol):
             // allow point_colors to be computed during precompute/hydration
             if (animate && !isPrecomputing) return;
 
-            if (img) {
+            if (img && !cameraActive) {
                 const new_colors = {};
                 const rgbCache = new Map();
                 const namedColorCache = new Map();
@@ -1358,6 +1402,7 @@ def run(protocol):
 
 
     async function handleFileChange(event, optionalFilename = null) {
+        stopCameraStream();
         file = event.target.files?.[0];    
         // media reset only
         stopPlayback?.();
@@ -1436,22 +1481,9 @@ def run(protocol):
         img.src = URL.createObjectURL(file);
     }
 
-    $effect(() => {
-    // Skip if nothing to draw
-    if (!previewCanvas) return;
+    function renderPreviewFrame(frameImg) {
+        if (!previewCanvas || !frameImg) return;
 
-    if (animate && animationImages?.length) {
-        // GIF / MP4 mode: update only current frame if not precomputing
-        if (!isPrecomputing && !isLoadingGif && !gifHydrating) {
-            const frame = animationImages[frameIndex % animationImages.length];
-            if (frame) processFramePreview(frame);
-        }
-    } else if (img) {
-        // Static image mode
-        processFramePreview(img);
-    }
-
-    function processFramePreview(frameImg) {
         const { width: targetW, height: targetH } = getImageCanvasDimensions();
         const canvas = document.createElement("canvas");
         canvas.width = targetW;
@@ -1462,8 +1494,7 @@ def run(protocol):
         ctx.fillRect(0, 0, targetW, targetH);
 
         // --- apply same rotation / zoom / contain logic as processImage ---
-        const iw = frameImg.width || frameImg.naturalWidth || targetW;
-        const ih = frameImg.height || frameImg.naturalHeight || targetH;
+        const { width: iw, height: ih } = getRenderableMediaDimensions(frameImg, targetW, targetH);
         const containScale = Math.min(targetW / iw, targetH / ih);
         const drawW = iw * containScale * zoom;
         const drawH = ih * containScale * zoom;
@@ -1471,10 +1502,14 @@ def run(protocol):
         const maxPanY = Math.max(0, (drawH - targetH) / 2);
         const panX = Math.max(-maxPanX, Math.min(maxPanX, imagePanX));
         const panY = Math.max(-maxPanY, Math.min(maxPanY, imagePanY));
+        const shouldMirror = cameraActive && cameraMirror && frameImg === cameraVideo;
 
         ctx.save();
         ctx.translate(targetW / 2 + panX, targetH / 2 + panY);
         ctx.rotate((rotation * Math.PI) / 180);
+        if (shouldMirror) {
+            ctx.scale(-1, 1);
+        }
         ctx.drawImage(frameImg, -drawW / 2, -drawH / 2, drawW, drawH);
         ctx.restore();
 
@@ -1512,7 +1547,26 @@ def run(protocol):
 
         pixelatedCanvas = canvas; // update preview
     }
-});
+
+    function getRenderableMediaDimensions(frame, fallbackWidth = 0, fallbackHeight = 0) {
+        return {
+            width: frame?.videoWidth || frame?.naturalWidth || frame?.width || fallbackWidth || 0,
+            height: frame?.videoHeight || frame?.naturalHeight || frame?.height || fallbackHeight || 0
+        };
+    }
+
+    $effect(() => {
+        if (!previewCanvas) return;
+
+        if (animate && animationImages?.length) {
+            if (!isPrecomputing && !isLoadingGif && !gifHydrating) {
+                const frame = animationImages[frameIndex % animationImages.length];
+                if (frame) renderPreviewFrame(frame);
+            }
+        } else if (img && !cameraActive) {
+            renderPreviewFrame(img);
+        }
+    });
 
     
     function handleAnimateFileChange(filname) {
@@ -1769,12 +1823,271 @@ def run(protocol):
     }
 
     async function promptImageUpload() {
+        stopCameraStream();
         grid_style = getPreferredEchoImageGridStyle();
         interaction_mode = 'draw';
         if (mediaUploadInput) {
             mediaUploadInput.value = '';
             mediaUploadInput.click();
         }
+    }
+
+    async function sampleCameraFrame() {
+        if (!cameraActive || !cameraVideo || cameraFramePending) return;
+        cameraFramePending = true;
+
+        try {
+            if (cameraVideo.readyState < 2 || cameraVideo.paused || cameraVideo.ended) {
+                return;
+            }
+
+            const { width: sourceWidth, height: sourceHeight } = getRenderableMediaDimensions(cameraVideo);
+            if (!sourceWidth || !sourceHeight) {
+                return;
+            }
+
+            if (!cameraCaptureCanvas) {
+                cameraCaptureCanvas = document.createElement('canvas');
+            }
+
+            const captureMaxSide = isEcho6144GridStyle(grid_style) ? 320 : 640;
+            const scale = Math.min(1, captureMaxSide / Math.max(sourceWidth, sourceHeight));
+            const width = Math.max(1, Math.round(sourceWidth * scale));
+            const height = Math.max(1, Math.round(sourceHeight * scale));
+
+            if (cameraCaptureCanvas.width !== width) cameraCaptureCanvas.width = width;
+            if (cameraCaptureCanvas.height !== height) cameraCaptureCanvas.height = height;
+
+            const ctx = cameraCaptureCanvas.getContext('2d', { willReadFrequently: true });
+            if (!ctx) {
+                return;
+            }
+            if (cameraMirror) {
+                ctx.save();
+                ctx.translate(width, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(cameraVideo, 0, 0, width, height);
+                ctx.restore();
+            } else {
+                ctx.drawImage(cameraVideo, 0, 0, width, height);
+            }
+
+            if (img !== cameraVideo) {
+                img = cameraVideo;
+            }
+            point_colors = frameToPointColors(cameraCaptureCanvas);
+            groupByColors({ skipEchoNormalization: isEcho6144GridStyle(grid_style) });
+            if (cameraError) {
+                cameraError = '';
+            }
+            const now = performance.now();
+            const previewIntervalMs = isEcho6144GridStyle(grid_style) ? 140 : 50;
+            if (!cameraLastPreviewTs || now - cameraLastPreviewTs >= previewIntervalMs) {
+                cameraLastPreviewTs = now;
+                renderPreviewFrame(cameraVideo);
+            }
+        } catch (error) {
+            console.error('Camera frame processing failed', error);
+        } finally {
+            cameraFramePending = false;
+        }
+    }
+
+    function scheduleCameraFrame() {
+        if (!cameraActive) return;
+
+        const minFrameMs = 1000 / Math.max(1, Number(cameraTargetFps) || 1);
+        cameraLoopTimer = window.setTimeout(async () => {
+            cameraLoopTimer = null;
+            if (!cameraActive) return;
+            try {
+                const now = performance.now();
+                if (!cameraLastSampleTs || now - cameraLastSampleTs >= minFrameMs) {
+                    cameraLastSampleTs = now;
+                    await sampleCameraFrame();
+                }
+            } catch (error) {
+                console.error('Camera loop failed', error);
+            }
+            scheduleCameraFrame();
+        }, Math.max(16, Math.round(minFrameMs)));
+    }
+
+    async function requestCameraStream(style = grid_style) {
+        const preferredLongSide = isEcho6144GridStyle(style) ? 640 : 960;
+        const candidates = [
+            {
+                video: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: preferredLongSide },
+                    height: { ideal: Math.round(preferredLongSide * 0.75) }
+                },
+                audio: false
+            },
+            {
+                video: {
+                    width: { ideal: preferredLongSide },
+                    height: { ideal: Math.round(preferredLongSide * 0.75) }
+                },
+                audio: false
+            },
+            { video: true, audio: false }
+        ];
+
+        let lastError = null;
+        for (const constraints of candidates) {
+            try {
+                return await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (error) {
+                lastError = error;
+            }
+        }
+
+        throw lastError;
+    }
+
+    function shouldMirrorCameraStream(stream) {
+        const track = stream?.getVideoTracks?.()?.[0];
+        if (!track) return false;
+
+        const settings = track.getSettings?.() || {};
+        if (settings.facingMode === 'user') return true;
+        if (settings.facingMode === 'environment') return false;
+
+        const label = String(track.label || '').toLowerCase();
+        if (label.includes('facetime')) return true;
+        if (label.includes('front')) return true;
+        if (label.includes('user')) return true;
+        if (label.includes('selfie')) return true;
+        if (label.includes('rear')) return false;
+        if (label.includes('back')) return false;
+        if (label.includes('environment')) return false;
+
+        return false;
+    }
+
+    function waitForCameraReady(video, timeoutMs = 2500) {
+        return new Promise((resolve, reject) => {
+            if (!video) {
+                resolve();
+                return;
+            }
+
+            const startedAt = performance.now();
+            let pollId = null;
+
+            const finish = (error = null) => {
+                if (pollId !== null) {
+                    clearInterval(pollId);
+                    pollId = null;
+                }
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve();
+            };
+
+            const checkReady = () => {
+                if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2) {
+                    finish();
+                    return;
+                }
+
+                if (performance.now() - startedAt >= timeoutMs) {
+                    finish(new Error('Camera video never became ready'));
+                }
+            };
+
+            pollId = window.setInterval(checkReady, 50);
+            checkReady();
+        });
+    }
+
+    async function startCameraStream() {
+        cameraError = '';
+
+        if (!browser || !navigator?.mediaDevices?.getUserMedia) {
+            cameraError = 'Camera not supported on this browser.';
+            return;
+        }
+
+        stopPlayback?.();
+        stopCameraStream();
+
+        rebuildToken++;
+        animationImages = [];
+        animationFrames = [];
+        frameIndex = 0;
+        animate = false;
+        isPrecomputing = false;
+        isLoadingGif = false;
+        gifHydrating = false;
+        gifUrlStatus = 'idle';
+        gifUrlError = '';
+        file = null;
+
+        const targetGridStyle = getPreferredEchoImageGridStyle();
+        if (targetGridStyle === 'Echo1536Image' && cameraTargetFps < 24) {
+            cameraTargetFps = 24;
+        }
+        if (targetGridStyle === 'Echo6144Image' && cameraTargetFps > 12) {
+            cameraTargetFps = 12;
+        }
+        contrast = 100;
+        saturation = 230;
+        zoom = targetGridStyle === 'Echo6144Image' ? 1.45 : targetGridStyle === 'Echo1536Image' ? 1.35 : 1;
+        imagePanX = 0;
+        imagePanY = targetGridStyle === 'Echo1536Image' ? -36 : 0;
+        grid_style = targetGridStyle;
+        interaction_mode = 'draw';
+        await tick();
+
+        try {
+            const stream = await requestCameraStream(grid_style);
+
+            cameraStream = stream;
+            if (!cameraVideo) {
+                await tick();
+            }
+            if (!cameraVideo) {
+                throw new Error('Camera video element not ready');
+            }
+
+            cameraVideo.srcObject = stream;
+            cameraVideo.setAttribute('playsinline', '');
+            cameraVideo.playsInline = true;
+            cameraVideo.muted = true;
+            cameraVideo.autoplay = true;
+            await cameraVideo.play();
+            await waitForCameraReady(cameraVideo);
+            cameraMirror = shouldMirrorCameraStream(cameraStream);
+
+            cameraActive = true;
+            await sampleCameraFrame();
+            scheduleCameraFrame();
+        } catch (error) {
+            stopCameraStream();
+            const name = error?.name || '';
+            if (name === 'NotAllowedError' || name === 'SecurityError') {
+                cameraError = 'Camera permission was denied.';
+            } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+                cameraError = 'No camera was found on this device.';
+            } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+                cameraError = 'Camera is busy in another app or tab.';
+            } else {
+                cameraError = 'Unable to start camera stream.';
+            }
+            console.error('Camera start failed', error);
+        }
+    }
+
+    function toggleCameraStream() {
+        if (cameraActive) {
+            stopCameraStream();
+            return;
+        }
+        startCameraStream();
     }
 
     function applySelectionFromBounds(containerWidth, containerHeight, clickedKey = null) {
@@ -2458,8 +2771,8 @@ async function rebuildFramesNow() {
             const y = Number(point.y);
             const u = ((x - minX) + 0.5) * invGW;
             const v = ((y - minY) + 0.5) * invGH;
-            const sx = ((u * wMinus1) | 0) + 8;
-            const sy = ((v * hMinus1) | 0) + 8;
+            const sx = Math.max(0, Math.min(wMinus1, (u * wMinus1) | 0));
+            const sy = Math.max(0, Math.min(hMinus1, (v * hMinus1) | 0));
 
             pointSampleLookup[i] = {
                 key: `${point.x}, ${point.y}`,
@@ -2472,8 +2785,7 @@ async function rebuildFramesNow() {
         ensureSampleCtx();
         rebuildPointSampleLookup();
 
-        const iw = frame?.width ?? 0;
-        const ih = frame?.height ?? 0;
+        const { width: iw, height: ih } = getRenderableMediaDimensions(frame);
         if (!iw || !ih || !pointSampleLookup.length) return {};
 
         // Clear to white
@@ -2986,6 +3298,13 @@ async function rebuildFramesNow() {
     {/if}
 
     <input type="file" bind:this={mediaUploadInput} class="hidden" accept="image/*,video/mp4" onchange={handleFileChange} />
+    <video
+        bind:this={cameraVideo}
+        class="fixed left-0 top-0 w-px h-px opacity-0 pointer-events-none -z-10"
+        autoplay
+        playsinline
+        muted
+    ></video>
     {#if grid_style === 'Image' || grid_style === 'Echo384Image' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144Image'}
         {#if animate}
             <div class="flex items-center w-full gap-2 mt-2">
@@ -3191,6 +3510,43 @@ async function rebuildFramesNow() {
                         Image
                     </span>
                 </button>
+                <!-- <button
+                    class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content {cameraActive ? 'bg-red-900 hover:bg-red-800' : 'bg-neutral-800 hover:bg-neutral-700'}"
+                    type="button"
+                    onclick={toggleCameraStream}
+                >
+                    <span class="w-full h-full flex items-center justify-center gap-1.5 text-sm">
+                        <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M4 7.5C4 6.39543 4.89543 5.5 6 5.5H14C15.1046 5.5 16 6.39543 16 7.5V8.5L19.5 6.5V17.5L16 15.5V16.5C16 17.6046 15.1046 18.5 14 18.5H6C4.89543 18.5 4 17.6046 4 16.5V7.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                            <circle cx="9.5" cy="12" r="2.2" fill="currentColor"/>
+                        </svg>
+                        {cameraActive ? 'Stop Camera' : 'Start Camera'}
+                    </span>
+                </button> -->
+                {#if cameraActive}
+                    <label class="flex flex-col gap-1 text-[10px] opacity-80">
+                        <span>Camera speed</span>
+                        <select
+                            class="select select-xs w-full truncate bg-primary text-primary-content border-0"
+                            bind:value={cameraTargetFps}
+                        >
+                            {#if isEcho6144GridStyle(grid_style)}
+                                <option value={8}>Eco</option>
+                                <option value={12}>Smooth</option>
+                                <option value={16}>Fast</option>
+                                <option value={20}>Live</option>
+                            {:else}
+                                <option value={12}>Eco</option>
+                                <option value={24}>Smooth</option>
+                                <option value={30}>Fast</option>
+                                <option value={45}>Live</option>
+                            {/if}
+                        </select>
+                    </label>
+                {/if}
+                {#if cameraError}
+                    <div class="text-[10px] text-warning">{cameraError}</div>
+                {/if}
                 <button
                     class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content hover:bg-neutral-700 {interaction_mode === 'select' && grid_style !== 'Echo1536Image' && grid_style !== 'Echo6144Image' ? 'bg-neutral-600' : 'bg-neutral-800'}"
                     onclick={() => {
@@ -3221,7 +3577,7 @@ async function rebuildFramesNow() {
                     <span class="opacity-70">{current_color}</span>
                 {/if}
             </div>
-            <div class="grid grid-cols-6 gap-2 place-items-center my-auto">
+            <div class="grid grid-cols-6 gap-2 justify-items-center content-start self-start w-fit mx-auto">
                 {#each Object.entries(current_well_colors).filter(([name, val]) => name !== 'White' && val) as [name]}
                     <div role="radio" tabindex="0" aria-checked={current_color === name} onclick={(e) => chooseBacteriaColor(name, e)} ondblclick={() => cycleColorRight(name)} onkeydown={(e) => e.key === 'Enter' && chooseBacteriaColor(name)}
                         class="w-[24px] h-[24px] rounded-full cursor-pointer border-[1px] transition outline-none focus:ring-2 ring-offset-2 flex items-center justify-center"

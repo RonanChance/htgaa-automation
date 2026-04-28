@@ -66,18 +66,52 @@ function normalizeHtgAaNode(value) {
 
 export const POST = async ({ request, getClientAddress }) => {
   try {
-    const { title, author, rationale, htgAA_node, htgaaNode, design } = await request.json();
+    const body = await request.json();
+    const {
+      title,
+      author,
+      human_author,
+      ai_author,
+      rationale,
+      htgAA_node,
+      htgaaNode,
+      design,
+      reagents,
+      ...rest
+    } = body || {};
 
     await pb.admins.authWithPassword(PB_EMAIL, PB_PASSWORD);
 
     const collection = process.env.CFPS_COLLECTION || 'cfps_designs';
     const safeTitle = title?.trim() || `CFPS-${new Date().toISOString()}`;
+    const normalizedHumanAuthor = String(human_author ?? author ?? '').trim();
+    const normalizedAiAuthor = String(ai_author ?? '').trim();
+    if (!normalizedHumanAuthor || !normalizedAiAuthor) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          duplicate: false,
+          error: 'Both human_author and ai_author are required.'
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
     const normalizedHtgAaNode = normalizeHtgAaNode(htgAA_node || htgaaNode);
     const submissionLocation = extractSubmissionLocation(request.headers, getClientAddress);
+    const normalizedDesign = (design && typeof design === 'object')
+      ? design
+      : { ...rest, reagents: Array.isArray(reagents) ? reagents : [] };
+
     const designWithMetadata = {
-      ...(design || {}),
+      ...normalizedDesign,
       submission_metadata: {
-        ...((design && typeof design === 'object' && design.submission_metadata) || {}),
+        ...((normalizedDesign && typeof normalizedDesign === 'object' && normalizedDesign.submission_metadata) || {}),
+        human_author: normalizedHumanAuthor,
+        ai_author: normalizedAiAuthor,
         htgaa_node: normalizedHtgAaNode,
         location: submissionLocation
       }
@@ -115,7 +149,7 @@ export const POST = async ({ request, getClientAddress }) => {
     const payloadCandidates = [
       {
         title: safeTitle,
-        author: author || null,
+        author: normalizedHumanAuthor,
         rationale: rationale || null,
         htgaa_node: normalizedHtgAaNode,
         submission_location: submissionLocation,
@@ -126,7 +160,7 @@ export const POST = async ({ request, getClientAddress }) => {
       },
       {
         title: safeTitle,
-        author: author || null,
+        author: normalizedHumanAuthor,
         rationale: rationale || null,
         htgAA_node: normalizedHtgAaNode,
         submission_location: submissionLocation,
@@ -134,7 +168,7 @@ export const POST = async ({ request, getClientAddress }) => {
       },
       {
         title: safeTitle,
-        author: author || null,
+        author: normalizedHumanAuthor,
         rationale: rationale || null,
         htgAA_node: normalizedHtgAaNode,
         submission_location: submissionLocation,
@@ -142,7 +176,7 @@ export const POST = async ({ request, getClientAddress }) => {
       },
       {
         title: safeTitle,
-        author: author || null,
+        author: normalizedHumanAuthor,
         rationale: rationale || null,
         htgAA_node: normalizedHtgAaNode,
         submission_location: submissionLocation,
