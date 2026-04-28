@@ -37,7 +37,8 @@ export const POST = async ({ request }) => {
             success: true,
             valid: true,
             username,
-            inviteId: invite.id
+            inviteId: invite.id,
+            cfps: invite?.cfps === true
         }));
     } catch (error) {
         console.log('Place invite verification failed', error);
