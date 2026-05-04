@@ -1,6 +1,4 @@
-# Ginkgo Artworks
-
-<img src="./static/facebook-image-1200x630.png" alt="Artworks Logo" width="200" style="border-radius: 5%;">
+# HTGAA Tools
 
 ## Lab Automation Artwork Interface
 

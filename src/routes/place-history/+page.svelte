@@ -10,8 +10,11 @@
     const SIMULATION_PLACEMENTS_PER_SECOND = 22;
     const ERASE_CONTRIBUTION_KEY = '__erase__';
     const PLAYBACK_INTERVAL_MS = 5;
+    const MIN_PLAYBACK_DURATION_MS = 3_500;
+    const MAX_PLAYBACK_DURATION_MS = 35_000;
 
     let { data } = $props();
+    const canvasHref = String(data?.canvasHref || '/1536');
 
     const BASE_POINTS = generateGrid('Echo384', 0, 0, '', []);
     const PLATE_WIDTH_MM = 128;
@@ -96,6 +99,20 @@
         return window.location.search || '';
     }
 
+    function playbackIntervalMsFor(totalPlacements) {
+        const normalizedCount = Number(totalPlacements);
+        if (!Number.isFinite(normalizedCount) || normalizedCount <= 0) {
+            return PLAYBACK_INTERVAL_MS;
+        }
+
+        const targetDurationMs = Math.max(
+            MIN_PLAYBACK_DURATION_MS,
+            Math.min(MAX_PLAYBACK_DURATION_MS, normalizedCount * PLAYBACK_INTERVAL_MS)
+        );
+
+        return Math.max(2, Math.round(targetDurationMs / normalizedCount));
+    }
+
     function randomItem(list) {
         if (!Array.isArray(list) || list.length === 0) return null;
         return list[Math.floor(Math.random() * list.length)] || null;
@@ -174,7 +191,7 @@
 
         playbackInterval = setInterval(() => {
             currentStep = currentStep >= allPlacements.length ? 0 : currentStep + 1;
-        }, PLAYBACK_INTERVAL_MS);
+        }, playbackIntervalMsFor(allPlacements.length));
 
         return () => {
             if (playbackInterval) {
@@ -345,7 +362,7 @@
 </svelte:head>
 
 <article class="prose w-full mx-auto mt-5 px-5">
-    <h2 class="text-base-content text-center">1536 History</h2>
+    <h2 class="text-base-content text-center">HTGAA: 1536</h2>
 </article>
 
 <div class="relative w-full max-w-[90vw] sm:max-w-[440px] mx-auto pt-0">
@@ -379,7 +396,7 @@
 
     <a
         class="absolute right-1 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center opacity-60 transition-opacity hover:opacity-100"
-        href={`/1536${currentSearchSuffix()}`}
+        href={`${canvasHref}${currentSearchSuffix()}`}
         aria-label="View artwork grid"
         title="Artwork"
     >
@@ -451,28 +468,6 @@
                 {/if}
             </button>
             <span>{currentStep} / {allPlacements.length}</span>
-            <div class="join">
-                <button
-                    class="btn btn-xs join-item h-5 min-h-0 px-1.5 text-[10px] bg-base-300 text-base-content/70 hover:bg-neutral-700 hover:text-base-content disabled:opacity-30"
-                    type="button"
-                    onclick={() => { downloadCurrentMapping('quadrant384'); }}
-                    disabled={Object.keys(point_colors).length === 0}
-                    aria-label="Download quadrant 384 color mapping CSV"
-                    title="Download quadrant 384 CSV"
-                >
-                    384
-                </button>
-                <button
-                    class="btn btn-xs join-item h-5 min-h-0 px-1.5 text-[10px] bg-base-300 text-base-content/70 hover:bg-neutral-700 hover:text-base-content disabled:opacity-30"
-                    type="button"
-                    onclick={() => { downloadCurrentMapping('full1536'); }}
-                    disabled={Object.keys(point_colors).length === 0}
-                    aria-label="Download stitched 1536 color mapping CSV"
-                    title="Download stitched 1536 CSV"
-                >
-                    1536
-                </button>
-            </div>
         </div>
         <span>Latest</span>
     </div>
@@ -560,4 +555,31 @@
             </div>
         {/if}
     </div>
+
+    <div class="mt-2 flex items-center justify-end gap-1.5 text-xs opacity-65">
+        <span class="text-[10px] uppercase tracking-wide opacity-55">Export CSV</span>
+        <div class="join">
+            <button
+                class="btn btn-xs join-item h-5 min-h-0 px-1.5 text-[10px] bg-base-300 text-base-content/70 hover:bg-neutral-700 hover:text-base-content disabled:opacity-30"
+                type="button"
+                onclick={() => { downloadCurrentMapping('quadrant384'); }}
+                disabled={Object.keys(point_colors).length === 0}
+                aria-label="Download quadrant 384 color mapping CSV"
+                title="Download quadrant 384 CSV"
+            >
+                384
+            </button>
+            <button
+                class="btn btn-xs join-item h-5 min-h-0 px-1.5 text-[10px] bg-base-300 text-base-content/70 hover:bg-neutral-700 hover:text-base-content disabled:opacity-30"
+                type="button"
+                onclick={() => { downloadCurrentMapping('full1536'); }}
+                disabled={Object.keys(point_colors).length === 0}
+                aria-label="Download stitched 1536 color mapping CSV"
+                title="Download stitched 1536 CSV"
+            >
+                1536
+            </button>
+        </div>
+    </div>
+
 </div>

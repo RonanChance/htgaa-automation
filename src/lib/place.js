@@ -2,6 +2,8 @@ export const PLACE_BOARD_ID = 'main';
 export const PLACE_INVITES_COLLECTION = 'place_invites';
 export const PLACE_PIXELS_COLLECTION = 'place_pixels';
 export const PLACE_STATE_COLLECTION = 'place_state';
+export const PLACE_PIXELS_SYNBIOBETA_COLLECTION = 'place_pixels_synbiobeta';
+export const PLACE_STATE_SYNBIOBETA_COLLECTION = 'place_state_synbiobeta';
 export const PLACE_WELL_CLAIMS_COLLECTION = 'place_well_claims';
 
 export const PLACE_PLATES = Object.freeze([

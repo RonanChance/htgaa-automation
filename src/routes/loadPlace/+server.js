@@ -11,9 +11,18 @@ const pb = new PocketBase("https://opentrons-art-pb.rcdonovan.com");
 const ERASE_CONTRIBUTION_KEY = '__erase__';
 
 export const POST = async ({ request }) => {
-    const { boardId, historyStep, includeFullContributionRows, inviteId } = await request.json();
+    const {
+        boardId,
+        historyStep,
+        includeFullContributionRows,
+        inviteId,
+        pixelsCollection,
+        stateCollection
+    } = await request.json();
     const normalizedBoardId = String(boardId || PLACE_BOARD_ID).trim() || PLACE_BOARD_ID;
     const normalizedInviteId = String(inviteId || '').trim();
+    const normalizedPixelsCollection = String(pixelsCollection || PLACE_PIXELS_COLLECTION).trim() || PLACE_PIXELS_COLLECTION;
+    const normalizedStateCollection = String(stateCollection || PLACE_STATE_COLLECTION).trim() || PLACE_STATE_COLLECTION;
     const normalizedHistoryStep = Number(historyStep);
     const hasHistoryStep = Number.isInteger(normalizedHistoryStep) && normalizedHistoryStep >= 0;
     const shouldUseFullContributionRows = includeFullContributionRows === true;
@@ -29,7 +38,7 @@ export const POST = async ({ request }) => {
         let latestRecord = null;
 
         if (hasHistoryStep) {
-            const placementRecords = await pb.collection(PLACE_PIXELS_COLLECTION).getFullList({
+            const placementRecords = await pb.collection(normalizedPixelsCollection).getFullList({
                 sort: '+created',
                 filter: `board_id="${normalizedBoardId}"`,
                 fields: 'id,point_key,color,action,username,created'
@@ -98,7 +107,7 @@ export const POST = async ({ request }) => {
                 }
             }
         } else {
-            const stateRecords = await pb.collection(PLACE_STATE_COLLECTION).getFullList({
+            const stateRecords = await pb.collection(normalizedStateCollection).getFullList({
                 sort: 'point_key',
                 filter: `board_id="${normalizedBoardId}"`
             });
@@ -114,13 +123,13 @@ export const POST = async ({ request }) => {
                 }
             }
 
-            const latestPlacement = await pb.collection(PLACE_PIXELS_COLLECTION).getList(1, 1, {
+            const latestPlacement = await pb.collection(normalizedPixelsCollection).getList(1, 1, {
                 sort: '-created',
                 filter: `board_id="${normalizedBoardId}"`
             });
             latestRecord = latestPlacement.items[0] || null;
 
-            const placementRecords = await pb.collection(PLACE_PIXELS_COLLECTION).getFullList({
+            const placementRecords = await pb.collection(normalizedPixelsCollection).getFullList({
                 sort: '+created',
                 filter: `board_id="${normalizedBoardId}"`,
                 fields: 'username,color,action'

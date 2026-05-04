@@ -1195,7 +1195,7 @@
 </script>
 
 <svelte:head>
-    <title>Place</title>
+    <title>1536</title>
 </svelte:head>
 
 <article class="prose w-full mx-auto mt-5 px-5">
@@ -1203,6 +1203,26 @@
         HTGAA: 1536
     </h2>
 </article>
+
+<div class="w-full max-w-[90vw] sm:max-w-[440px] mx-auto mt-2 mb-2">
+    <div class="flex items-center justify-center gap-2 text-xs opacity-85">
+        <div class="join">
+            <a
+                class="btn btn-xs join-item bg-neutral-700 text-base-content hover:bg-neutral-600"
+                href={`/1536${currentSearchSuffix()}`}
+                aria-current="page"
+            >
+                HTGAA
+            </a>
+            <a
+                class="btn btn-xs join-item bg-base-300 text-base-content/80 hover:bg-neutral-700 hover:text-base-content"
+                href={`/synbiobeta${currentSearchSuffix()}`}
+            >
+                SynBioBeta
+            </a>
+        </div>
+    </div>
+</div>
 
 <div class="relative w-full max-w-[90vw] sm:max-w-[440px] mx-auto pt-0">
     <div class="items-center flex flex-row gap-1 opacity-70 h-4 text-xs whitespace-nowrap">
@@ -1473,6 +1493,20 @@
                 </table>
             </div>
         {/if}
+    </div>
+
+    <div class="flex justify-center mt-3">
+        <a
+            class="btn btn-sm gap-2 bg-base-200 text-base-content hover:bg-base-300 hover:text-base-content"
+            href="https://github.com/RonanChance/htgaa-gui"
+            target="_blank"
+            rel="noopener noreferrer"
+        >
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 .5C5.648.5.5 5.648.5 12a11.5 11.5 0 0 0 7.86 10.924c.575.106.785-.25.785-.556 0-.274-.01-1-.016-1.962-3.197.695-3.872-1.54-3.872-1.54-.523-1.33-1.278-1.684-1.278-1.684-1.044-.714.08-.699.08-.699 1.154.081 1.761 1.185 1.761 1.185 1.026 1.758 2.692 1.25 3.348.956.104-.743.402-1.25.731-1.538-2.552-.29-5.236-1.276-5.236-5.682 0-1.255.448-2.282 1.182-3.086-.119-.29-.512-1.46.112-3.045 0 0 .964-.309 3.159 1.179A10.98 10.98 0 0 1 12 6.08c.976.005 1.96.132 2.879.387 2.193-1.488 3.155-1.179 3.155-1.179.626 1.585.233 2.755.114 3.045.736.804 1.18 1.831 1.18 3.086 0 4.417-2.688 5.389-5.248 5.673.413.355.781 1.055.781 2.126 0 1.536-.014 2.775-.014 3.153 0 .31.207.668.79.555A11.502 11.502 0 0 0 23.5 12C23.5 5.648 18.352.5 12 .5Z"></path>
+            </svg>
+            GitHub
+        </a>
     </div>
 </div>
 

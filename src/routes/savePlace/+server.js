@@ -28,11 +28,15 @@ export const POST = async ({ request }) => {
     const {
         boardId,
         inviteId,
-        placement
+        placement,
+        pixelsCollection,
+        stateCollection
     } = await request.json();
 
     const normalizedBoardId = String(boardId || PLACE_BOARD_ID).trim() || PLACE_BOARD_ID;
     const normalizedInviteId = String(inviteId || '').trim();
+    const normalizedPixelsCollection = String(pixelsCollection || PLACE_PIXELS_COLLECTION).trim() || PLACE_PIXELS_COLLECTION;
+    const normalizedStateCollection = String(stateCollection || PLACE_STATE_COLLECTION).trim() || PLACE_STATE_COLLECTION;
     if (!normalizedInviteId) {
         return new Response(JSON.stringify({
             success: false,
@@ -74,7 +78,7 @@ export const POST = async ({ request }) => {
             }), { status: 400 });
         }
 
-        const existingState = await pb.collection(PLACE_STATE_COLLECTION).getFirstListItem(
+        const existingState = await pb.collection(normalizedStateCollection).getFirstListItem(
             `board_id="${normalizedBoardId}" && point_key="${pointKey}"`
         ).catch((error) => {
             if (error?.status === 404) return null;
@@ -91,7 +95,7 @@ export const POST = async ({ request }) => {
             }));
         }
 
-        const placementEntry = await pb.collection(PLACE_PIXELS_COLLECTION).create({
+        const placementEntry = await pb.collection(normalizedPixelsCollection).create({
             board_id: normalizedBoardId,
             invite_id: normalizedInviteId,
             username: author,
@@ -105,7 +109,7 @@ export const POST = async ({ request }) => {
 
         if (action === 'erase') {
             if (existingState?.id) {
-                await pb.collection(PLACE_STATE_COLLECTION).delete(existingState.id);
+                await pb.collection(normalizedStateCollection).delete(existingState.id);
             }
         } else {
             const statePayload = {
@@ -120,9 +124,9 @@ export const POST = async ({ request }) => {
             };
 
             if (existingState?.id) {
-                await pb.collection(PLACE_STATE_COLLECTION).update(existingState.id, statePayload);
+                await pb.collection(normalizedStateCollection).update(existingState.id, statePayload);
             } else {
-                await pb.collection(PLACE_STATE_COLLECTION).create(statePayload);
+                await pb.collection(normalizedStateCollection).create(statePayload);
             }
         }
 
