@@ -6,17 +6,22 @@
     selectedWellLabels = {},
     selectedWellClaims = {},
     selectedWellColors = {},
+    selectedWellProteins = {},
     previewClaim = null,
     previewLabel = '',
     previewColor = '',
+    previewProtein = '',
     previewUsername = '',
     locked = false,
+    deletingAssignment = false,
     activeSelectionSlot = null,
     currentCompositionSlot = 0,
+    clearedSlotVersions = {},
     publishDisabled = false,
     onSelectionToggle = () => {},
     onSelectionHover = () => {},
     onSelectionHoverEnd = () => {},
+    onDeleteAssignment = () => {},
     onPublishSelected = () => {}
   } = $props();
 
@@ -118,6 +123,7 @@
   );
   let hydratedClaimSignatures = $state({});
   let previewVolumes = $state(computeDefaultVolumes());
+  let clearedSlotVersionCache = $state({});
 
   const presetVolumesNl = computeDefaultVolumes();
 
@@ -326,7 +332,6 @@
     if (!claim) return '';
     return JSON.stringify({
       id: claim.id || '',
-      point_key: claim.point_key || '',
       reagents: Array.isArray(claim.reagents) ? claim.reagents : []
     });
   }
@@ -347,6 +352,24 @@
 
   $effect(() => {
     previewVolumes = volumesFromSupplementJson(previewClaim?.reagents);
+  });
+
+  $effect(() => {
+    for (let slot = 0; slot < VARIANT_COUNT; slot += 1) {
+      const nextVersion = Number(clearedSlotVersions?.[slot] || 0);
+      const previousVersion = Number(clearedSlotVersionCache?.[slot] || 0);
+      if (!nextVersion || nextVersion === previousVersion) continue;
+
+      variantVolumes[slot] = computeDefaultVolumes();
+      hydratedClaimSignatures = {
+        ...hydratedClaimSignatures,
+        [slot]: ''
+      };
+      clearedSlotVersionCache = {
+        ...clearedSlotVersionCache,
+        [slot]: nextVersion
+      };
+    }
   });
 
   function totalVolumeFor(volumes) {
@@ -510,7 +533,7 @@
   }
 
   function setVolumeNl(variantIndex, reagent, rawValue) {
-    if (reagent.fixedNl != null || reagent.id === WATER_ID) return;
+    if (reagent.fixedNl != null || reagent.id === WATER_ID || !slotHasAssignedWell(variantIndex) || isEditingDisabled()) return;
 
     const candidate = Math.max(0, toStepNl(rawValue));
     const current = Number(variantVolumes[variantIndex]?.[reagent.id]) || 0;
@@ -525,17 +548,17 @@
   }
 
   function adjustVolumeNl(variantIndex, reagent, deltaNl) {
-    if (reagent.fixedNl != null || reagent.id === WATER_ID) return;
+    if (reagent.fixedNl != null || reagent.id === WATER_ID || !slotHasAssignedWell(variantIndex) || isEditingDisabled()) return;
     const current = Number(variantVolumes[variantIndex]?.[reagent.id]) || 0;
     setVolumeNl(variantIndex, reagent, current + deltaNl);
   }
 
   function canIncrease(variantIndex, reagent) {
-    return reagent.fixedNl == null && reagent.id !== WATER_ID && waterVolumeNlForVariant(variantIndex) >= STEP_NL;
+    return reagent.fixedNl == null && reagent.id !== WATER_ID && slotHasAssignedWell(variantIndex) && !isEditingDisabled() && waterVolumeNlForVariant(variantIndex) >= STEP_NL;
   }
 
   function canDecrease(variantIndex, reagent) {
-    return reagent.fixedNl == null && reagent.id !== WATER_ID && (Number(variantVolumes[variantIndex]?.[reagent.id]) || 0) >= STEP_NL;
+    return reagent.fixedNl == null && reagent.id !== WATER_ID && slotHasAssignedWell(variantIndex) && !isEditingDisabled() && (Number(variantVolumes[variantIndex]?.[reagent.id]) || 0) >= STEP_NL;
   }
 
   function currentCellToneClass(variant) {
@@ -631,6 +654,8 @@
       'btn btn-xs h-6 min-h-0 px-2 rounded-md border text-[10px]',
       activeSelectionSlot === variantIndex
         ? 'border-primary text-primary-content'
+        : currentCompositionSlot === variantIndex && !isReadOnlyPreview()
+          ? 'border-white text-base-content'
         : hasSelection
           ? 'border-base-content/30 text-base-content'
           : 'border-base-content/20 bg-base-200/70 text-base-content/80'
@@ -639,8 +664,10 @@
 
   function selectionButtonStyle(variantIndex) {
     const fill = String(selectedWellColors?.[variantIndex] || '').trim();
-    if (!fill) return '';
-    return `background-color: ${fill}; color: ${selectionButtonTextColor(fill)}; border-color: ${fill};`;
+    const isCurrent = currentCompositionSlot === variantIndex && !isReadOnlyPreview();
+    const whiteOutline = isCurrent ? 'box-shadow: inset 0 0 0 1.5px rgba(255,255,255,0.95);' : '';
+    if (!fill) return whiteOutline;
+    return `background-color: ${fill}; color: ${selectionButtonTextColor(fill)}; border-color: ${fill}; ${whiteOutline}`;
   }
 
   function previewBadgeStyle() {
@@ -667,6 +694,42 @@
     return row?.currentVariants?.[currentCompositionSlot] || row?.currentVariants?.[0] || null;
   }
 
+  function slotHasAssignedWell(slot) {
+    return Boolean(selectedWellClaims?.[slot]);
+  }
+
+  function slotDisplayLabel(slot) {
+    const claim = selectedWellClaims?.[slot];
+    const baseLabel = String(selectedWellLabels?.[slot] || claim?.well_label || '').trim();
+    const quadrant = String(claim?.plate_id || '').trim();
+    if (!baseLabel) return '';
+    return quadrant ? `${quadrant}-${baseLabel}` : baseLabel;
+  }
+
+  function currentColumnLabel() {
+    if (isReadOnlyPreview() && previewLabel) {
+      const quadrant = String(previewClaim?.plate_id || '').trim();
+      return quadrant ? `${quadrant}-${previewLabel}` : previewLabel;
+    }
+
+    const label = slotDisplayLabel(currentCompositionSlot);
+    return label || 'Select a well';
+  }
+
+  function currentProteinName() {
+    if (isReadOnlyPreview()) {
+      return String(previewProtein || '').trim();
+    }
+    return String(selectedWellProteins?.[currentCompositionSlot] || '').trim();
+  }
+
+  function currentProteinColor() {
+    if (isReadOnlyPreview()) {
+      return String(previewColor || '').trim();
+    }
+    return String(selectedWellColors?.[currentCompositionSlot] || '').trim();
+  }
+
   function shouldShowDeltaLabel(variant) {
     const label = String(variant?.deltaPctLabel || '').trim();
     return Boolean(label) && label !== '-';
@@ -678,6 +741,12 @@
 
   function isEditingDisabled() {
     return locked || isReadOnlyPreview();
+  }
+
+  function onboardingStep() {
+    if (activeSelectionSlot != null) return 2;
+    if (slotHasAssignedWell(currentCompositionSlot)) return 3;
+    return 1;
   }
 </script>
 
@@ -699,34 +768,70 @@
             onclick={() => onPublishSelected(buildPublishSubmission())}
             disabled={publishDisabled || locked}
           >
-            Save
+            Save Concentrations
           </button>
         </div>
       </div>
 
-      <div class={`flex flex-wrap gap-1 ${locked ? 'opacity-70' : ''}`}>
-        {#each Array.from({ length: VARIANT_COUNT }, (_, index) => index) as variantIndex}
-          <button
-            class={selectionButtonClasses(variantIndex, !!selectedWellLabels?.[variantIndex])}
-            style={selectionButtonStyle(variantIndex)}
-            onclick={() => onSelectionToggle(variantIndex)}
-            onmouseenter={() => onSelectionHover(variantIndex)}
-            onmouseleave={() => onSelectionHoverEnd(variantIndex)}
-            title={selectedWellLabels?.[variantIndex] ? `Selected well ${selectedWellLabels[variantIndex]}` : 'Select well'}
-            disabled={locked}
-          >
-            {selectedWellLabels?.[variantIndex] || '..'}
-          </button>
+      <div class={`grid grid-cols-2 items-start gap-2 ${locked ? 'opacity-70' : ''}`}>
+        <div class="flex min-w-0 flex-wrap gap-1 pt-1">
+          {#each Array.from({ length: VARIANT_COUNT }, (_, index) => index) as variantIndex}
+            <button
+              class={selectionButtonClasses(variantIndex, !!selectedWellLabels?.[variantIndex])}
+              style={selectionButtonStyle(variantIndex)}
+              onclick={() => onSelectionToggle(variantIndex)}
+              onmouseenter={() => onSelectionHover(variantIndex)}
+              onmouseleave={() => onSelectionHoverEnd(variantIndex)}
+              title={slotDisplayLabel(variantIndex) ? `Selected well ${slotDisplayLabel(variantIndex)}` : 'Select well'}
+              disabled={locked}
+            >
+              {slotDisplayLabel(variantIndex) || '..'}
+            </button>
         {/each}
         {#if isReadOnlyPreview() && previewLabel}
           <span
             class="inline-flex h-6 min-h-0 items-center px-2 rounded-md border text-[10px] opacity-90"
             style={previewBadgeStyle()}
-            title={`Previewing ${previewLabel}`}
+            title={currentColumnLabel()}
           >
-            {previewLabel}
+            {String(currentColumnLabel()).replace(/^Preview \(/, '').replace(/\)$/, '')}
           </span>
         {/if}
+        </div>
+
+        <div class="min-w-0 text-[10px] sm:text-[11px] opacity-60 text-center leading-tight text-green-300 justify-self-end w-full pt-1">
+          {#if activeSelectionSlot != null && !slotHasAssignedWell(activeSelectionSlot)}
+            Click a well to assign this slot
+          {:else if activeSelectionSlot != null}
+            Click a well to reassign this slot
+          {:else if !slotHasAssignedWell(currentCompositionSlot)}
+            <div class={onboardingStep() === 1 ? 'text-green-300 font-medium' : 'text-base-content/60'}>
+              1. Choose a slot
+            </div>
+            <div class={onboardingStep() === 2 ? 'text-green-300 font-medium' : 'text-base-content/60'}>
+              2. Assign a well
+            </div>
+            <div class={onboardingStep() === 3 ? 'text-green-300 font-medium' : 'text-base-content/60'}>
+              3. Adjust reagents
+            </div>
+            <div class={onboardingStep() === 4 ? 'text-green-300 font-medium' : 'text-base-content/60'}>
+              4. Save changes
+            </div>
+          {:else}
+            <div class={onboardingStep() === 1 ? 'text-green-300 font-medium' : 'text-base-content/60'}>
+              1. Choose a slot
+            </div>
+            <div class={onboardingStep() === 2 ? 'text-green-300 font-medium' : 'text-base-content/60'}>
+              2. Assign a well
+            </div>
+            <div class={onboardingStep() === 3 ? 'text-green-300 font-medium' : 'text-base-content/60'}>
+              3. Adjust reagents
+            </div>
+            <div class={onboardingStep() === 4 ? 'text-green-300 font-medium' : 'text-base-content/60'}>
+              4. Save changes
+            </div>
+          {/if}
+        </div>
       </div>
     </div>
 
@@ -742,12 +847,14 @@
           <tr>
             <th class="w-[30%] text-center px-0!">Reagent</th>
             <th class="w-[36%] text-center px-0!">
-              {#if isReadOnlyPreview() && previewLabel}
-                Preview ({previewLabel})
-              {:else}
-                {selectedWellLabels?.[currentCompositionSlot]
-                  ? `Current (${selectedWellLabels[currentCompositionSlot]})`
-                  : `Current ${currentCompositionSlot + 1}`}
+              <div>{currentColumnLabel()}</div>
+              {#if currentProteinName()}
+                <div
+                  class="mt-0.5 text-[8px] sm:text-[9px] font-medium"
+                  style={`color: ${currentProteinColor() || 'inherit'};`}
+                >
+                  {currentProteinName()}
+                </div>
               {/if}
             </th>
             <th class="w-[34%] text-center pl-0! pr-0.5!">Adjust</th>
@@ -773,7 +880,7 @@
                 </div>
               </td>
               <td class="pl-0.5 pr-0.5 py-0.5 align-top">
-                {#if row.adjustable && !isEditingDisabled()}
+                {#if row.adjustable && !isEditingDisabled() && slotHasAssignedWell(currentCompositionSlot)}
                   <div class="flex items-center justify-center gap-0.5 sm:gap-1">
                     <button
                       class="btn btn-xs min-h-0 h-4 w-4 sm:h-5 sm:w-5 rounded bg-primary/20 px-0 text-[10px]"
@@ -800,6 +907,18 @@
           {/each}
         </tbody>
       </table>
+    </div>
+
+    <div class="flex justify-end">
+      {#if !isReadOnlyPreview() && slotHasAssignedWell(currentCompositionSlot)}
+        <button
+          class="btn btn-xs btn-error text-error-content"
+          onclick={() => onDeleteAssignment(currentCompositionSlot)}
+          disabled={locked || deletingAssignment}
+        >
+          Delete Well Assignment
+        </button>
+      {/if}
     </div>
 
     <div class="rounded bg-base-300/30 p-2">

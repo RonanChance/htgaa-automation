@@ -59,6 +59,8 @@
     let currentCompositionSlot = $state(0);
     let claimingWellSlot = $state(null);
     let publishingSelectedCompositions = $state(false);
+    let deletingAssignedWellSlot = $state(null);
+    let clearedClaimSlotVersions = $state({});
 
     let isToastVisible = $state(false);
     let alertMessage = $state('');
@@ -301,6 +303,16 @@
         return colors;
     }
 
+    function selectedWellProteins() {
+        const proteins = {};
+        for (const [slot, claim] of Object.entries(myClaimRows || {})) {
+            const pointKey = String(claim?.point_key || '').trim();
+            const colorName = pointKey ? String(point_colors[pointKey] || '').trim() : '';
+            proteins[Number(slot)] = colorName || '';
+        }
+        return proteins;
+    }
+
     function previewClaimLabel() {
         return wellLabelFromClaim(previewClaim);
     }
@@ -309,6 +321,11 @@
         const pointKey = String(previewClaim?.point_key || '').trim();
         const colorName = pointKey ? String(point_colors[pointKey] || '').trim() : '';
         return colorName && well_colors[colorName] ? well_colors[colorName] : '';
+    }
+
+    function previewClaimProtein() {
+        const pointKey = String(previewClaim?.point_key || '').trim();
+        return pointKey ? String(point_colors[pointKey] || '').trim() : '';
     }
 
     function previewClaimUsername() {
@@ -1010,6 +1027,77 @@
         }
     }
 
+    async function deleteAssignedWell(slot) {
+        const normalizedSlot = Number(slot);
+        if (!Number.isInteger(normalizedSlot) || normalizedSlot < 0 || normalizedSlot > 7) return;
+
+        const existingClaim = myClaimRows[String(normalizedSlot)];
+        if (!existingClaim) {
+            return;
+        }
+
+        if (!inviteId || !inviteVerified || !username) {
+            showAlert('alert-warning', 'Open this page with a valid invite ID before editing well assignments.');
+            return;
+        }
+
+        deletingAssignedWellSlot = normalizedSlot;
+
+        try {
+            const response = await fetch('/deletePlaceWellClaim', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    boardId: PLACE_BOARD_ID,
+                    inviteId,
+                    claimSlot: normalizedSlot,
+                    claimId: String(existingClaim?.id || '').trim(),
+                    pointKey: String(existingClaim?.point_key || '').trim()
+                })
+            });
+
+            const result = await response.json();
+            if (!response.ok || !result?.success) {
+                showAlert('alert-warning', result?.error || 'Unable to delete well assignment.');
+                return;
+            }
+
+            const deletedIds = new Set((Array.isArray(result?.deleted_claim_ids) ? result.deleted_claim_ids : []).map((value) => String(value || '').trim()).filter(Boolean));
+            const deletedPointKeys = new Set((Array.isArray(result?.deleted_point_keys) ? result.deleted_point_keys : []).map((value) => String(value || '').trim()).filter(Boolean));
+
+            const nextMine = { ...myClaimRows };
+            delete nextMine[String(normalizedSlot)];
+            myClaimRows = nextMine;
+
+            const nextClaims = { ...claimedWellRows };
+            for (const [pointKey, claim] of Object.entries(nextClaims)) {
+                const claimId = String(claim?.id || '').trim();
+                if (deletedIds.has(claimId) || deletedPointKeys.has(String(pointKey || '').trim())) {
+                    delete nextClaims[pointKey];
+                }
+            }
+            claimedWellRows = nextClaims;
+
+            if (previewClaim && (deletedIds.has(String(previewClaim?.id || '').trim()) || Number(previewClaim?.claim_slot) === normalizedSlot)) {
+                previewClaim = null;
+            }
+
+            activeWellSelectionSlot = null;
+            currentCompositionSlot = normalizedSlot;
+            clearedClaimSlotVersions = {
+                ...clearedClaimSlotVersions,
+                [normalizedSlot]: Date.now()
+            };
+
+            showAlert('alert-success', 'Deleted well assignment.');
+        } catch (error) {
+            console.log('Delete place well claim request failed', error);
+            showAlert('alert-warning', 'Unable to delete well assignment.');
+        } finally {
+            deletingAssignedWellSlot = null;
+        }
+    }
+
     async function publishSnapshot() {
         const placement = pendingPlacement();
 
@@ -1210,21 +1298,87 @@
         selectedWellLabels={selectedWellLabels()}
         selectedWellClaims={selectedWellClaims()}
         selectedWellColors={selectedWellColors()}
+        selectedWellProteins={selectedWellProteins()}
         previewClaim={previewClaim}
         previewLabel={previewClaimLabel()}
         previewColor={previewClaimColor()}
+        previewProtein={previewClaimProtein()}
         previewUsername={previewClaimUsername()}
         locked={!inviteCfpsApproved}
+        deletingAssignment={deletingAssignedWellSlot != null}
         activeSelectionSlot={activeWellSelectionSlot}
         currentCompositionSlot={currentCompositionSlot}
+        clearedSlotVersions={clearedClaimSlotVersions}
         publishDisabled={publishingSelectedCompositions}
         onSelectionToggle={handleCompositionSlotSelect}
         onSelectionHover={handleCompositionSlotHover}
         onSelectionHoverEnd={handleCompositionSlotHoverEnd}
+        onDeleteAssignment={deleteAssignedWell}
         onPublishSelected={publishSelectedCompositions}
     />
 
-    <div class="flex flex-col w-full mt-3 gap-1 mx-auto bg-base-200 rounded px-3 py-2 text-xs opacity-80">
+    <div class="flex flex-col w-full mt-2 gap-2 mx-auto bg-base-200 rounded px-3 py-3 text-xs opacity-90">
+        <div class="flex items-center justify-between gap-2">
+            <span class="font-semibold text-sm opacity-100">CFPS Contributors</span>
+            <span class="text-[11px] opacity-70">
+                {assignedContributorCount().toLocaleString('en-US')} contributors · {assignedWellContributionCount().toLocaleString('en-US')} contributions
+            </span>
+        </div>
+
+        {#if assignedContributorCount() === 0}
+            <div class="text-xs opacity-70">No wells assigned yet.</div>
+        {:else}
+            <div class="w-full max-h-[25rem] overflow-auto">
+                <table class="table table-xs">
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Wells</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {#each assignedWellRows() as row}
+                            <tr>
+                                <td class="font-medium align-top">
+                                    {#if contributionProfileUrl(row.username)}
+                                        <a
+                                            class="block min-w-0 whitespace-normal break-words leading-snug no-underline"
+                                            href={contributionProfileUrl(row.username)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >
+                                            {displayContributionUsername(row.username)}
+                                        </a>
+                                    {:else}
+                                        <span class="block min-w-0 whitespace-normal break-words leading-snug">
+                                            {displayContributionUsername(row.username)}
+                                        </span>
+                                    {/if}
+                                </td>
+                                <td class="align-top">
+                                    <div class="flex flex-wrap gap-1">
+                                        {#each row.wells as well}
+                                            <span
+                                                class="inline-flex min-w-[2.1rem] items-center justify-center rounded-[3px] border px-1.5 py-0.5 text-[10px] leading-none"
+                                                style={well.colorValue
+                                                    ? `background-color: ${well.colorValue}; color: ${wellBadgeTextColor(well.colorValue)}; border-color: ${well.colorValue};`
+                                                    : ''}
+                                                title={well.colorName || well.label}
+                                            >
+                                                {well.label}
+                                            </span>
+                                        {/each}
+                                    </div>
+                                </td>
+                            </tr>
+                        {/each}
+                    </tbody>
+                </table>
+            </div>
+        {/if}
+    </div>
+
+     <div class="flex flex-col w-full mt-3 gap-1 mx-auto bg-base-200 rounded px-3 py-2 text-xs opacity-80">
         <span class="font-semibold text-sm opacity-100">Summary</span>
         <span>
             A real-time, global, collaborative fluorescent protein artwork canvas designed by the <a class="underline" href="https://2026a.htgaa.org" target="_blank" rel="noopener noreferrer">How To Grow (Almost) Anything</a> (HTGAA) community.
@@ -1244,7 +1398,7 @@
             Inspiration credit: <a class="underline" href="https://en.wikipedia.org/wiki/R/place" target="_blank" rel="noopener noreferrer">r/place</a>
         </span>
     </div>
-
+    
     <div class="flex flex-col w-full mt-2 gap-2 mx-auto bg-base-200 rounded px-3 py-3 text-xs opacity-90">
         <div class="flex items-center justify-between gap-2">
             <span class="font-semibold text-sm opacity-100">Artwork Contributors</span>
@@ -1311,67 +1465,6 @@
                                                 ></div>
                                             {/each}
                                         </div>
-                                    </div>
-                                </td>
-                            </tr>
-                        {/each}
-                    </tbody>
-                </table>
-            </div>
-        {/if}
-    </div>
-
-    <div class="flex flex-col w-full mt-2 gap-2 mx-auto bg-base-200 rounded px-3 py-3 text-xs opacity-90">
-        <div class="flex items-center justify-between gap-2">
-            <span class="font-semibold text-sm opacity-100">CFPS Contributors</span>
-            <span class="text-[11px] opacity-70">
-                {assignedContributorCount().toLocaleString('en-US')} contributors · {assignedWellContributionCount().toLocaleString('en-US')} contributions
-            </span>
-        </div>
-
-        {#if assignedContributorCount() === 0}
-            <div class="text-xs opacity-70">No wells assigned yet.</div>
-        {:else}
-            <div class="w-full max-h-[25rem] overflow-auto">
-                <table class="table table-xs">
-                    <thead>
-                        <tr>
-                            <th>User</th>
-                            <th>Wells</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {#each assignedWellRows() as row}
-                            <tr>
-                                <td class="font-medium align-top">
-                                    {#if contributionProfileUrl(row.username)}
-                                        <a
-                                            class="block min-w-0 whitespace-normal break-words leading-snug no-underline"
-                                            href={contributionProfileUrl(row.username)}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                        >
-                                            {displayContributionUsername(row.username)}
-                                        </a>
-                                    {:else}
-                                        <span class="block min-w-0 whitespace-normal break-words leading-snug">
-                                            {displayContributionUsername(row.username)}
-                                        </span>
-                                    {/if}
-                                </td>
-                                <td class="align-top">
-                                    <div class="flex flex-wrap gap-1">
-                                        {#each row.wells as well}
-                                            <span
-                                                class="inline-flex min-w-[2.1rem] items-center justify-center rounded-[3px] border px-1.5 py-0.5 text-[10px] leading-none"
-                                                style={well.colorValue
-                                                    ? `background-color: ${well.colorValue}; color: ${wellBadgeTextColor(well.colorValue)}; border-color: ${well.colorValue};`
-                                                    : ''}
-                                                title={well.colorName || well.label}
-                                            >
-                                                {well.label}
-                                            </span>
-                                        {/each}
                                     </div>
                                 </td>
                             </tr>
