@@ -30,7 +30,7 @@ export let current_well_colors_import = {
     'mLychee_TF': false,
     'mTagBFP2': false,
     'mEGFP': false,
-    'mNeonGreen': true,
+    'mNeonGreen': false,
     'mAzamiGreen': false,
     'mWatermelon': false,
     'avGFP': false,
@@ -45,7 +45,7 @@ export let current_well_colors_import = {
     'mMiCy': false,
     'mStayGold2': false,
     'PA_GFP': false,
-    'eforRed': true,
+    'eforRed': false,
 }
 
 export let source_384_well_colors = {

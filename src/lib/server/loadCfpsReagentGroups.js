@@ -57,7 +57,8 @@ function normalizeReagent(raw) {
     reagent_id: raw.reagent_id ?? raw.reagentId ?? null,
     entity_type: raw.entity_type ?? raw.entityType ?? null,
     entity_id: raw.entity_id ?? raw.entityId ?? null,
-    ...(fixedNl !== undefined ? { fixedNl } : {})
+    ...(fixedNl !== undefined ? { fixedNl } : {}),
+    ...(raw.hidden ? { hidden: true } : {})
   };
 }
 

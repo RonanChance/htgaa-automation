@@ -13,6 +13,7 @@ export default {
 
   daisyui: {
     themes: [
+      "light",
       {
         black: {
           "base-100": "#141414",

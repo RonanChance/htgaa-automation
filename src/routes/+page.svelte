@@ -3683,6 +3683,64 @@ async function rebuildFramesNow() {
         </div>
     {/if}
 
+    {#if Object.keys(points_by_color).length >= 1}
+        <div class="flex flex-col w-full mt-3 gap-2 mx-auto bg-base-200 rounded px-3 pb-2">
+            <div class="flex flex-row justify-between pt-2 items-center">
+                <span class="font-semibold">Coordinates</span>
+                <div class="flex flex-row flex-wrap justify-end gap-2 max-w-full overflow-hidden">
+                    {#if grid_style === 'Echo1536' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144' || grid_style === 'Echo6144Image' || grid_style === 'Echo384' || grid_style === 'Echo384Image'}
+                        <button class="btn btn-sm rounded gap-1 bg-base-100 text-base-content hover:bg-neutral hover:text-white opacity-70" aria-label="Download Echo CSV" title="Download Echo CSV" onclick={() => download_echo_csv.showModal()}>
+                            <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
+                        </button>
+                    {:else}
+                        <button class="btn btn-sm rounded gap-1 bg-base-100 text-base-content hover:bg-neutral hover:text-white" aria-label="Download protocol" title="Download protocol" onclick={() => download_modal.showModal()}>
+                            <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
+                        </button>
+                    {/if}
+                    <button class="btn btn-sm rounded bg-base-100 gap-1 hover:bg-neutral hover:text-white px-1 tooltip tooltip-top" aria-label="Copy Points" data-tip="Copy To Clipboard" onclick={copyPointsToClipboard}>
+                        <svg class="w-7 h-7 opacity-70" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path d="M10 8V7C10 6.05719 10 5.58579 10.2929 5.29289C10.5858 5 11.0572 5 12 5H17C17.9428 5 18.4142 5 18.7071 5.29289C19 5.58579 19 6.05719 19 7V12C19 12.9428 19 13.4142 18.7071 13.7071C18.4142 14 17.9428 14 17 14H16M7 19H12C12.9428 19 13.4142 19 13.7071 18.7071C14 18.4142 14 17.9428 14 17V12C14 11.0572 14 10.5858 13.7071 10.2929C13.4142 10 12.9428 10 12 10H7C6.05719 10 5.58579 10 5.29289 10.2929C5 10.5858 5 11.0572 5 12V17C5 17.9428 5 18.4142 5.29289 18.7071C5.58579 19 6.05719 19 7 19Z" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>
+                    </button>
+                </div>
+            </div>
+
+            {#if grid_style !== 'Echo384' && grid_style !== 'Echo384Image' && grid_style !== 'Echo1536' && grid_style !== 'Echo1536Image' && grid_style !== 'Echo6144' && grid_style !== 'Echo6144Image'}
+                <div class="text-xs opacity-70" bind:this={contentToCopy}>
+                    {#each Object.entries(points_by_color) as [color, points]}
+                        <div>
+                            <span class="inline">{color}</span> =
+                            [{#each points as {point}, i}
+                                ({point[0]}, {point[1]}){#if i < points.length - 1},{/if}
+                            {/each}]
+                        </div>
+                    {/each}
+                </div>
+            {:else if grid_style === 'Echo384' || grid_style === 'Echo384Image'}
+                <div class="text-xs break-all whitespace-normal opacity-70" bind:this={contentToCopy}>
+                    {#each Object.entries(points_by_color) as [color, points]}
+                        <div>
+                            <span class="inline">{color}</span> =
+                            [{#each points as {point}, i}
+                                {String.fromCharCode(65 + point[1] / 5)}{point[0] / 5 + 1}{#if i < points.length - 1},{/if}
+                            {/each}]
+                        </div>
+                    {/each}
+                </div>
+            {:else}
+                <div class="text-xs break-all whitespace-pre overflow-x-auto opacity-70" bind:this={contentToCopy}>
+                    Source Plate Name, Source Plate Barcode, Source Plate Type, Source Well, Destination Plate Name, Destination Plate Barcode, Destination Plate Type, Destination Well, Transfer Volume
+                    {#each Object.entries(points_by_color) as [color, points]}
+                        <div>
+                            {#each points as {point}}
+                                Echo_Artwork_Source, {source_id}, 384-well Plate Echo PP, {source_384_well_colors[stripAfterLastUnderscore(color)]}1, Echo_Artwork_Dest, {destination_id}, 1-flat-thermo-264728-omni-1536, {echoWellFromPoint(point[0], point[1])}, 100
+                                <br />
+                            {/each}
+                        </div>
+                    {/each}
+                </div>
+            {/if}
+        </div>
+    {/if}
+
     <!-- ABOUT SECTION -->
     {#if !ginkgo_mode}
         <div class="collapse collapse-arrow pt-4">

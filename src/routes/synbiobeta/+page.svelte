@@ -23,6 +23,7 @@
     const PLACE_COOLDOWN_MS = 5_000;
     const PLACE_DELETE_ONLY_MODE = false;
     const SYNBIOBETA_DEFAULT_INVITE_ID = '7og5gcl4t1c1358';
+    const CANVAS_PREFERENCE_KEY = 'preferred1536Canvas';
 
     const PLACE_ALLOWED_COLORS = ['sfGFP', 'mRFP1', 'mKO2', 'mTurquoise2', 'mScarlet_I', 'Electra2'];
     const paletteColors = PLACE_ALLOWED_COLORS.filter((name) => current_well_colors_import[name] && well_colors[name]);
@@ -77,6 +78,16 @@
     function currentSearchSuffix() {
         if (!browser) return '';
         return window.location.search || '';
+    }
+
+    function setPreferredCanvasMode(mode = '') {
+        if (!browser) return;
+        const normalized = String(mode || '').trim();
+        if (!normalized) {
+            window.sessionStorage.removeItem(CANVAS_PREFERENCE_KEY);
+            return;
+        }
+        window.sessionStorage.setItem(CANVAS_PREFERENCE_KEY, normalized);
     }
 
     function showAlert(type = 'alert-success', msg = 'Success!') {
@@ -732,15 +743,23 @@
                 <a
                     class="btn btn-xs join-item bg-base-300 text-base-content/80 hover:bg-neutral-700 hover:text-base-content"
                     href={`/1536${currentSearchSuffix()}`}
+                    onclick={() => { setPreferredCanvasMode('htgaa'); }}
                 >
-                    HTGAA
+                    HTGAA CFPS
                 </a>
                 <a
                     class="btn btn-xs join-item bg-neutral-700 text-base-content hover:bg-neutral-600"
                     href={`/synbiobeta${currentSearchSuffix()}`}
                     aria-current="page"
+                    onclick={() => { setPreferredCanvasMode('synbiobeta'); }}
                 >
-                    SynBioBeta
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="relative flex h-2 w-2">
+                            <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
+                            <span class="relative inline-flex h-2 w-2 rounded-full bg-green-400"></span>
+                        </span>
+                        SynBioBeta
+                    </span>
                 </a>
             </div>
         </div>
@@ -769,6 +788,14 @@
                     {/if}
                 </div>
             {/if}
+        {:else if !hasExplicitInviteInUrl}
+            <span class="inline-flex items-center gap-1.5 ml-1">
+                <span class="relative flex h-2 w-2">
+                    <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
+                    <span class="relative inline-flex h-2 w-2 rounded-full bg-green-400"></span>
+                </span>
+                <span class="text-[10px] uppercase tracking-wide opacity-70">Live</span>
+            </span>
         {:else}
             <span class="invisible">Q1 · A1</span>
         {/if}

@@ -6,6 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
+		"build:starfield": "node scripts/build-starfield-data.mjs",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''"
 	},
@@ -22,12 +23,19 @@
 	},
 	"dependencies": {
 		"@sveltejs/adapter-node": "^5.2.12",
+		"@threlte/core": "^8.5.16",
+		"@threlte/extras": "^9.21.0",
+		"dom-to-image-more": "^3.10.2",
 		"geist": "^1.7.0",
 		"gifuct-js": "^2.1.2",
+		"html2canvas": "^1.4.1",
+		"ngl": "^2.4.0",
 		"openai": "^4.83.0",
 		"pocketbase": "^0.25.1",
+		"postprocessing": "^6.39.4",
 		"prismjs": "^1.29.0",
-		"qrcode": "^1.5.4"
+		"qrcode": "^1.5.4",
+		"three": "^0.185.1"
 	},
 	"volta": {
 		"node": "22.20.0"
