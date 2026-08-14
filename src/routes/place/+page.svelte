@@ -24,6 +24,7 @@
     const PLACE_COOLDOWN_KEY = 'placeCooldownUntil';
     const PLACE_COOLDOWN_MS = 20_000;
     const PLACE_INITIAL_HISTORY_STEP = 7292;
+    const CANVAS_PREFERENCE_KEY = 'preferred1536Canvas';
 
     const PLACE_ALLOWED_COLORS = ['sfGFP', 'mRFP1', 'mKO2', 'mTurquoise2', 'mScarlet_I', 'Electra2'];
     const paletteColors = PLACE_ALLOWED_COLORS.filter((name) => current_well_colors_import[name] && well_colors[name]);
@@ -90,6 +91,21 @@
     function currentSearchSuffix() {
         if (!browser) return '';
         return window.location.search || '';
+    }
+
+    function getPreferredCanvasMode() {
+        if (!browser) return '';
+        return String(window.sessionStorage.getItem(CANVAS_PREFERENCE_KEY) || '').trim();
+    }
+
+    function setPreferredCanvasMode(mode = '') {
+        if (!browser) return;
+        const normalized = String(mode || '').trim();
+        if (!normalized) {
+            window.sessionStorage.removeItem(CANVAS_PREFERENCE_KEY);
+            return;
+        }
+        window.sessionStorage.setItem(CANVAS_PREFERENCE_KEY, normalized);
     }
 
     function showAlert(type = 'alert-success', msg = 'Success!') {
@@ -1173,10 +1189,17 @@
     }
 
     onMount(async () => {
-        updateCooldownState();
-        const cooldownInterval = window.setInterval(updateCooldownState, 1000);
         const params = browser ? new URL(window.location.href).searchParams : null;
         const rawId = (params?.get('id') || '').trim();
+
+        if (browser && rawId && window.location.pathname === '/1536' && getPreferredCanvasMode() !== 'htgaa') {
+            const nextUrl = `/synbiobeta${window.location.search || ''}`;
+            window.location.replace(nextUrl);
+            return;
+        }
+
+        updateCooldownState();
+        const cooldownInterval = window.setInterval(updateCooldownState, 1000);
         const verifiedFromId = rawId ? await verifyInvite(rawId) : false;
         if (rawId && !verifiedFromId) {
             inviteId = rawId;
@@ -1211,14 +1234,22 @@
                 class="btn btn-xs join-item bg-neutral-700 text-base-content hover:bg-neutral-600"
                 href={`/1536${currentSearchSuffix()}`}
                 aria-current="page"
+                onclick={() => { setPreferredCanvasMode('htgaa'); }}
             >
-                HTGAA
+                HTGAA CFPS
             </a>
             <a
                 class="btn btn-xs join-item bg-base-300 text-base-content/80 hover:bg-neutral-700 hover:text-base-content"
                 href={`/synbiobeta${currentSearchSuffix()}`}
+                onclick={() => { setPreferredCanvasMode('synbiobeta'); }}
             >
-                SynBioBeta
+                <span class="inline-flex items-center gap-1.5">
+                    <span class="relative flex h-2 w-2">
+                        <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
+                        <span class="relative inline-flex h-2 w-2 rounded-full bg-green-400"></span>
+                    </span>
+                    SynBioBeta
+                </span>
             </a>
         </div>
     </div>

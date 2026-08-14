@@ -29,4 +29,9 @@ vite.config.ts.timestamp-*
 # Image Bucket
 /static/images.txt
 
+reagent_info.txt
+reagent_yaml.yaml
+specific_yaml.yaml
+total_reagents_temp.json
+
 .venv
