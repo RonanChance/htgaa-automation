@@ -15,6 +15,8 @@
         limsUrlForReagentId,
         waterFillNlForFormulation
     } from '$lib/cfps-benchmarks.js';
+    import { REAGENT_SYNOPSES } from '$lib/reagent-synopses.js';
+
     // Teal marker colour for custom Ginkgo reagents (distinct from the purple
     // ○ used for theoretical / not-in-stock reagents).
     const CUSTOM_COLOR = '#2dd4bf';
@@ -26,12 +28,12 @@
 
     function downloadCSV() {
         const allReagents = REAGENT_GROUPS.flatMap(g => g.reagents);
-        const header = ['Reagent', 'Unit', ...BENCHMARK_FORMULATIONS.map(bm => `${bm.name} (${bm.year})`)];
+        const header = ['Reagent', 'Unit', ...displayFormulations.map(bm => `${bm.name} (${bm.year})`)];
         const rows = allReagents.map(paperName => {
             const alias = REAGENT_ALIASES[paperName];
             const unit = alias?.unit ?? 'mM';
-            const values = BENCHMARK_FORMULATIONS.map(bm => {
-                const v = bm.components[paperName];
+            const values = displayFormulations.map(bm => {
+                const v = applyOptima(bm).components[paperName];
                 return v == null ? '' : v;
             });
             return [paperName, unit, ...values];
@@ -91,6 +93,7 @@
     }
 
     let hoveredCell = $state(null); // {row: string, col: string} | null
+    let activeSynopsis = $state(null); // { name, synopsis } | null
 
     // Currently-selected composition key. Clicking a column header or a fidelity
     // card sets this, which outlines the matching column in the table AND the
@@ -122,18 +125,18 @@
     }
 
     const PAPER_GROUP_META = {
-        historical:          { label: 'Literature',           color: 'rgba(255,255,255,0.04)' },
-        olsen:               { label: 'Olsen et al. 2026',    color: 'rgba(34,211,238,0.10)'  },
-        smith:               { label: 'Smith et al. 2026',    color: 'rgba(139,92,246,0.12)'  },
-        'ginkgo-target':     { label: 'Ginkgo Internal',      color: 'rgba(245,158,11,0.12)'  },
-        'ginkgo-experimental':{ label: 'Jewett Experimental 7/17/26', color: 'rgba(52,211,153,0.12)'  }
+        historical:          { label: 'Literature',           color: 'rgba(0,0,0,0.04)'        },
+        olsen:               { label: 'Olsen et al. 2026',    color: 'rgba(34,211,238,0.20)'   },
+        smith:               { label: 'Smith et al. 2026',    color: 'rgba(139,92,246,0.22)'   },
+        'ginkgo-target':     { label: 'Ginkgo Internal',      color: 'rgba(245,158,11,0.22)'   },
+        'ginkgo-experimental':{ label: 'Jewett Experimental 7/17/26', color: 'rgba(52,211,153,0.22)'  }
     };
 
     // Column visibility toggles
-    let showLiterature = $state(true);
+    let showLiterature = $state(false);
     let showGinkgoInternal = $state(false);
 
-    const NON_JEWETT_LIT = new Set(['calhoun-2005','zawada-2011','cai-2015','borkowski-2020','garenne-2021','warfel-2023','zhu-2025']);
+    const NON_JEWETT_LIT = new Set(['jewett-2004','calhoun-2005','zawada-2011','cai-2015','borkowski-2020','garenne-2021','warfel-2023','zhu-2025']);
     const GINKGO_TARGET_ORDER = ['ginkgo-target-sfgfp','ginkgo-target-reteplase-old','ginkgo-target-reteplase'];
 
     // Fidelity-card list: same literature filter but Ginkgo targets always included.
@@ -302,7 +305,7 @@
     }
 
     function handleLoad(bm) {
-        if (typeof onLoad === 'function') onLoad(bm);
+        if (typeof onLoad === 'function') onLoad(applyOptima(bm));
     }
 
     // Set of reagent ids the parent supplies recipes for — used to decide
@@ -319,9 +322,46 @@
     // than one Echo step). Blue reuses the "base buffer already meets
     // target" hue elsewhere in the table.
     function waterCellStyle(waterNl) {
-        if (waterNl < -25)   return { bg: 'rgba(239, 68, 68, 0.4)',   border: 'rgba(239, 68, 68, 0.6)',   text: 'oklch(var(--bc))' };
-        if (waterNl < 2000)  return { bg: 'rgba(245, 158, 11, 0.4)',  border: 'rgba(245, 158, 11, 0.6)',  text: 'oklch(var(--bc))' };
-        return { bg: 'rgba(14, 165, 233, 0.35)', border: 'rgba(14, 165, 233, 0.6)', text: 'oklch(var(--bc))' };
+        if (waterNl < -25)  return { bg: 'rgba(239, 68, 68, 0.4)', border: 'rgba(239, 68, 68, 0.6)', text: 'oklch(var(--bc))' };
+        if (waterNl <= 0)   return { bg: 'rgba(239, 68, 68, 0.2)', border: 'rgba(239, 68, 68, 0.4)', text: 'oklch(var(--bc))' };
+        return { bg: 'rgba(34, 197, 94, 0.35)', border: 'rgba(34, 197, 94, 0.55)', text: 'oklch(var(--bc))' };
+    }
+
+    // ─── Coloring mode ──────────────────────────────────────────────────────
+    let coloringMode = $state('default');
+    const COLORING_OPTIONS = [
+        { key: 'default',              label: 'Default' },
+        { key: 'target-sfgfp',         label: 'vs Target (sfGFP)' },
+        { key: 'target-reteplase',     label: 'vs Target (Reteplase)' },
+        { key: 'target-reteplase-old', label: 'vs Target (Reteplase old)' }
+    ];
+    const COLORING_TARGET_KEYS = {
+        'target-sfgfp':         'ginkgo-target-sfgfp',
+        'target-reteplase':     'ginkgo-target-reteplase',
+        'target-reteplase-old': 'ginkgo-target-reteplase-old'
+    };
+
+    function coloringCellStyle(paperName, val) {
+        if (coloringMode === 'default') return null;
+        const targetBm = BENCHMARK_FORMULATIONS.find(b => b.key === COLORING_TARGET_KEYS[coloringMode]);
+        if (!targetBm) return null;
+        const targetVal = targetBm.components[paperName];
+        // Reagent not in target → keep green (extra in this composition vs target)
+        if (targetVal == null || targetVal === 0) {
+            return { bg: 'rgba(34, 197, 94, 0.35)', border: 'rgba(34, 197, 94, 0.55)', text: 'oklch(var(--bc))' };
+        }
+        // Gradient: blue (low) → neutral (at target) → red (high), log2 scale ±2 folds
+        const logRatio = Math.log2(val / targetVal);
+        const t = Math.max(-1, Math.min(1, logRatio / 2)); // -1 to 1
+        const alpha = 0.15 + Math.abs(t) * 0.55;
+        if (t < -0.05) {
+            const f = -t;
+            return { bg: `rgba(30, 120, 255, ${alpha * f + 0.08})`, border: 'transparent', text: 'oklch(var(--bc))' };
+        } else if (t > 0.05) {
+            return { bg: `rgba(239, 68, 68, ${alpha * t + 0.08})`, border: 'transparent', text: 'oklch(var(--bc))' };
+        } else {
+            return { bg: 'rgba(150, 150, 150, 0.12)', border: 'transparent', text: 'oklch(var(--bc))' };
+        }
     }
 
     // ─── Onboarding difficulty ──────────────────────────────────────────────
@@ -368,7 +408,7 @@
                  the thead (ghost/duplicate rows) and drops per-cell box-shadows.
                  Separated borders with 0 spacing render identically but make the
                  sticky header + frozen columns + seam shadows reliable. -->
-            <table class="w-max text-[11px] border-separate border-spacing-0">
+            <table class="w-max mx-auto text-[11px] border-separate border-spacing-0">
                 <!-- z-50: header sits above the sticky-left body columns (z-30/z-40)
                      so it covers them when scrolling down. `isolate` on the wrapper
                      scopes this z-index so it can't fight the page preset bar. -->
@@ -384,8 +424,8 @@
                             {@const meta = PAPER_GROUP_META[grp.group]}
                             <th
                                 colspan={grp.count}
-                                class="text-center px-1 py-0.5 font-semibold uppercase tracking-widest border-b"
-                                style="background: {meta.color}; border-color: oklch(var(--bc) / 0.08); color: oklch(var(--bc) / 0.45); letter-spacing: 0.08em;"
+                                class="text-center px-1 py-0.5 font-bold uppercase tracking-widest border-b"
+                                style="background: {meta.color}; border-color: oklch(var(--bc) / 0.12); color: oklch(var(--bc) / 0.65); letter-spacing: 0.08em;"
                             >{meta.label}</th>
                         {/each}
                     </tr>
@@ -505,7 +545,7 @@
                                      scrolling values behind. -->
                                 <td
                                     class="px-3 py-1 sticky z-30 whitespace-nowrap"
-                                    style="left: 31px; min-width: 200px; background: oklch(var(--b1)); "
+                                    style="left: 31px; min-width: 200px; background: oklch(var(--b2)); "
                                 >
                                     <div class="flex items-center gap-1.5 flex-wrap">
                                         <!-- Reagent name links to its LIMS object (opens in a new
@@ -549,6 +589,14 @@
                                                 aria-label={`View recipe for ${paperName}`}
                                             >&#9432;</button>
                                         {/if}
+                                        {#if REAGENT_SYNOPSES[paperName]}
+                                            <button
+                                                type="button"
+                                                class="text-[10px] leading-none px-1 py-0.5 rounded text-base-content/40 hover:text-base-content hover:bg-base-content/10"
+                                                onclick={(e) => { e.stopPropagation(); activeSynopsis = { name: paperName, synopsis: REAGENT_SYNOPSES[paperName] }; }}
+                                                aria-label={`About ${paperName}`}
+                                            >&#9432;</button>
+                                        {/if}
                                     </div>
                                     {#if showSupplementNl && alias?.ids?.[0]}
                                         <div class="text-[8px] opacity-30 font-mono truncate leading-tight" style="max-width: 160px;" title={inventoryLabel(paperName)}>
@@ -562,10 +610,10 @@
                                     {#if val == null}
                                         <!-- Reagent unused in this formulation — leave the cell blank
                                              (but still draw the column outline through it when selected). -->
-                                        <td style="box-shadow: {colOutline(isSel)};"></td>
+                                        <td style="background: oklch(var(--b2)); box-shadow: {colOutline(isSel)};"></td>
                                     {:else}
                                         {@const feas = feasibilityFor(paperName, val)}
-                                        {@const style = feasibilityCellStyle(feas)}
+                                        {@const style = coloringCellStyle(paperName, val) ?? feasibilityCellStyle(feas)}
                                         {@const tooltip = feas.status === 'missing'
                                             ? `${paperName}: ${val} ${alias?.unit ?? ''} — theoretical (${feas.reason || 'not in stock; add to order list to run this formulation'})`
                                             : feas.status === 'over-baseline'
@@ -621,7 +669,7 @@
                         </td>
                         <td
                             class="px-3 py-1 sticky z-30 whitespace-nowrap"
-                            style="left: 31px; min-width: 200px; background: oklch(var(--b1)); "
+                            style="left: 31px; min-width: 200px; background: oklch(var(--b2)); "
                         >
                             <div>Water</div>
                         </td>
@@ -658,6 +706,15 @@
                 onclick={() => showGinkgoInternal = !showGinkgoInternal}
             >Ginkgo Internal</button>
         </div>
+        <span class="text-[10px] text-base-content/40">Coloring</span>
+        <select
+            class="text-xs rounded border border-base-content/20 bg-base-100 text-base-content/70 px-1.5 py-0.5"
+            bind:value={coloringMode}
+        >
+            {#each COLORING_OPTIONS as opt}
+                <option value={opt.key}>{opt.label}</option>
+            {/each}
+        </select>
         <span class="text-[10px] text-base-content/40">Salt optima</span>
         <select
             class="text-xs rounded border border-base-content/20 bg-base-100 text-base-content/70 px-1.5 py-0.5"
@@ -797,7 +854,7 @@
                         </div>
                     </div>
                     {#if isSel && (displayReagents.length > 0 || fid.additional.length > 0)}
-                        <div class="mt-1 pt-1 border-t font-mono" style="border-color: oklch(var(--bc) / 0.1); font-size: 9px;">
+                        <div class="mt-1 pt-1 border-t font-mono" style="border-color: oklch(var(--bc) / 0.1); font-size: 11px;">
                             {#if displayReagents.length > 0}
                                 {#each displayReagents as o}
                                     {@const delivered = o.targetValue + (o.deviationPct / 100) * o.targetValue}
@@ -861,21 +918,60 @@
 
         <!-- Done: compositions that fit perfectly with every reagent in stock. -->
         {#if fidelityFormulations.some((b) => onboardingClass(b) === 'complete')}
+            {@const completeMembers = fidelityFormulations.filter((b) => onboardingClass(b) === 'complete')}
             <div class="rounded-lg border border-base-300 p-3" style="background: oklch(var(--b2));">
                 <div class="text-[11px] font-semibold mb-1.5" style="color: oklch(var(--bc)/0.5);">
-                    Complete <span class="opacity-40 font-normal">· {fidelityFormulations.filter((b) => onboardingClass(b) === 'complete').length}</span>
+                    Complete <span class="opacity-40 font-normal">· {completeMembers.length}</span>
                 </div>
-                <div class="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-                    {#each fidelityFormulations.filter((b) => onboardingClass(b) === 'complete') as bm}
-                        {@const wNl = waterFillNlForFormulation(applyOptima(bm))}
-                        <span class="inline-flex items-center gap-1.5">
-                            {#if bm.paperUrl}
-                                <a href={bm.paperUrl} target="_blank" rel="noopener" class="hover:underline hover:text-primary" title={`Open source paper for ${bm.name}`}>{bm.name}</a>
+                <div class="grid grid-cols-4 gap-2 text-[10px]">
+                    {#each completeMembers as bm}
+                        {@const ebm = applyOptima(bm)}
+                        {@const fid = formulationFidelity(ebm)}
+                        {@const displayReagents = fid.offReagents.filter(o => Math.abs(o.deviationPct) >= 3)}
+                        {@const isSel = selectedKey === bm.key}
+                        {@const waterNl = waterFillNlForFormulation(ebm)}
+                        {@const wstyle = waterCellStyle(waterNl)}
+                        {@const sn = splitName(bm.name)}
+                        <div
+                            role="button"
+                            tabindex="0"
+                            class="rounded border p-2 cursor-pointer transition hover:border-base-content/30 flex flex-col"
+                            style="background: oklch(var(--b1)); border-color: {isSel ? SEL_COLOR : 'oklch(var(--bc) / 0.08)'}; box-shadow: {isSel ? `0 0 0 1px ${SEL_COLOR}` : 'none'};"
+                            onclick={() => { selectColumn(bm); handleLoad(bm); }}
+                            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectColumn(bm); handleLoad(bm); } }}
+                        >
+                            <div class="font-semibold text-[11px] mb-1">
+                                <div class="flex flex-col items-start justify-start" style="min-height: 2.4em;">
+                                    {#if bm.paperUrl}
+                                        <a href={bm.paperUrl} target="_blank" rel="noopener" class="hover:underline hover:text-primary" onclick={(e) => e.stopPropagation()} title={`Open source paper for ${bm.name}`}>{sn.main}{#if sn.sub}<br/><span class="font-normal opacity-70">{sn.sub}</span>{/if}</a>
+                                    {:else}
+                                        <div>{sn.main}{#if sn.sub}<br/><span class="font-normal opacity-70">{sn.sub}</span>{/if}</div>
+                                    {/if}
+                                </div>
+                                <div class="text-[9px] opacity-55 leading-tight">{bm.year}</div>
+                            </div>
+                            {#if waterNl < 0}
+                                <div class="text-[10px]" style="color:#f59e0b;">Exceeds 20 µL reaction limit</div>
+                            {:else if displayReagents.length === 0}
+                                <div class="opacity-50">{fid.offReagents.length > 0 ? 'All deviations < 3%' : 'All in-stock reagents hit exact 25 nL steps'}</div>
                             {:else}
-                                <span>{bm.name}</span>
+                                <div class="grid grid-cols-[auto_auto] justify-center gap-x-6 gap-y-0.5 font-mono">
+                                    {#each displayReagents as o}
+                                        {@const delivered = o.targetValue + (o.deviationPct / 100) * o.targetValue}
+                                        <span class="whitespace-nowrap" title={`${o.paperName}: ${fmt(o.targetValue)} → ${fmt(delivered)} ${o.unit}`}>
+                                            <span class="opacity-80">{o.paperName}</span>
+                                            <span style="color: {Math.abs(o.deviationPct) >= 5 ? '#fbbf24' : 'inherit'};">{o.deviationPct >= 0 ? '+' : '−'}{Math.abs(o.deviationPct).toFixed(1)}%</span>
+                                        </span>
+                                    {/each}
+                                </div>
                             {/if}
-                            <span class="opacity-40 font-mono text-[10px]">{(wNl / 1000).toFixed(2)} µL</span>
-                        </span>
+                            <div class="mt-auto pt-1 flex items-end justify-between gap-2">
+                                <div></div>
+                                <div class="font-mono whitespace-nowrap shrink-0" style="color: {waterNl < -25 ? '#ef4444' : 'oklch(var(--bc)/0.4)'};" title="Water fill left in the 20 µL reaction">
+                                    water: {(waterNl / 1000).toFixed(2)} µL
+                                </div>
+                            </div>
+                        </div>
                     {/each}
                 </div>
             </div>
@@ -883,3 +979,36 @@
     </div>
 
 </section>
+
+{#if activeSynopsis}
+    <div
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        onclick={() => activeSynopsis = null}
+        role="presentation"
+    >
+        <div
+            class="max-w-lg w-full max-h-[80vh] overflow-auto rounded-lg shadow-xl border border-base-300 bg-base-100"
+            onclick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label={`About ${activeSynopsis.name}`}
+        >
+            <div class="flex items-center justify-between gap-4 px-5 py-3 border-b border-base-300 bg-base-200/60">
+                <h3 class="text-sm font-semibold text-base-content/80">{activeSynopsis.name}</h3>
+                <button type="button" class="text-base-content/50 hover:text-base-content text-lg leading-none" onclick={() => activeSynopsis = null} aria-label="Close">✕</button>
+            </div>
+            <div class="px-5 py-4 space-y-3 text-sm text-base-content/80 leading-relaxed">
+                <p>{activeSynopsis.synopsis.role}</p>
+                {#if activeSynopsis.synopsis.proteins}
+                    <div class="space-y-2 pt-1 border-t border-base-300/50">
+                        {#each Object.entries(activeSynopsis.synopsis.proteins) as [protein, note]}
+                            <div>
+                                <span class="text-xs font-semibold uppercase tracking-wide text-base-content/40">{protein === 'sfgfp' ? 'sfGFP' : protein === 'petase' ? 'PETase' : protein === 'reteplase' ? 'Reteplase' : protein}</span>
+                                <p class="text-xs text-base-content/65 mt-0.5">{note}</p>
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
+            </div>
+        </div>
+    </div>
+{/if}

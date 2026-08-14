@@ -32,7 +32,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_g: 4083,
         components: {
             'Mg(Glu)2': 8, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2, 'Tyrosine': 2, 'Cysteine': 2,
-            'HEPES': 57, 'Putrescine': 1, 'Spermidine': 1.5,
+            'HEPES pH 7.5': 57, 'Putrescine': 1, 'Spermidine': 1.5,
             'Folinic acid': 0.03, 'tRNA': 0.17, 'CoA': 0.27, 'NAD': 0.4,
             'PEP': 30, 'Oxalic acid': 4,
             'ATP': 1.2, 'CTP': 0.85, 'GTP': 0.85, 'UTP': 0.85
@@ -51,7 +51,7 @@ export const BENCHMARK_FORMULATIONS = [
         category: 'oxidizing-control',
         components: {
             'Mg(Glu)2': 8, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2, 'Tyrosine': 2, 'Cysteine': 2,
-            'HEPES': 57, 'Putrescine': 1, 'Spermidine': 1.5,
+            'HEPES pH 7.5': 57, 'Putrescine': 1, 'Spermidine': 1.5,
             'Folinic acid': 0.03, 'tRNA': 0.17, 'CoA': 0.27, 'NAD': 0.4,
             'PEP': 30, 'Oxalic acid': 4,
             'ATP': 1.2, 'CTP': 0.85, 'GTP': 0.85, 'UTP': 0.85,
@@ -70,7 +70,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_g: 3181,
         components: {
             'Mg(Glu)2': 8, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2,
-            'Pyruvate': 33, 'Putrescine': 1, 'Spermidine': 1.5,
+            'Sodium pyruvate': 33, 'Putrescine': 1, 'Spermidine': 1.5,
             'Folinic acid': 0.034, 'tRNA': 0.17, 'CoA': 0.26, 'NAD': 0.33,
             'Oxalic acid': 4,
             'ATP': 1.2, 'CTP': 0.85, 'GTP': 0.85, 'UTP': 0.85
@@ -105,7 +105,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_g: 339,
         components: {
             'Mg(Glu)2': 8, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2, 'Tyrosine': 1,
-            'Phosphate': 15, 'Pyruvate': 35, 'Putrescine': 1, 'Spermidine': 1.5,
+            'Phosphate': 15, 'Sodium pyruvate': 35, 'Putrescine': 1, 'Spermidine': 1.5,
             'Oxalic acid': 4, 'GSSG': 4, 'GSH': 1,
             'AMP': 1.2, 'CMP': 0.86, 'GMP': 0.86, 'UMP': 0.86
         }
@@ -139,7 +139,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_g: 3026,
         components: {
             'Mg(Glu)2': 4, 'K(Glu)': 80, 'Amino acids': 1.5,
-            'HEPES': 50, 'Spermidine': 0.1, 'Dithiothreitol': 2.5,
+            'HEPES pH 7.5': 50, 'Spermidine': 0.1, 'Dithiothreitol': 2.5,
             'Folinic acid': 0.035, 'tRNA': 0.06, 'CoA': 0.026, 'NAD': 0.165, '3-PGA': 9,
             'PEG-8000': 2,
             'ATP': 1.5, 'CTP': 0.9, 'GTP': 1.5, 'UTP': 0.9
@@ -157,7 +157,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_g: 4550,
         components: {
             'Mg(Glu)2': 8, 'K(Glu)': 80, 'Amino acids': 1.5, 
-            'HEPES': 50, 'Spermidine': 1, 'Dithiothreitol': 1, 'Ribose': 30,
+            'HEPES pH 7.5': 50, 'Spermidine': 1, 'Dithiothreitol': 1, 'Ribose': 30,
             'Folinic acid': 0.032, 'tRNA': 0.2, 'CoA': 0.26, 'NAD': 0.33, 'cAMP': 0.75,
             '3-PGA': 30, 'Maltodextrin': 21.6,
             'ATP': 1.5, 'CTP': 0.9, 'GTP': 1.5, 'UTP': 0.9
@@ -193,7 +193,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_g: 11433,
         components: {
             'Mg(Glu)2': 12, 'K(Glu)': 130, 'Ammonium acetate': 10, 'Amino acids': 2,
-            'HEPES': 57, 'Spermidine': 0.13,
+            'HEPES pH 7.5': 57, 'Spermidine': 0.13,
             'Folinic acid': 2.05,
             'PEP': 40,
             'ATP': 2.6, 'CTP': 1.9, 'GTP': 1.9, 'UTP': 1.9
@@ -226,7 +226,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_g: 60,
         components: {
             'Mg(Glu)2': 8, 'K(Glu)': 362, 'Glucose': 10, 'Amino acids': 5, 'Tyrosine': 5, 'Cysteine': 5,
-            'Phosphate': 15, 'Nicotinamide': 4, 'Ribose': 50, 'HEPES': 75,
+            'Phosphate': 15, 'Nicotinamide': 4, 'Ribose': 50, 'HEPES pH 7.5': 75,
             'AMP': 3, 'CMP': 2.15, 'GMP': 2.15, 'UMP': 2.15
         }
     },
@@ -244,7 +244,7 @@ export const BENCHMARK_FORMULATIONS = [
         category: 'oxidizing-control',
         components: {
             'Mg(Glu)2': 8, 'K(Glu)': 362, 'Glucose': 10, 'Amino acids': 5, 'Tyrosine': 5, 'Cysteine': 5,
-            'Phosphate': 15, 'Nicotinamide': 4, 'Ribose': 50, 'HEPES': 75,
+            'Phosphate': 15, 'Nicotinamide': 4, 'Ribose': 50, 'HEPES pH 7.5': 75,
             'AMP': 3, 'CMP': 2.15, 'GMP': 2.15, 'UMP': 2.15,
             'GSSG': 4, 'GSH': 1, 'DsbC': 5
         }
@@ -263,7 +263,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_l: 1282,
         cost_per_g: 422,
         components: {
-            'HEPES': 45.0, 'K(Glu)': 312.6, 'Mg(Glu)2': 7.0, 'Glucose': 6.9,
+            'HEPES pH 7.5': 45.0, 'K(Glu)': 312.6, 'Mg(Glu)2': 7.0, 'Glucose': 6.9,
             'Amino acids': 4.1, 'Tyrosine': 4.1, 'Cysteine': 4.0,
             'Phosphate (di:mono)': 5.6, 'Phosphate (mono:di)': 5.6,
             'Nicotinamide': 3.1, 'Ribose': 77.4,
@@ -282,7 +282,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_l: 1279,
         cost_per_g: 425,
         components: {
-            'HEPES': 50.0, 'K(Glu)': 299.8, 'Mg(Glu)2': 7.0,
+            'HEPES pH 7.5': 50.0, 'K(Glu)': 299.8, 'Mg(Glu)2': 7.0,
             'Amino acids': 3.2, 'Tyrosine': 3.2, 'Cysteine': 3.2,
             'Phosphate (di:mono)': 7.5, 'Phosphate (mono:di)': 7.5,
             'Nicotinamide': 4.0, 'Ribose': 69.9,
@@ -300,7 +300,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_l: 1307,
         cost_per_g: 430,
         components: {
-            'HEPES': 67.5, 'K(Glu)': 273.2, 'Mg(Glu)2': 8.8, 'Glucose': 8.3, 'Pyruvate': 9.1,
+            'HEPES pH 7.5': 67.5, 'K(Glu)': 273.2, 'Mg(Glu)2': 8.8, 'Glucose': 8.3, 'Sodium pyruvate': 9.1,
             'Amino acids': 4.8, 'Tyrosine': 1.2, 'Cysteine': 5.0,
             'Phosphate (di:mono)': 7.5, 'Phosphate (mono:di)': 7.5,
             'Nicotinamide': 4.0, 'Spermidine': 1.2, 'Ribose': 40.0,
@@ -320,7 +320,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_l: 1302,
         cost_per_g: 446,
         components: {
-            'HEPES': 75.0, 'K(Glu)': 299.8, 'Mg(Glu)2': 8.2, 'Glucose': 8.3,
+            'HEPES pH 7.5': 75.0, 'K(Glu)': 299.8, 'Mg(Glu)2': 8.2, 'Glucose': 8.3,
             'Oxaloacetic acid': 5.0,
             'Amino acids': 4.8, 'Tyrosine': 1.2, 'Cysteine': 4.0,
             'Phosphate (di:mono)': 15.0,
@@ -340,7 +340,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_l: 1291,
         cost_per_g: 466,
         components: {
-            'HEPES': 75.0, 'K(Glu)': 277.5, 'Mg(Glu)2': 8.2, 'Glucose': 9.7, 'Pyruvate': 18.2,
+            'HEPES pH 7.5': 75.0, 'K(Glu)': 277.5, 'Mg(Glu)2': 8.2, 'Glucose': 9.7, 'Sodium pyruvate': 18.2,
             'Amino acids': 3.0, 'Tyrosine': 3.0, 'Cysteine': 3.0,
             'Phosphate (di:mono)': 15.0,
             'Dilithium acetyl phosphate': 0.2,
@@ -359,7 +359,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_l: 1293,
         cost_per_g: 470,
         components: {
-            'HEPES': 60.0, 'K(Glu)': 273.2, 'Mg(Glu)2': 8.2, 'Glucose': 8.3,
+            'HEPES pH 7.5': 60.0, 'K(Glu)': 273.2, 'Mg(Glu)2': 8.2, 'Glucose': 8.3,
             'Amino acids': 4.8, 'Tyrosine': 3.2, 'Cysteine': 4.0,
             'Phosphate (di:mono)': 7.5, 'Phosphate (mono:di)': 7.5,
             'Nicotinamide': 3.0, 'Spermidine': 1.2, 'Ribose': 40.0,
@@ -379,7 +379,7 @@ export const BENCHMARK_FORMULATIONS = [
         year: 2026,
         category: 'ginkgo-target',
         components: {
-            'K(Glu)': 354.2, 'Mg(Glu)2': 6.975, 'HEPES': 50.0,
+            'K(Glu)': 354.2, 'Mg(Glu)2': 6.975, 'HEPES pH 7.5': 50.0,
             'Amino acids': 3.25, 'Tyrosine': 3.25, 'Cysteine': 3.25,
             'Ribose': 70.0, 'Nicotinamide': 4.0,
             'Phosphate (mono:di)': 7.5, 'Phosphate (di:mono)': 7.5,
@@ -395,7 +395,7 @@ export const BENCHMARK_FORMULATIONS = [
         year: 2026,
         category: 'ginkgo-target',
         components: {
-            'K(Glu)': 250.3, 'Mg(Glu)2': 5.725, 'HEPES': 50.0,
+            'K(Glu)': 250.3, 'Mg(Glu)2': 5.725, 'HEPES pH 7.5': 50.0,
             'Amino acids': 3.25, 'Tyrosine': 3.25, 'Cysteine': 3.25,
             'PEP': 10.0, 'Nicotinamide': 4.0,
             'Phosphate (mono:di)': 7.5, 'Phosphate (di:mono)': 7.5,
@@ -412,7 +412,7 @@ export const BENCHMARK_FORMULATIONS = [
         year: 2026,
         category: 'ginkgo-target',
         components: {
-            'K(Glu)': 329.1, 'Mg(Glu)2': 6.975, 'HEPES': 50.0,
+            'K(Glu)': 329.1, 'Mg(Glu)2': 6.975, 'HEPES pH 7.5': 50.0,
             'Amino acids': 3.25, 'Tyrosine': 3.25, 'Cysteine': 3.25,
             'Ribose': 70.0, 'Nicotinamide': 4.0,
             'Phosphate (mono:di)': 7.5, 'Phosphate (di:mono)': 7.5,
@@ -436,7 +436,7 @@ export const BENCHMARK_FORMULATIONS = [
             'ATP': 3.25, 'AMP': 1.75, 'CMP': 1.5, 'GMP': 1.625, 'UMP': 1.5,
             'Adenosine': 0.34375, 'Cytidine': 0.28125, 'Guanosine': 0.3125, 'Uridine': 0.28125,
             'Glucose': 19.425, 'Maltose': 1.095, 'Ribose': 4.995,
-            'Maltodextrin': 8.25, 'Pyruvate': 17.044,
+            'Maltodextrin': 8.25, 'Sodium pyruvate': 17.044,
             'Folinic acid': 0.2625, 'Nicotinamide': 2.0, 'cAMP': 2.25, 'Pantothenate': 0.75,
             'Spermidine': 2.5, 'GSSG': 2.975, 'GSH': 1.375,
             'Succinic acid': 1.875,
@@ -458,7 +458,7 @@ export const BENCHMARK_FORMULATIONS = [
             'Amino acids': 2.0, 'Tyrosine': 1.0, 'Cysteine': 1.0,
             'ATP': 0.5, 'CMP': 4.375, 'GMP': 4.25, 'UMP': 0.875,
             'Glucose': 24.975, 'Maltose': 3.103, 'Ribose': 34.965,
-            'Maltodextrin': 4.5, 'Pyruvate': 1.136,
+            'Maltodextrin': 4.5, 'Sodium pyruvate': 1.136,
             'Folinic acid': 0.163, 'Nicotinamide': 1.875, 'cAMP': 1.75, 'Pantothenate': 1.875,
             'Spermidine': 1.875, 'GSSG': 2.763, 'GSH': 2.625,
             'Succinic acid': 8.75,
@@ -481,7 +481,7 @@ export const BENCHMARK_FORMULATIONS = [
             'ATP': 1.5,
             'Adenosine': 1.1875, 'Cytidine': 0.344, 'Guanosine': 0.281, 'Uridine': 0.219,
             'Glucose': 1.3875, 'Maltose': 2.008, 'Ribose': 16.65,
-            'Maltodextrin': 3.375, 'Pyruvate': 25.0,
+            'Maltodextrin': 3.375, 'Sodium pyruvate': 25.0,
             'Folinic acid': 0.275, 'Nicotinamide': 0.25, 'cAMP': 3.75, 'Pantothenate': 0.625,
             'Spermidine': 4.0625, 'GSSG': 2.7625, 'GSH': 0.375,
             'Succinic acid': 6.875,
@@ -524,7 +524,7 @@ export const REAGENT_ALIASES = {
                          notes: 'Ammonium glutamate not in stock. Could substitute NH4Cl or omit.' },
     'Ammonium acetate':{ ids: null, unit: 'mM', maxSolubleMm: 1000,
                          notes: 'Ammonium acetate not in stock. Could substitute for NH4(Glu).' },
-    'Glucose':         { ids: ['glucose'],                       stockMm: 1110, unit: 'mM' },
+    'Glucose':         { ids: ['glucose'],                       stockMm: 1110.15, unit: 'mM' },
     'Amino acids':     { ids: ['aa_mix_17', 'tyrosine', 'cysteine'], stockMm: 50, unit: 'mM',
                          notes: 'Composite: 17 aa mix + tyrosine + cysteine. Each contributes the same mM target.' },
     'Tyrosine':        { ids: ['tyrosine'],                       stockMm: 50,  unit: 'mM' },
@@ -545,7 +545,7 @@ export const REAGENT_ALIASES = {
                          notes: 'Stock 50,000 U/mL — targets in the GPT-5 paper are U/mL.' },
     'DsbC':            { ids: ['dsbc_ecoli'],                    stockMm: 100, unit: 'µM',
                          notes: 'Disulfide bond isomerase for reteplase folding. Stock 100 µM (0.1 mM); paper targets in µM.' },
-    'Maltose':         { ids: ['maltose'],                        stockMm: 146, unit: 'mM',
+    'Maltose':         { ids: ['maltose'],                        stockMm: 146.07, unit: 'mM',
                          notes: 'Maltose stock 50 g/L (MW 342 → 146 mM).' },
     'Succinic acid':   { ids: ['succinic_acid'],                  stockMm: 500, unit: 'mM' },
     'Pantothenate':    { ids: ['pantothenic_acid_calcium'],       stockMm: 100, unit: 'mM',
@@ -556,11 +556,11 @@ export const REAGENT_ALIASES = {
     'DsbC helper DNA': { ids: ['dsbc_pdam_let'],                  stockMm: 100, unit: 'ng/µL',
                          notes: 'Co-expressed DsbC helper plasmid (100 ng/µL stock). Targets in ng/µL.' },
     'Nicotinamide':    { ids: ['nicotinamide'],                  stockMm: 100,  unit: 'mM' },
-    'Ribose':          { ids: ['ribose'],                        stockMm: 666,  unit: 'mM' },
-    'HEPES':           { ids: ['hepes_koh'],                     stockMm: 1000, unit: 'mM' },
+    'Ribose':          { ids: ['ribose'],                        stockMm: 666.09,  unit: 'mM' },
+    'HEPES pH 7.5':           { ids: ['hepes_koh'],                     stockMm: 1000, unit: 'mM' },
     'Bis-Tris':        { ids: null, unit: 'mM', maxSolubleMm: 500,
                          notes: 'Bis-Tris buffer not in stock. HEPES-KOH pH 7.5 is closest substitute.' },
-    'Pyruvate':        { ids: ['sodium_pyruvate'],               stockMm: 909,  unit: 'mM' },
+    'Sodium pyruvate':        { ids: ['sodium_pyruvate'],               stockMm: 908.76,  unit: 'mM' },
     'Putrescine':      { ids: null, unit: 'mM', maxSolubleMm: 500,
                          notes: 'Putrescine not in stock. Spermidine partially compensates.' },
     'Spermidine':      { ids: ['spermidine'],                    stockMm: 250,  unit: 'mM' },
@@ -694,8 +694,8 @@ export const CUSTOM_REAGENT_IDS = new Set([
 export const REAGENT_GROUPS = [
     { name: 'Salts', reagents: ['K(Glu)', 'Mg(Glu)2', 'NH4(Glu)', 'Ammonium acetate', 'K nitrate'] },
     { name: 'Amino acids', reagents: ['Amino acids', 'Tyrosine', 'Cysteine'] },
-    { name: 'Buffers', reagents: ['HEPES', 'HEPES pH 7.2', 'Bis-Tris', 'Phosphate', 'Phosphate (di:mono)', 'Phosphate (mono:di)'] },
-    { name: 'Energy substrates', reagents: ['Glucose', 'Pyruvate', 'Maltose', 'Maltodextrin', 'Ribose', 'PEP', '3-PGA', 'Dilithium acetyl phosphate'] },
+    { name: 'Buffers', reagents: ['HEPES pH 7.5', 'HEPES pH 7.2', 'Bis-Tris', 'Phosphate', 'Phosphate (di:mono)', 'Phosphate (mono:di)'] },
+    { name: 'Energy substrates', reagents: ['Glucose', 'Sodium pyruvate', 'Maltose', 'Maltodextrin', 'Ribose', 'PEP', '3-PGA', 'Dilithium acetyl phosphate'] },
     { name: 'Cofactors', reagents: ['Folinic acid', 'tRNA', 'CoA', 'NAD', 'cAMP', 'Nicotinamide', 'Pantothenate'] },
     { name: 'Polyamines / redox', reagents: ['Putrescine', 'Spermidine', 'Dithiothreitol', 'GSSG', 'GSH', 'Oxalic acid'] },
     { name: 'Crowd', reagents: ['PEG-8000'] },
@@ -715,7 +715,7 @@ export const REAGENT_GROUPS = [
 export const BASE_BUFFER_1X_CONTRIBUTION_MM = {
     'K(Glu)':     200,
     'Mg(Glu)2':   2.6,
-    'HEPES':      30,
+    'HEPES pH 7.5':      30,
     'Amino acids': 1,   // 17aa mix baseline
     'Tyrosine':   1,    // tyrosine baseline (base buffer pre-loads 0.01 M at 10×)
     'Cysteine':   1     // cysteine baseline
