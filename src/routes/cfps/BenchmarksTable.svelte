@@ -99,6 +99,20 @@
     let selectedKey = $state(null);
     const SEL_COLOR = '#22d3ee';
 
+    // Salt optima — override K(Glu) and Mg(Glu)2 across all formulations
+    let saltOptima = $state('default');
+    const SALT_OPTIMA = {
+        default:         { label: 'Default',                  overrides: null },
+        sfgfp:           { label: 'Target (sfGFP)',            overrides: { 'K(Glu)': 354.2, 'Mg(Glu)2': 6.975 } },
+        reteplase:       { label: 'Target (Reteplase)',          overrides: { 'K(Glu)': 250.3, 'Mg(Glu)2': 5.725 } },
+        reteplase_old:   { label: 'Target (Reteplase - Old)',    overrides: { 'K(Glu)': 329.1, 'Mg(Glu)2': 6.975 } }
+    };
+    function applyOptima(bm) {
+        const { overrides } = SALT_OPTIMA[saltOptima] ?? SALT_OPTIMA.default;
+        if (!overrides) return bm;
+        return { ...bm, components: { ...bm.components, ...overrides } };
+    }
+
     function formulationPaperGroup(bm) {
         if (bm.category === 'gpt5-autonomous')   return 'smith';
         if (bm.category === 'ginkgo-target')      return 'ginkgo-target';
@@ -115,10 +129,39 @@
         'ginkgo-experimental':{ label: 'Jewett Experimental 7/17/26', color: 'rgba(52,211,153,0.12)'  }
     };
 
+    // Column visibility toggles
+    let showLiterature = $state(true);
+    let showGinkgoInternal = $state(false);
+
+    const NON_JEWETT_LIT = new Set(['calhoun-2005','zawada-2011','cai-2015','borkowski-2020','garenne-2021','warfel-2023','zhu-2025']);
+    const GINKGO_TARGET_ORDER = ['ginkgo-target-sfgfp','ginkgo-target-reteplase-old','ginkgo-target-reteplase'];
+
+    // Fidelity-card list: same literature filter but Ginkgo targets always included.
+    const fidelityFormulations = $derived.by(() =>
+        BENCHMARK_FORMULATIONS.filter(bm => {
+            if (!showLiterature && NON_JEWETT_LIT.has(bm.key)) return false;
+            return true;
+        })
+    );
+
+    // Derived display list: filters and places Ginkgo Internal at the far right.
+    const displayFormulations = $derived.by(() => {
+        const base = BENCHMARK_FORMULATIONS.filter(bm => {
+            if (bm.category === 'ginkgo-target') return false;
+            if (!showLiterature && NON_JEWETT_LIT.has(bm.key)) return false;
+            return true;
+        });
+        if (!showGinkgoInternal) return base;
+        const targets = GINKGO_TARGET_ORDER
+            .map(k => BENCHMARK_FORMULATIONS.find(b => b.key === k))
+            .filter(Boolean);
+        return [...base, ...targets];
+    });
+
     // Consecutive runs of same paper group, for the colspan group-header row.
-    const columnGroups = (() => {
+    const displayColumnGroups = $derived.by(() => {
         const groups = [];
-        for (const bm of BENCHMARK_FORMULATIONS) {
+        for (const bm of displayFormulations) {
             const g = formulationPaperGroup(bm);
             if (groups.length && groups[groups.length - 1].group === g) {
                 groups[groups.length - 1].count++;
@@ -127,7 +170,7 @@
             }
         }
         return groups;
-    })();
+    });
     function splitName(name) {
         const i = name.indexOf('(');
         if (i <= 0) return { main: name, sub: null };
@@ -289,8 +332,9 @@
     //   medium    — everything else (needs other additional reagents)
     const EASY_ADDITIONAL = new Set(['Putrescine', 'PEG-8000']);
     function onboardingClass(bm) {
-        const waterNl = waterFillNlForFormulation(bm);
-        const { additional } = formulationFidelity(bm);
+        const ebm = applyOptima(bm);
+        const waterNl = waterFillNlForFormulation(ebm);
+        const { additional } = formulationFidelity(ebm);
         // Difficult: over-budget (negative water) OR < 1 µL headroom AND still
         // needs additional reagents (basically no room to add what's missing).
         if (waterNl < 0 || (waterNl < 1000 && additional.length > 0)) return 'difficult';
@@ -336,7 +380,7 @@
                             class="sticky left-0 z-40"
                             style="background: oklch(var(--b2)); "
                         ></th>
-                        {#each columnGroups as grp}
+                        {#each displayColumnGroups as grp}
                             {@const meta = PAPER_GROUP_META[grp.group]}
                             <th
                                 colspan={grp.count}
@@ -355,7 +399,7 @@
                             class="border-b border-base-300 sticky left-0 z-40"
                             style="min-width: 202px; background: oklch(var(--b2)); "
                         ></th>
-                        {#each BENCHMARK_FORMULATIONS as bm}
+                        {#each displayFormulations as bm}
                             {@const stk = inStockCount(bm)}
                             {@const isSel = selectedKey === bm.key}
                             {@const sn = splitName(bm.name)}
@@ -408,14 +452,14 @@
                     <!-- Summary rows: yield + cost -->
                     <tr class="text-[9px]">
                         <td colspan="2" class="text-right pr-3 py-1 sticky left-0 z-40" style="background: oklch(var(--b2)); "><span class="opacity-60">yield (g/L)</span></td>
-                        {#each BENCHMARK_FORMULATIONS as bm}
+                        {#each displayFormulations as bm}
                             <td class="text-center py-1 font-mono" style="background: oklch(var(--b2)); box-shadow: {colOutline(selectedKey === bm.key)};"><span class="opacity-70">{bm.yield_g_l?.toFixed(2) ?? '—'}</span></td>
                         {/each}
                     </tr>
                     {#if showSupplementNl}
                     <tr class="text-[9px]">
                         <td colspan="2" class="text-right pr-3 py-1 sticky left-0 z-40" style="background: oklch(var(--b2)); "><span class="opacity-60">$/g protein</span></td>
-                        {#each BENCHMARK_FORMULATIONS as bm}
+                        {#each displayFormulations as bm}
                             <td class="text-center py-1 font-mono" style="background: oklch(var(--b2)); box-shadow: {colOutline(selectedKey === bm.key)};"><span class="opacity-70">${bm.cost_per_g?.toLocaleString() ?? '—'}</span></td>
                         {/each}
                     </tr>
@@ -512,8 +556,8 @@
                                         </div>
                                     {/if}
                                 </td>
-                                {#each BENCHMARK_FORMULATIONS as bm}
-                                    {@const val = bm.components[paperName]}
+                                {#each displayFormulations as bm}
+                                    {@const val = applyOptima(bm).components[paperName]}
                                     {@const isSel = selectedKey === bm.key}
                                     {#if val == null}
                                         <!-- Reagent unused in this formulation — leave the cell blank
@@ -581,8 +625,8 @@
                         >
                             <div>Water</div>
                         </td>
-                        {#each BENCHMARK_FORMULATIONS as bm}
-                            {@const waterNl = waterFillNlForFormulation(bm)}
+                        {#each displayFormulations as bm}
+                            {@const waterNl = waterFillNlForFormulation(applyOptima(bm))}
                             {@const waterUl = waterNl / 1000}
                             {@const wstyle = waterCellStyle(waterNl)}
                             {@const tooltip = waterNl > 0
@@ -602,7 +646,27 @@
             </table>
         </div>
 
-    <div class="flex justify-end gap-2 pr-3 pb-1">
+    <div class="flex justify-end gap-3 pr-3 pt-2 pb-1 items-center flex-wrap">
+        <div class="flex items-center gap-1.5">
+            <span class="text-[10px] text-base-content/40">Show</span>
+            <button
+                class="text-[10px] px-2 py-0.5 rounded border transition {showLiterature ? 'border-base-content/40 text-base-content/70 bg-base-content/5' : 'border-base-content/15 text-base-content/35'}"
+                onclick={() => showLiterature = !showLiterature}
+            >Literature</button>
+            <button
+                class="text-[10px] px-2 py-0.5 rounded border transition {showGinkgoInternal ? 'border-base-content/40 text-base-content/70 bg-base-content/5' : 'border-base-content/15 text-base-content/35'}"
+                onclick={() => showGinkgoInternal = !showGinkgoInternal}
+            >Ginkgo Internal</button>
+        </div>
+        <span class="text-[10px] text-base-content/40">Salt optima</span>
+        <select
+            class="text-xs rounded border border-base-content/20 bg-base-100 text-base-content/70 px-1.5 py-0.5"
+            bind:value={saltOptima}
+        >
+            {#each Object.entries(SALT_OPTIMA) as [key, opt]}
+                <option value={key}>{opt.label}</option>
+            {/each}
+        </select>
         <button
             class="text-xs px-2 py-0.5 rounded border border-base-content/20 hover:border-base-content/40 text-base-content/50 hover:text-base-content transition"
             onclick={downloadCSV}
@@ -667,7 +731,7 @@
         <!-- 25 nL fidelity, grouped by onboarding difficulty. Click a card (or a
              column header above) to outline that composition in both places. -->
         {#each ONBOARDING_GROUPS as grp}
-            {@const members = BENCHMARK_FORMULATIONS.filter((b) => onboardingClass(b) === grp.key)}
+            {@const members = fidelityFormulations.filter((b) => onboardingClass(b) === grp.key)}
             {#if members.length > 0}
                 <div class="rounded-lg border border-base-300 p-3" style="background: oklch(var(--b2));">
                     <div class="text-[11px] font-semibold mb-1.5" style="color: {grp.color};">
@@ -675,18 +739,19 @@
                     </div>
                     <div class="grid grid-cols-4 gap-2 text-[10px]">
                         {#each members as bm}
-                            {@const fid = formulationFidelity(bm)}
+                            {@const ebm = applyOptima(bm)}
+                            {@const fid = formulationFidelity(ebm)}
                             {@const displayReagents = fid.offReagents.filter(o => Math.abs(o.deviationPct) >= 3)}
                 {@const isSel = selectedKey === bm.key}
-                {@const waterNl = waterFillNlForFormulation(bm)}
+                {@const waterNl = waterFillNlForFormulation(ebm)}
                 {@const wstyle = waterCellStyle(waterNl)}
                 <div
                     role="button"
                     tabindex="0"
                     class="rounded border p-2 cursor-pointer transition hover:border-base-content/30 flex flex-col"
                     style="background: oklch(var(--b1)); border-color: {isSel ? SEL_COLOR : 'oklch(var(--bc) / 0.08)'}; box-shadow: {isSel ? `0 0 0 1px ${SEL_COLOR}` : 'none'};"
-                    onclick={() => selectColumn(bm)}
-                    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectColumn(bm); } }}
+                    onclick={() => { selectColumn(bm); handleLoad(bm); }}
+                    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectColumn(bm); handleLoad(bm); } }}
                 >
                     <div class="font-semibold text-[11px] mb-1">
                         {#if bm.paperUrl}
@@ -703,7 +768,9 @@
                         {/if}
                         <span class="opacity-40 font-normal">{bm.year}</span>
                     </div>
-                    {#if displayReagents.length === 0}
+                    {#if waterNl < 0}
+                        <div class="text-[10px]" style="color:#f59e0b;">Exceeds 20 µL reaction limit</div>
+                    {:else if displayReagents.length === 0}
                         <div class="opacity-50">{fid.offReagents.length > 0 ? 'All deviations < 3%' : 'All in-stock reagents hit exact 25 nL steps'}</div>
                     {:else}
                         <!-- Off-reagents ≥3% deviation, two centered columns, farthest first. -->
@@ -725,7 +792,7 @@
                                 Needs ({fid.additional.length}): {fid.additional.map((a) => a.paperName).join(', ')}
                             {/if}
                         </div>
-                        <div class="font-mono whitespace-nowrap shrink-0" style="color: {fid.additional.length === 0 ? 'oklch(var(--bc)/0.4)' : (waterNl < -25 ? '#ef4444' : (waterNl < 2000 ? '#f59e0b' : '#38bdf8'))};" title="Nuclease-free water fill left in the 20 µL reaction">
+                        <div class="font-mono whitespace-nowrap shrink-0" style="color: {waterNl < -25 ? '#ef4444' : (fid.additional.length === 0 ? 'oklch(var(--bc)/0.4)' : (waterNl < 2000 ? '#f59e0b' : '#38bdf8'))};" title="Nuclease-free water fill left in the 20 µL reaction">
                             water: {(waterNl / 1000).toFixed(2)} µL
                         </div>
                     </div>
@@ -793,14 +860,14 @@
         {/each}
 
         <!-- Done: compositions that fit perfectly with every reagent in stock. -->
-        {#if BENCHMARK_FORMULATIONS.some((b) => onboardingClass(b) === 'complete')}
+        {#if fidelityFormulations.some((b) => onboardingClass(b) === 'complete')}
             <div class="rounded-lg border border-base-300 p-3" style="background: oklch(var(--b2));">
                 <div class="text-[11px] font-semibold mb-1.5" style="color: oklch(var(--bc)/0.5);">
-                    Complete <span class="opacity-40 font-normal">· {BENCHMARK_FORMULATIONS.filter((b) => onboardingClass(b) === 'complete').length}</span>
+                    Complete <span class="opacity-40 font-normal">· {fidelityFormulations.filter((b) => onboardingClass(b) === 'complete').length}</span>
                 </div>
                 <div class="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-                    {#each BENCHMARK_FORMULATIONS.filter((b) => onboardingClass(b) === 'complete') as bm}
-                        {@const wNl = waterFillNlForFormulation(bm)}
+                    {#each fidelityFormulations.filter((b) => onboardingClass(b) === 'complete') as bm}
+                        {@const wNl = waterFillNlForFormulation(applyOptima(bm))}
                         <span class="inline-flex items-center gap-1.5">
                             {#if bm.paperUrl}
                                 <a href={bm.paperUrl} target="_blank" rel="noopener" class="hover:underline hover:text-primary" title={`Open source paper for ${bm.name}`}>{bm.name}</a>

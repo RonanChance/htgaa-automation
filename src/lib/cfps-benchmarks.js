@@ -31,7 +31,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_l: 4535,
         cost_per_g: 4083,
         components: {
-            'Mg(Glu)2': 8, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2,
+            'Mg(Glu)2': 8, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2, 'Tyrosine': 2, 'Cysteine': 2,
             'HEPES': 57, 'Putrescine': 1, 'Spermidine': 1.5,
             'Folinic acid': 0.03, 'tRNA': 0.17, 'CoA': 0.27, 'NAD': 0.4,
             'PEP': 30, 'Oxalic acid': 4,
@@ -50,7 +50,7 @@ export const BENCHMARK_FORMULATIONS = [
         year: 2004,
         category: 'oxidizing-control',
         components: {
-            'Mg(Glu)2': 8, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2,
+            'Mg(Glu)2': 8, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2, 'Tyrosine': 2, 'Cysteine': 2,
             'HEPES': 57, 'Putrescine': 1, 'Spermidine': 1.5,
             'Folinic acid': 0.03, 'tRNA': 0.17, 'CoA': 0.27, 'NAD': 0.4,
             'PEP': 30, 'Oxalic acid': 4,
@@ -72,6 +72,7 @@ export const BENCHMARK_FORMULATIONS = [
             'Mg(Glu)2': 8, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2,
             'Pyruvate': 33, 'Putrescine': 1, 'Spermidine': 1.5,
             'Folinic acid': 0.034, 'tRNA': 0.17, 'CoA': 0.26, 'NAD': 0.33,
+            'Oxalic acid': 4,
             'ATP': 1.2, 'CTP': 0.85, 'GTP': 0.85, 'UTP': 0.85
         }
     },
@@ -105,7 +106,7 @@ export const BENCHMARK_FORMULATIONS = [
         components: {
             'Mg(Glu)2': 8, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2, 'Tyrosine': 1,
             'Phosphate': 15, 'Pyruvate': 35, 'Putrescine': 1, 'Spermidine': 1.5,
-            'Oxalic acid': 4, 'GSSG': 4,
+            'Oxalic acid': 4, 'GSSG': 4, 'GSH': 1,
             'AMP': 1.2, 'CMP': 0.86, 'GMP': 0.86, 'UMP': 0.86
         }
     },
@@ -122,7 +123,7 @@ export const BENCHMARK_FORMULATIONS = [
         components: {
             'Mg(Glu)2': 8, 'K(Glu)': 260, 'Amino acids': 2, 'Tyrosine': 1,
             'Phosphate': 15, 'Spermidine': 1.5,
-            'Oxalic acid': 4, 'GSSG': 2, 'GSH': 1, 'PEG-8000': 2,
+            'Oxalic acid': 4, 'GSSG': 2,
             'AMP': 1.2, 'CMP': 0.86, 'GMP': 0.86, 'UMP': 0.86
         }
     },
@@ -139,7 +140,8 @@ export const BENCHMARK_FORMULATIONS = [
         components: {
             'Mg(Glu)2': 4, 'K(Glu)': 80, 'Amino acids': 1.5,
             'HEPES': 50, 'Spermidine': 0.1, 'Dithiothreitol': 2.5,
-            'Folinic acid': 0.035, 'tRNA': 0.06, 'CoA': 0.026, 'NAD': 0.165,
+            'Folinic acid': 0.035, 'tRNA': 0.06, 'CoA': 0.026, 'NAD': 0.165, '3-PGA': 9,
+            'PEG-8000': 2,
             'ATP': 1.5, 'CTP': 0.9, 'GTP': 1.5, 'UTP': 0.9
         }
     },
@@ -154,8 +156,8 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_l: 4577,
         cost_per_g: 4550,
         components: {
-            'Mg(Glu)2': 8, 'K(Glu)': 80, 'Amino acids': 1.5,
-            'HEPES': 50, 'Spermidine': 1, 'Dithiothreitol': 1,
+            'Mg(Glu)2': 8, 'K(Glu)': 80, 'Amino acids': 1.5, 
+            'HEPES': 50, 'Spermidine': 1, 'Dithiothreitol': 1, 'Ribose': 30,
             'Folinic acid': 0.032, 'tRNA': 0.2, 'CoA': 0.26, 'NAD': 0.33, 'cAMP': 0.75,
             '3-PGA': 30, 'Maltodextrin': 21.6,
             'ATP': 1.5, 'CTP': 0.9, 'GTP': 1.5, 'UTP': 0.9
@@ -175,7 +177,8 @@ export const BENCHMARK_FORMULATIONS = [
             'Mg(Glu)2': 10, 'NH4(Glu)': 10, 'K(Glu)': 130, 'Amino acids': 2,
             'Phosphate': 75, 'Bis-Tris': 57, 'Putrescine': 1, 'Spermidine': 1.5,
             'Folinic acid': 0.034, 'NAD': 0.4,
-            'Oxalic acid': 4, 'Maltodextrin': 60
+            'Oxalic acid': 4, 'Maltodextrin': 60,
+            'AMP': 1.2, 'CMP': 0.86, 'GMP': 0.86, 'UMP': 0.86
         }
     },
     {
@@ -191,7 +194,7 @@ export const BENCHMARK_FORMULATIONS = [
         components: {
             'Mg(Glu)2': 12, 'K(Glu)': 130, 'Ammonium acetate': 10, 'Amino acids': 2,
             'HEPES': 57, 'Spermidine': 0.13,
-            'Folinic acid': 2.05, '3-PGA': 9,
+            'Folinic acid': 2.05,
             'PEP': 40,
             'ATP': 2.6, 'CTP': 1.9, 'GTP': 1.9, 'UTP': 1.9
         }
@@ -207,7 +210,7 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_l: 93,
         cost_per_g: 175,
         components: {
-            'K(Glu)': 300, 'Amino acids': 3.25,
+            'K(Glu)': 300, 'Amino acids': 3.25, 'Tyrosine': 3.25, 'Cysteine': 3.25,
             'AMP': 1.2, 'CMP': 0.86, 'GMP': 0.86, 'UMP': 0.86
         }
     },
@@ -222,9 +225,8 @@ export const BENCHMARK_FORMULATIONS = [
         cost_per_l: 143,
         cost_per_g: 60,
         components: {
-            'Mg(Glu)2': 8, 'K(Glu)': 362, 'Ammonium acetate': 10, 'Glucose': 10, 'Amino acids': 5,
+            'Mg(Glu)2': 8, 'K(Glu)': 362, 'Glucose': 10, 'Amino acids': 5, 'Tyrosine': 5, 'Cysteine': 5,
             'Phosphate': 15, 'Nicotinamide': 4, 'Ribose': 50, 'HEPES': 75,
-            'Folinic acid': 2.05,
             'AMP': 3, 'CMP': 2.15, 'GMP': 2.15, 'UMP': 2.15
         }
     },
@@ -241,9 +243,8 @@ export const BENCHMARK_FORMULATIONS = [
         year: 2026,
         category: 'oxidizing-control',
         components: {
-            'Mg(Glu)2': 8, 'K(Glu)': 362, 'Ammonium acetate': 10, 'Glucose': 10, 'Amino acids': 5,
+            'Mg(Glu)2': 8, 'K(Glu)': 362, 'Glucose': 10, 'Amino acids': 5, 'Tyrosine': 5, 'Cysteine': 5,
             'Phosphate': 15, 'Nicotinamide': 4, 'Ribose': 50, 'HEPES': 75,
-            'Folinic acid': 2.05,
             'AMP': 3, 'CMP': 2.15, 'GMP': 2.15, 'UMP': 2.15,
             'GSSG': 4, 'GSH': 1, 'DsbC': 5
         }
