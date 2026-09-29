@@ -1,0 +1,457 @@
+/* ============================================================================
+   CFPS designer · "cassette-futurism blueprint" skin  (ported from
+   catalyst-agent-skills/site: tokens.css + cfps.html)
+   ----------------------------------------------------------------------------
+   Everything is namespaced under `.cfps-page` so it never leaks into the rest
+   of the ginkgo app (which is DaisyUI `black` theme). Two mechanisms:
+     1. Blueprint tokens + utility classes (.chassis/.panel/.readout/.chip/…)
+        that the rewritten markup uses directly.
+     2. A remap of DaisyUI's own theme vars (--b1/--b2/--b3/--bc/--p …) to the
+        blueprint palette, so the child components (BenchmarksTable /
+        PlateAnalysis), which colour themselves through those vars + the
+        bg-base and text-base-content utilities, adopt the blueprint palette
+        with no markup changes.
+   Aesthetic: cool blue-grey blueprint ground + warm teal/amber cassette
+   accents; thin hairlines, small mono type, tabular numerals.
+   ========================================================================== */
+
+/* ---- blueprint tokens (from tokens.css :root) --------------------------- */
+.cfps-page {
+  --paper:      #000000;
+  --paper-2:    #23262b;   /* dark grey the page eases into below the intro — softens the black↔light-card contrast */
+  --surface:    #f4f6f8;
+  --surface-2:  #fbfcfd;
+  --recess:     #e6ebf0;
+
+  --ink:        #1b1f25;
+  --ink-2:      #3f464f;
+  --muted:      #7a8590;
+  --faint:      #aab3bd;
+
+  --hair:       #d6dce2;
+  --groove:     #c3ccd4;
+
+  /* The page accent — a muted blue-grey that sits in the same family as the
+     surfaces rather than the old teal/green. Kept under the --teal names so
+     every existing reference (var(--teal), oklch(var(--p))) picks it up. */
+  --teal:       #4a5560;
+  --teal-ink:   #3f464f;
+  --teal-wash:  #e2e8ee;
+  --amber:      #bd6f16;
+  --amber-wash: #f1e3cf;
+  --rust:       #a5461b;
+  --phosphor:   #2f9e54;
+  --err:        #c0392b;
+
+  --sfgfp:      #2f8f4e;
+  --petase:     #6f4bd0;
+  --reteplase:  #cf6320;
+  --sfgfp-wash:     #dcefe1;
+  --petase-wash:    #e8e2f6;
+  --reteplase-wash: #f4e4d6;
+
+  --sans: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --r:    5px;
+  --r-lg: 8px;
+  --r-sm: 3px;
+  --pad:  clamp(12px, 2.2vw, 26px);
+
+  --shadow-1: 0 1px 0 rgba(27,31,37,.03);
+  --shadow-2: 0 1px 0 rgba(27,31,37,.04), 0 10px 24px -20px rgba(27,31,37,.5);
+  --inset:    inset 0 1px 2px rgba(27,31,37,.08), inset 0 0 0 1px rgba(27,31,37,.02);
+  --ease: cubic-bezier(.2,.7,.3,1);
+}
+
+/* ---- remap DaisyUI theme vars to the blueprint palette ------------------ */
+/* Higher specificity than DaisyUI's own [data-theme=light] so it wins. The
+   values are oklch channel triplets ("L% C H"), which is how DaisyUI stores
+   them and how the child components consume them: oklch(var(--b2)/0.5) etc. */
+.cfps-page[data-theme="light"] {
+  --b1: 99% 0.002 240;      /* base-100  → surface-2 (near-white working surface) */
+  --b2: 96.8% 0.004 240;    /* base-200  → surface   (panels / notes)             */
+  --b3: 93% 0.007 240;      /* base-300  → recess     (wells / group labels)      */
+  --bc: 24% 0.015 262;      /* base-content → ink                                 */
+  --p:  44.4% 0.023 248;    /* primary    → dark blue-grey (interactive accent)   */
+  --pc: 99% 0.002 240;      /* primary-content                                    */
+  --n:  83% 0.012 240;      /* neutral    → groove                                */
+  --nc: 30% 0.012 262;
+  --in: 55% 0.11 235;
+  --inc: 99% 0.002 240;
+  --su: 56% 0.13 150;       /* success    → phosphor-ish */
+  --suc: 99% 0.002 240;
+  --wa: 66% 0.13 66;        /* warning    → amber-ish */
+  --wac: 20% 0.02 66;
+  --er: 52% 0.19 27;        /* error */
+  --erc: 99% 0.002 240;
+  --rounded-box: 8px;
+  --rounded-btn: 4px;
+  --rounded-badge: 3px;
+  --tab-radius: 4px;
+  --animation-btn: .12s;
+  --border-btn: 1px;
+}
+
+/* ---- base type / ground ------------------------------------------------- */
+.cfps-page {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  /* Pure black through the full-height intro, then a gentle fade into dark grey
+     for the rest of the page so the light cards don't sit on a stark black.
+     The faint blueprint grid is a separate ::before layer that starts only
+     AFTER the intro hero (see below), so the intro stays clean solid black. */
+  background-color: var(--paper-2);
+  background-image: linear-gradient(180deg, var(--paper) 0, var(--paper) 86vh, var(--paper-2) 132vh);
+  background-repeat: no-repeat;
+  min-height: 100dvh;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+/* Faint, condensed blueprint grid — only below the full-height intro (top:100dvh)
+   and spanning the full page width. z-index:-1 keeps it above the page's dark
+   fade but behind all content; the intro hero is opaque black so no grid shows
+   there (à la ascii-text.webflow.io). */
+.cfps-page::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Start the grid a little before the intro ends and fade it in (mask below) so
+     the black→grid handoff is a gradient rather than a hard edge. */
+  top: calc(100dvh - 160px);
+  bottom: 0;
+  z-index: -1;
+  pointer-events: none;
+  /* Single 1px line per axis, tiled by background-size so every cell is exactly
+     38px — repeating-linear-gradient accumulates sub-pixel rounding and yields
+     uneven (some wider) cells. */
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.038) 0 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.038) 0 1px, transparent 1px);
+  background-size: 38px 38px;
+  /* Fade the grid up out of the black intro over ~220px for a soft transition. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 220px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 220px);
+}
+.cfps-page h1, .cfps-page h2, .cfps-page h3, .cfps-page h4 {
+  font-family: var(--sans); font-weight: 600; margin: 0; line-height: 1.15;
+}
+.cfps-page h2 { font-size: 16px; }
+.cfps-page h3, .cfps-page h4 { font-size: 14px; font-weight: 500; }
+.cfps-page a { color: inherit; text-decoration: none; }
+.cfps-page ::selection { background: var(--teal-wash); }
+/* keep Tailwind font utilities on-brand inside the page */
+.cfps-page .font-sans { font-family: var(--sans) !important; }
+.cfps-page .font-mono { font-family: var(--mono) !important; }
+
+.cfps-page .muted { color: var(--muted); }
+.cfps-page .faint { color: var(--faint); }
+.cfps-page .mono  { font-family: var(--mono); }
+.cfps-page .up { color: var(--sfgfp); }
+.cfps-page .dn { color: var(--rust); }
+
+/* ---- layout helpers ----------------------------------------------------- */
+.cfps-page .page { max-width: 1180px; margin: 0 auto; padding: var(--pad); }
+.cfps-page .row  { display: flex; align-items: center; gap: 12px; }
+.cfps-page .wrap { flex-wrap: wrap; }
+.cfps-page .spacer { flex: 1; }
+.cfps-page .stack { display: flex; flex-direction: column; gap: 12px; }
+.cfps-page hr.groove { border: 0; border-top: 1px solid var(--groove); margin: 0; }
+
+/* ---- engraved section label -------------------------------------------- */
+.cfps-page .label {
+  font: 500 10.5px/1 var(--mono);
+  letter-spacing: .17em; text-transform: uppercase; color: var(--muted);
+}
+.cfps-page .label--rule { display: flex; align-items: center; gap: 10px; }
+.cfps-page .label--rule::after { content: ""; flex: 1; height: 1px; background: var(--hair); }
+
+/* ---- chassis (equipment header) ---------------------------------------- */
+.cfps-page .chassis {
+  position: relative;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--recess) 140%);
+  border: 1px solid var(--groove);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
+  padding: 11px var(--pad);
+}
+.cfps-page .hdr { display: flex; align-items: center; gap: 18px; }
+.cfps-page .hdr .word { font: 500 24px/1 var(--sans); letter-spacing: .2em; }
+.cfps-page .hdr .sub  { font: 11px/1.4 var(--mono); color: var(--muted); margin-top: 3px; }
+.cfps-page .hdr .cluster { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cfps-page .hdr .stat { display: flex; align-items: center; gap: 6px; font: 10.5px var(--mono); letter-spacing: .09em; color: var(--muted); text-transform: uppercase; }
+
+/* ---- panels ------------------------------------------------------------- */
+.cfps-page .panel {
+  /* Very gentle "liquid glass": a hint of translucency over the dark page plus a
+     soft backdrop blur — just a taste, panels stay clearly light. */
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(6px) saturate(1.05);
+  -webkit-backdrop-filter: blur(6px) saturate(1.05);
+  border: 1px solid var(--hair);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-1);
+}
+.cfps-page .panel__hd { display: flex; align-items: center; gap: 9px; padding: 7px 11px; border-bottom: 1px solid var(--hair); }
+.cfps-page .panel__bd { padding: 10px 11px; }
+.cfps-page .inset { background: var(--surface-2); border: 1px solid var(--hair); border-radius: var(--r-sm); }
+
+/* ---- readout (segmented LCD) ------------------------------------------- */
+.cfps-page .readout {
+  display: inline-flex; align-items: center; gap: .5ch;
+  font: 500 12px/1 var(--mono); letter-spacing: .1em;
+  color: var(--readout-fg, var(--ink));
+  background: var(--recess); border-radius: var(--r-sm);
+  box-shadow: var(--inset); padding: 4px 8px;
+}
+.cfps-page .readout--teal  { --readout-fg: var(--teal-ink); }
+.cfps-page .readout--amber { --readout-fg: var(--amber); }
+.cfps-page .readout--phos  { --readout-fg: var(--phosphor); }
+.cfps-page .readout .unit  { color: var(--muted); letter-spacing: .04em; font-size: 10px; }
+
+/* ---- chips / tags ------------------------------------------------------- */
+.cfps-page .chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 500 10px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: var(--r-sm); border: 1px solid var(--hair); color: var(--ink-2);
+  background: var(--surface-2);
+}
+.cfps-page .chip--sfgfp     { color: var(--sfgfp);     background: var(--sfgfp-wash);     border-color: transparent; }
+.cfps-page .chip--petase    { color: var(--petase);    background: var(--petase-wash);    border-color: transparent; }
+.cfps-page .chip--reteplase { color: var(--reteplase); background: var(--reteplase-wash); border-color: transparent; }
+.cfps-page .tag { font: 10px/1 var(--mono); color: var(--muted); border: 1px solid var(--groove); border-radius: var(--r-sm); padding: 2px 6px; background: var(--surface-2); }
+
+/* ---- controls ----------------------------------------------------------- */
+.cfps-page .btn-bp {
+  font: 500 11.5px/1 var(--mono); letter-spacing: .03em;
+  color: var(--ink-2); background: var(--surface-2);
+  border: 1px solid var(--groove); border-radius: var(--r-sm);
+  padding: 5px 10px; cursor: pointer; transition: all .12s var(--ease);
+  box-shadow: var(--shadow-1); display: inline-flex; align-items: center; gap: 6px;
+}
+.cfps-page .btn-bp:hover  { color: var(--ink); border-color: var(--ink-2); }
+.cfps-page .btn-bp:active { transform: translateY(1px); box-shadow: none; }
+.cfps-page .btn-bp[aria-pressed="true"] { color: var(--teal-ink); background: var(--teal-wash); border-color: var(--teal); }
+.cfps-page .btn-bp[disabled] { opacity: .4; cursor: default; }
+
+.cfps-page .icon {
+  display: inline-grid; place-items: center; width: 22px; height: 22px;
+  font: 12px/1 var(--mono); color: var(--muted);
+  background: transparent; border: 1px solid var(--hair); border-radius: var(--r-sm);
+  cursor: pointer; transition: all .12s var(--ease);
+}
+.cfps-page .icon:hover { color: var(--ink); border-color: var(--ink-2); background: var(--surface-2); }
+
+/* ---- LED indicator ------------------------------------------------------ */
+.cfps-page .led {
+  --c: var(--muted);
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffffffcc 0 25%, var(--c) 55%, color-mix(in srgb, var(--c) 60%, #000) 100%);
+  box-shadow: 0 0 0 1px rgba(27,31,37,.09), 0 0 5px -1px var(--c);
+}
+.cfps-page .led--live { --c: var(--phosphor); animation: cfps-led-pulse 1.9s var(--ease) infinite; }
+.cfps-page .led--warn { --c: var(--amber); }
+.cfps-page .led--err  { --c: var(--err); }
+.cfps-page .led--off  { --c: var(--faint); box-shadow: 0 0 0 1px rgba(27,31,37,.09); }
+@keyframes cfps-led-pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+@media (prefers-reduced-motion: reduce) { .cfps-page .led--live { animation: none; } }
+
+/* ============================ page-specific (from cfps.html) ============= */
+.cfps-page .cfps-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: stretch; }
+@media (max-width: 900px) { .cfps-page .cfps-2col { grid-template-columns: 1fr; } }
+/* Both columns stretch to the taller of the two, and their inner scroll/edit
+   boxes fill that height so "concentration rank" and "reagent supplement JSON"
+   read as the same-height pair. */
+.cfps-page .cfps-2col > .panel { display: flex; flex-direction: column; }
+.cfps-page .cfps-2col > .panel > .panel__bd { flex: 1; display: flex; flex-direction: column; }
+.cfps-page .cfps-2col .cfps-rank { flex: 1; max-height: none; }
+.cfps-page .cfps-2col .cfps-json--edit { flex: 1; max-height: none; }
+
+.cfps-page .cfps-banner {
+  margin-top: 10px; padding: 8px 12px; border-radius: var(--r);
+  background: var(--petase-wash); border: 1px solid transparent; font: 11.5px var(--mono);
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* composition / summary table */
+.cfps-page .cfps-scroll { height: 18rem; overflow: auto; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hair); }
+.cfps-page .cfps-table { width: 100%; border-collapse: collapse; font: 11.5px var(--mono); font-variant-numeric: tabular-nums; }
+.cfps-page .cfps-table th {
+  position: sticky; top: 0; background: var(--recess); text-align: left; font: 500 10px var(--mono);
+  letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--hair);
+}
+.cfps-page .cfps-table td { padding: 5px 8px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+.cfps-page .cfps-table tr:last-child td { border-bottom: 0; }
+.cfps-page .cfps-sum { table-layout: fixed; }
+.cfps-page .cfps-sum th:nth-child(1), .cfps-page .cfps-sum td:nth-child(1) { width: 34%; white-space: normal; word-break: break-word; }
+.cfps-page .cfps-sum th:nth-child(2), .cfps-page .cfps-sum td:nth-child(2) { width: 16%; }
+.cfps-page .cfps-sum th:nth-child(3), .cfps-page .cfps-sum td:nth-child(3) { width: 16%; }
+.cfps-page .cfps-sum th:nth-child(4), .cfps-page .cfps-sum td:nth-child(4) { width: 14%; }
+.cfps-page .cfps-sum th:nth-child(5), .cfps-page .cfps-sum td:nth-child(5) { width: 10%; }
+.cfps-page .cfps-sum th:nth-child(6), .cfps-page .cfps-sum td:nth-child(6) { width: 10%; white-space: nowrap; text-align: right; }
+.cfps-page .cfps-sum td:nth-child(n+2) { white-space: nowrap; }
+.cfps-page .cfps-idlink { margin-left: 6px; font-size: 10px; color: var(--faint); border-bottom: 1px solid transparent; }
+.cfps-page .cfps-idlink:hover { color: var(--teal-ink); border-bottom-color: var(--teal); }
+.cfps-page .cfps-step {
+  width: 20px; height: 18px; border: 1px solid var(--groove); background: var(--surface-2);
+  border-radius: var(--r-sm); color: var(--ink-2); cursor: pointer; font: 12px var(--mono); line-height: 1; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cfps-page .cfps-step:hover:not([disabled]) { border-color: var(--teal); color: var(--teal-ink); }
+.cfps-page .cfps-step[disabled] { opacity: .3; cursor: default; }
+
+.cfps-page .cfps-disc { margin-top: 8px; padding: 8px; border-radius: var(--r-sm); background: var(--amber-wash); border: 1px solid transparent; font: 10.5px var(--mono); }
+.cfps-page .cfps-disc th { text-transform: none; letter-spacing: 0; background: transparent; position: static; border: 0; padding: 2px 4px; color: var(--ink-2); }
+.cfps-page .cfps-disc td { border: 0; padding: 1px 4px; }
+
+.cfps-page .cfps-rank { border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hair); padding: 8px 10px; font: 11.5px/1.6 var(--mono); max-height: 18rem; overflow: auto; }
+.cfps-page .cfps-json { border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hair); padding: 10px; font: 11px/1.5 var(--mono); overflow: auto; max-height: 18rem; margin: 0; color: var(--ink-2); white-space: pre; }
+.cfps-page .cfps-json--edit { display: block; width: 100%; box-sizing: border-box; resize: vertical; min-height: 12rem; max-height: 28rem; color: var(--ink); outline: none; }
+.cfps-page .cfps-json--edit:focus { border-color: var(--phosphor); }
+.cfps-page .cfps-json--edit.invalid { border-color: var(--err); background: color-mix(in srgb, var(--err) 6%, var(--surface-2)); }
+.cfps-page .cfps-json--edit.invalid:focus { border-color: var(--err); }
+.cfps-page .cfps-json__errs { margin: 6px 0 0; padding-left: 16px; list-style: disc; font: 10.5px/1.5 var(--mono); color: var(--err); }
+.cfps-page .cfps-prompt { white-space: pre-wrap; max-height: 22rem; color: var(--ink-2); }
+
+/* assay details + target proteins */
+.cfps-page .cf-3col { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: stretch; }
+@media (max-width: 820px) { .cfps-page .cf-3col { grid-template-columns: 1fr; } }
+.cfps-page .cf-card { background: var(--surface-2); border: 1px solid var(--hair); border-radius: var(--r-sm); padding: 10px 12px; }
+.cfps-page .cf-ct { font: 12px var(--sans); margin-bottom: 8px; color: var(--ink); }
+.cfps-page .cf-ct small { color: var(--muted); font-weight: 400; }
+.cfps-page .cf-dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font: 11px var(--mono); align-items: baseline; }
+.cfps-page .cf-dk { color: var(--faint); }
+.cfps-page .cf-dv { color: var(--ink-2); }
+.cfps-page .cf-std { width: 100%; border-collapse: collapse; font: 10px var(--mono); font-variant-numeric: tabular-nums; }
+.cfps-page .cf-std th { font: 500 9.5px var(--mono); color: var(--faint); text-transform: uppercase; letter-spacing: .05em; padding: 2px 4px 4px; border-bottom: 1px solid var(--hair); text-align: left; }
+.cfps-page .cf-std td { padding: 1.5px 4px; color: var(--ink-2); }
+
+/* ---- standard-curve columns: align the three tables, keep each table's paired
+   (substrate / product) columns grouped and centred rather than spread edge-to-
+   edge ------------------------------------------------------------------------ */
+.cfps-page .cf-std-grid { align-items: start; }
+.cfps-page .cf-std-col { display: flex; flex-direction: column; align-items: center; text-align: center; }
+/* Single-line title so all three tables begin at the same y (tables align). */
+.cfps-page .cf-std-ct { font-size: 11px; margin-bottom: 6px; min-height: 1.4em; }
+.cfps-page .cf-std-grid .cf-std { width: auto; margin: 0 auto; }
+.cfps-page .cf-std-grid .cf-std th,
+.cfps-page .cf-std-grid .cf-std td { text-align: right; padding: 1.5px 12px; }
+.cfps-page .cf-std-grid .cf-std th:first-child,
+.cfps-page .cf-std-grid .cf-std td:first-child { text-align: left; }
+/* Reteplase substrate/standard note demoted to a footnote so it doesn't push
+   its table down out of alignment with the others. */
+.cfps-page .cf-std-foot { margin-top: 8px; max-width: 220px; font: 9px/1.4 var(--mono); color: var(--faint); text-align: center; }
+.cfps-page .cf-viewer { height: 180px; border-radius: var(--r-sm); overflow: hidden; background: var(--recess); border: 1px solid var(--hair); position: relative; }
+/* Bulleted dilution / protocol steps — used inside cf-card for readable serial dilutions */
+.cfps-page .cf-sechd { display: flex; align-items: baseline; gap: 12px; }
+.cfps-page .cf-sechd__note { font: 10px var(--mono); color: var(--faint); }
+/* Conceptual block headers — group the page into Protein / Assay / Process / Data
+   sections. These sit directly on the dark page background (not inside a light
+   card), so the title is white and the sub-line a light grey to stay legible. */
+.cfps-page .cf-block-hd { margin: 40px 0 2px; font: 600 17px/1.15 var(--sans); letter-spacing: -0.015em; color: #ffffff; }
+.cfps-page .cf-block-hd:first-child { margin-top: 0; }
+.cfps-page .cf-block-sub { margin: 0 0 12px; font: 11px/1.5 var(--mono); color: rgba(255,255,255,0.6); }
+/* Designer section header row: title left, sign-in/out control far right. */
+.cfps-page .cf-designer-hd { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 40px 0 2px; }
+.cfps-page .cf-designer-hd:first-child { margin-top: 0; }
+.cfps-page .cf-designer-hd__auth { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+/* Sign-in feedback shown when the auth routes bounce back with ?kc=<reason>. */
+.cfps-page .cf-designer-hd__auth .kc-notice { font-size: 12px; color: rgba(255,255,255,0.55); font-style: italic; }
+/* Signed-in status chip — sized to match the adjacent "Sign out" btn-bp
+   (11.5px mono, 5px/10px padding, r-sm) with legible full-strength text on the
+   black section background. Non-interactive, so no hover/cursor affordance. */
+.cfps-page .cf-designer-hd__auth .cf-auth-status {
+  font: 500 11.5px/1 var(--mono); letter-spacing: .03em;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: var(--r-sm);
+  padding: 5px 10px;
+  display: inline-flex; align-items: center;
+}
+
+/* Kinetic timepoint scrubber — cassette-style range slider, matching the
+   catalyst overview plate reader (site/tokens.css): recessed track + a small
+   rectangular teal "tape head" thumb. Applies to every range input on the page
+   (plate-reader cards + modal) so they read consistently. */
+.cfps-page input[type="range"] { -webkit-appearance: none; appearance: none; height: 14px; background: transparent; cursor: pointer; }
+.cfps-page input[type="range"]::-webkit-slider-runnable-track { height: 6px; background: var(--recess); box-shadow: var(--inset); border-radius: 2px; }
+.cfps-page input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 9px; height: 12px; margin-top: -3px; background: var(--teal); border: 1px solid var(--teal-ink); border-radius: 1px; }
+.cfps-page input[type="range"]::-moz-range-track { height: 6px; background: var(--recess); border-radius: 2px; }
+.cfps-page input[type="range"]::-moz-range-thumb { width: 9px; height: 12px; background: var(--teal); border: 1px solid var(--teal-ink); border-radius: 1px; }
+.cfps-page .cf-wellmsg { margin: 0 0 8px; font: 11px var(--mono); color: var(--phosphor); }
+.cfps-page .cf-steps { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; font: 11px/1.45 var(--mono); }
+.cfps-page .cf-steps li { position: relative; padding-left: 15px; color: var(--ink-2); }
+.cfps-page .cf-steps li::before { content: "•"; position: absolute; left: 3px; top: -0.5px; color: var(--teal); font-weight: 700; }
+.cfps-page .cf-steps b { color: var(--ink); font-weight: 600; }
+
+/* write forms (publish modal + stock editor) */
+.cfps-page .cf-form { display: grid; gap: 8px; }
+.cfps-page .cf-form label { display: flex; flex-direction: column; gap: 3px; font: 9.5px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.cfps-page .cf-in {
+  background: var(--surface-2); border: 1px solid var(--groove); border-radius: var(--r-sm); padding: 6px 8px;
+  font: 12px var(--mono); color: var(--ink); width: 100%; box-sizing: border-box;
+}
+.cfps-page .cf-in:focus { outline: none; border-color: var(--teal); }
+.cfps-page textarea.cf-in { min-height: 6rem; resize: vertical; }
+/* Field caption row: label text left, live char counter right. */
+.cfps-page .cf-lbl { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.cfps-page .cf-charcount { font: 9px var(--mono); color: var(--faint); letter-spacing: 0; text-transform: none; }
+
+/* ---- select dropdowns: custom chevron with breathing room on the right ----
+   Native selects render their arrow flush to the edge; swap in our own chevron
+   and reserve padding so text never crowds it. Applies to every <select> on the
+   page (blueprint .cf-in inputs and the Tailwind-styled benchmarks controls). */
+.cfps-page select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 9px;
+  padding-right: 26px;
+}
+.cfps-page select.cf-in {
+  text-transform: none; letter-spacing: 0;
+  background-color: var(--surface-2);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 9px;
+  padding-right: 26px;
+}
+
+/* ---- modals (recipe / synopsis / publish) ------------------------------ */
+.cfps-page .ck-modal-ov {
+  position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 14px;
+  background: rgba(27,31,37,.34); backdrop-filter: blur(2px);
+}
+.cfps-page .ck-modal__panel {
+  width: min(1000px, 96vw); max-height: 92vh; display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--groove); border-radius: var(--r-lg);
+  box-shadow: 0 30px 70px -30px rgba(27,31,37,.7);
+}
+.cfps-page .ck-modal__hd {
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px;
+  border-bottom: 1px solid var(--hair); background: linear-gradient(180deg, var(--surface), var(--recess) 220%);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+.cfps-page .ck-modal__ttl { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cfps-page .ck-modal__ttl b { font: 500 16px/1.15 var(--sans); letter-spacing: .03em; color: var(--ink); }
+.cfps-page .ck-modal__sub { font: 11px var(--mono); color: var(--muted); }
+.cfps-page .ck-modal__x { margin-left: auto; flex: none; }
+.cfps-page .ck-modal__bd { padding: 16px; overflow: auto; }
+.cfps-page .ck-modal__bd .cf-std th, .cfps-page .ck-modal__bd table th { text-align: left; }
+
+/* native <dialog> publish modal */
+.cfps-page dialog.cfps-dialog {
+  padding: 0; border: 1px solid var(--groove); border-radius: var(--r-lg);
+  background: var(--surface); color: var(--ink); box-shadow: 0 30px 70px -30px rgba(27,31,37,.7);
+  max-width: 480px; width: 92vw;
+}
+.cfps-page dialog.cfps-dialog::backdrop { background: rgba(27,31,37,.34); backdrop-filter: blur(2px); }

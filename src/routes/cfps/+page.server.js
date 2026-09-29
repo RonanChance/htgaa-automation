@@ -1,58 +1,63 @@
 import { loadCfpsReagentGroups } from '$lib/server/loadCfpsReagentGroups.js';
-import { PB_EMAIL, PB_PASSWORD } from '$env/static/private';
-import { fail, redirect } from '@sveltejs/kit';
-import { createHash } from 'crypto';
-import PocketBase from 'pocketbase';
+import { loadPlateAnalysis, loadPlateReader } from '$lib/server/plateStore.js';
+import { pbAdmin } from '$lib/server/pb.js';
+import { readSession, KC_COOKIE } from '$lib/server/session.js';
+import { isConfigured as kcIsConfigured } from '$lib/server/keycloak.js';
+import { loadSuggestions } from '$lib/server/suggestions.js';
+import { loadCommunityDesigns, loadMyDesigns } from '$lib/server/loadCommunityDesigns.js';
+import { loadBenchmarkFormulations } from '$lib/server/loadBenchmarkFormulations.js';
+import { redirect } from '@sveltejs/kit';
+import { dev } from '$app/environment';
 
-const COOKIE = 'cfps_auth';
-const PB_URL = 'https://opentrons-art-pb.rcdonovan.com';
-function tokenFor(password) {
-  return createHash('sha256').update('cfps:' + password).digest('hex');
-}
+// Editable reagent-prompt copy lives in the static_values collection so it can be
+// changed on the fly (in PocketBase) without a redeploy. viewRule is null on that
+// collection, so the read must go through the superuser-authed admin client.
+const STATIC_VALUES = 'static_values';
+const REAGENT_PROMPT_RECORD_ID = 'pbni942iw4vbq09';
 
-async function fetchPassword() {
-  const pb = new PocketBase(PB_URL);
-  await pb.admins.authWithPassword(PB_EMAIL, PB_PASSWORD);
-  const record = await pb.collection('cfps_login').getOne('3yddrq278814c1d');
-  return record.cfps_password ?? null;
+async function loadReagentPrompt() {
+  try {
+    const pb = await pbAdmin();
+    const rec = await pb.collection(STATIC_VALUES).getOne(REAGENT_PROMPT_RECORD_ID);
+    const text = typeof rec?.text === 'string' ? rec.text : '';
+    return text.trim() ? text : null;
+  } catch {
+    // Non-critical — fall back to the client-generated prompt if the read fails.
+    return null;
+  }
 }
 
 export async function load({ url, cookies }) {
-  const password = await fetchPassword();
-  if (!password) return { authenticated: false, error: 'No password configured in PocketBase.' };
-
-  const authenticated = cookies.get(COOKIE) === tokenFor(password);
-  if (!authenticated) return { authenticated: false };
-
   const data = await loadCfpsReagentGroups(url);
-  return { authenticated: true, ...data };
+  const [plateAnalysis, plateReader] = await Promise.all([loadPlateAnalysis(), loadPlateReader()]);
+  const kcUser = readSession(cookies.get(KC_COOKIE));
+  const { suggestions, votedSuggestionIds } = await loadSuggestions(kcUser);
+  const reagentPrompt = await loadReagentPrompt();
+  const communityDesigns = await loadCommunityDesigns();
+  const myDesigns = await loadMyDesigns(kcUser);
+  const benchmarkFormulations = await loadBenchmarkFormulations();
+
+  return {
+    ...data,
+    plateAnalysis,
+    plateReader,
+    kcConfigured: kcIsConfigured(),
+    devMode: dev,
+    kcUser: kcUser ? { name: kcUser.name } : null,
+    suggestions,
+    votedSuggestionIds,
+    reagentPrompt,
+    communityDesigns,
+    myDesigns,
+    benchmarkFormulations,
+  };
 }
 
 export const actions = {
-  login: async ({ request, cookies }) => {
-    const password = await fetchPassword();
-    if (!password) return fail(500, { error: 'No password configured in PocketBase.' });
-
-    const form = await request.formData();
-    const entered = form.get('password')?.toString() ?? '';
-
-    if (entered !== password) {
-      return fail(401, { error: 'Incorrect password' });
-    }
-
-    cookies.set(COOKIE, tokenFor(password), {
-      path: '/cfps',
-      maxAge: 60 * 60 * 24 * 30, // 30 days
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: false
-    });
-
+  // Community reagent voting + suggesting is handled by the /cfps/suggestions
+  // JSON endpoint (live-polled ranking). Only session logout lives here.
+  kcLogout: async ({ cookies }) => {
+    cookies.delete(KC_COOKIE, { path: '/cfps' });
     redirect(303, '/cfps');
   },
-
-  logout: async ({ cookies }) => {
-    cookies.delete(COOKIE, { path: '/cfps' });
-    redirect(303, '/cfps');
-  }
 };

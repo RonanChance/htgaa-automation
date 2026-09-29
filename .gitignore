@@ -7,6 +7,7 @@ node_modules
 .wrangler
 /.svelte-kit
 /build
+build.tar.gz
 
 # OS
 .DS_Store
@@ -35,3 +36,5 @@ specific_yaml.yaml
 total_reagents_temp.json
 
 .venv
+pb-backups
+scripts
