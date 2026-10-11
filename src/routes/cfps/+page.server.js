@@ -31,10 +31,17 @@ export async function load({ url, cookies }) {
   const data = await loadCfpsReagentGroups(url);
   const [plateAnalysis, plateReader] = await Promise.all([loadPlateAnalysis(), loadPlateReader()]);
   const kcUser = readSession(cookies.get(KC_COOKIE));
-  const { suggestions, votedSuggestionIds } = await loadSuggestions(kcUser);
+  // Community reagents are login-gated: anonymous visitors get no suggestions in
+  // their page data (the client shows a scrambled sign-in teaser instead).
+  const { suggestions, votedSuggestionIds } = kcUser
+    ? await loadSuggestions(kcUser)
+    : { suggestions: [], votedSuggestionIds: [] };
   const reagentPrompt = await loadReagentPrompt();
-  const communityDesigns = await loadCommunityDesigns();
-  const myDesigns = await loadMyDesigns(kcUser);
+  // Community + personal compositions are only ever loaded for a signed-in user,
+  // so an anonymous visitor's page data (SSR and __data.json) never carries them —
+  // only the reference/literature benchmarks below remain public.
+  const communityDesigns = kcUser ? await loadCommunityDesigns(kcUser) : [];
+  const myDesigns = kcUser ? await loadMyDesigns(kcUser) : [];
   const benchmarkFormulations = await loadBenchmarkFormulations();
 
   return {

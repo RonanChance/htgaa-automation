@@ -85,20 +85,14 @@ export const REAGENT_SYNOPSES = {
     wiki: 'Bis-tris methane'
   },
 
-  'Phosphate': {
-    role: 'Acts as both a pH buffer and a phosphate source for ATP regeneration. The trade-off is that phosphate can bind magnesium and reduce its availability, so Mg(Glu)2 levels need to be balanced accordingly.',
-    mol: 'Phosphoric acid',
-    wiki: 'Phosphate'
-  },
-
   'Phosphate (di:mono)': {
-    role: 'A pre-mixed potassium phosphate buffer (more dibasic than monobasic), giving a final pH around 7.4–7.8. Same function as Phosphate but with a specific ratio that determines the exact pH contribution.',
+    role: 'A pre-mixed potassium phosphate buffer (1.6:1 dibasic:monobasic). It acts as both a pH buffer and a phosphate source for ATP regeneration; phosphate can bind magnesium and reduce its availability, so Mg(Glu)2 is balanced accordingly. At cell-free ionic strength (apparent pKa2 ~6.8) this dibasic-rich mix buffers to ~pH 7.0, matching the literature reactions (Calhoun, Zawada, Cai, Warfel, RFopt) that report phosphate at pH ~7.0–7.2 without stating a ratio.',
     mol: 'Potassium phosphate',
     wiki: 'Potassium phosphate'
   },
 
   'Phosphate (mono:di)': {
-    role: 'A pre-mixed potassium phosphate buffer (more monobasic than dibasic), giving a final pH closer to 7.0. Used in RFopt where a near-neutral pH is the target.',
+    role: 'A pre-mixed potassium phosphate buffer (1.6:1 monobasic:dibasic). More acidic than the di:mono mix — it sits roughly 0.4 pH units lower (~pH 6.6 at cell-free ionic strength). Same buffering / phosphate-source role, chosen when a more acidic contribution is wanted.',
     mol: 'Potassium phosphate',
     wiki: 'Potassium phosphate'
   },

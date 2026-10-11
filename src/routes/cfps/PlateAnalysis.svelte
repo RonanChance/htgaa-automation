@@ -106,7 +106,7 @@
   const SUMMARY = {
     sfgfp:     `OFAT (one-factor-at-a-time) rev3 control plate: from three baselines — PANOx-SP, Ginkgo3, and RFopt — it sweeps K-glutamate, Mg-glutamate, K-phosphate and glucose one at a time, plus a native/NMP/NTP nucleotide swap, mapping which salt and energy parameters drive sfGFP yield.`,
     cutinase:  `Same OFAT sweeps as sfGFP with DsbC chaperone held constant to support TfCut2's 1 disulfide bond — testing whether the salt and energy conditions that favor sfGFP transfer to a disulfide-containing enzyme.`,
-    reteplase: `Same OFAT sweeps on an oxidizing baseline: the GSSG/GSH redox pair and DsbC are fixed (with 500 µM iodoacetamide lysate pretreatment) for reteplase's 9 disulfide bonds, while salt and energy parameters are explored to maximize active yield.`,
+    reteplase: `Same OFAT sweeps on an oxidizing baseline: the GSSG/GSH redox pair and DsbC are fixed (with iodoacetamide lysate pretreatment) for reteplase's 9 disulfide bonds, while salt and energy parameters are explored to maximize active yield.`,
   };
 
   const activeSummary = SUMMARY;

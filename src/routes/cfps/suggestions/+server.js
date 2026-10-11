@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { readSession, KC_COOKIE } from '$lib/server/session.js';
-import { getRankedSuggestions, submitSuggestion, upvote, downvote } from '$lib/server/suggestions.js';
+import { getRankedSuggestions, submitSuggestion, upvote, downvote, postComment, deleteComment, deleteSuggestion } from '$lib/server/suggestions.js';
 
 // Lightweight JSON API for the suggested-reagents upvote widget. Kept separate
 // from the page load so the ranking can be polled live (real-time ordering)
@@ -17,6 +17,9 @@ export async function GET({ cookies }) {
 // POST → three actions, all Keycloak-gated, each returns the refreshed ranking:
 //   { action: 'vote' | 'unvote', id }          cast / remove one upvote
 //   { action: 'suggest', suggestion: {...} }    add a new community suggestion
+//   { action: 'comment', id, body }            add a comment to a suggestion
+//   { action: 'uncomment', id }                 delete one of your own comments
+//   { action: 'delete', id }                    delete one of your own suggestions
 export async function POST({ request, cookies }) {
   const kcUser = readSession(cookies.get(KC_COOKIE));
   if (!kcUser) return json({ error: 'Sign in to continue.' }, { status: 401 });
@@ -36,6 +39,27 @@ export async function POST({ request, cookies }) {
       if (!id) return json({ error: 'Missing suggestion id.' }, { status: 400 });
       if (action === 'vote') await upvote(kcUser, id);
       else await downvote(kcUser, id);
+    } else if (action === 'comment') {
+      const id = typeof body?.id === 'string' ? body.id : '';
+      const text = String(body?.body ?? '').trim();
+      if (!id) return json({ error: 'Missing suggestion id.' }, { status: 400 });
+      if (!text) return json({ error: 'Comment cannot be empty.' }, { status: 400 });
+      await postComment(kcUser, id, text);
+    } else if (action === 'uncomment') {
+      const id = typeof body?.id === 'string' ? body.id : '';
+      if (!id) return json({ error: 'Missing comment id.' }, { status: 400 });
+      await deleteComment(kcUser, id);
+    } else if (action === 'delete') {
+      const id = typeof body?.id === 'string' ? body.id : '';
+      if (!id) return json({ error: 'Missing suggestion id.' }, { status: 400 });
+      const res = await deleteSuggestion(kcUser, id);
+      if (!res?.ok) {
+        const status = res?.reason === 'not_found' ? 404 : 403;
+        const msg = res?.reason === 'not_found'
+          ? 'That suggestion no longer exists.'
+          : 'You can only delete your own suggestions.';
+        return json({ error: msg }, { status });
+      }
     } else {
       return json({ error: 'Unknown action.' }, { status: 400 });
     }

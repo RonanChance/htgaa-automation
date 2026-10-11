@@ -160,6 +160,13 @@
 .cfps-page .wrap { flex-wrap: wrap; }
 .cfps-page .spacer { flex: 1; }
 .cfps-page .stack { display: flex; flex-direction: column; gap: 12px; }
+/* DaisyUI (loaded globally via Tailwind) also ships a `.stack` component — a stacked
+   "deck" that scales + fades each child (translateY/scale(.9), opacity .6, with
+   nth-child steps). We only want `.stack` as a plain flex column, and overriding the
+   container display above isn't enough: DaisyUI's `.stack > *` child rules still leak,
+   funnelling rows (narrower + fainter going down). Reset the deck transforms on every
+   child; `:nth-child(n)` matches all children and outranks DaisyUI's nth-child rules. */
+.cfps-page .stack > :nth-child(n) { transform: none; opacity: 1; z-index: auto; }
 .cfps-page hr.groove { border: 0; border-top: 1px solid var(--groove); margin: 0; }
 
 /* ---- engraved section label -------------------------------------------- */
@@ -263,6 +270,9 @@
 /* ============================ page-specific (from cfps.html) ============= */
 .cfps-page .cfps-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: stretch; }
 @media (max-width: 900px) { .cfps-page .cfps-2col { grid-template-columns: 1fr; } }
+/* Spacer cell used to push a half-width panel (e.g. the snap-rounding notice)
+   under the right column only; drop it when the grid collapses to one column. */
+@media (max-width: 900px) { .cfps-page .cfps-2col > .snap-spacer { display: none; } }
 /* Both columns stretch to the taller of the two, and their inner scroll/edit
    boxes fill that height so "concentration rank" and "reagent supplement JSON"
    read as the same-height pair. */
@@ -309,6 +319,16 @@
 .cfps-page .cfps-disc td { border: 0; padding: 1px 4px; }
 
 .cfps-page .cfps-rank { border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hair); padding: 8px 10px; font: 11.5px/1.6 var(--mono); max-height: 18rem; overflow: auto; }
+/* Mix-formulation tabs above the concentration rank (batch only) — swap which
+   mix's rank is shown without changing which mix is being edited. */
+.cfps-page .cfps-rank-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 11px 0; }
+.cfps-page .cfps-rank-tab {
+  font: 500 10.5px/1 var(--mono); letter-spacing: 0.02em; color: var(--ink-2);
+  background: var(--surface-2); border: 1px solid var(--hair); border-radius: var(--r-sm);
+  padding: 3px 8px; cursor: pointer; transition: color .12s ease, border-color .12s ease, background .12s ease;
+}
+.cfps-page .cfps-rank-tab:hover { color: var(--ink); border-color: var(--groove); }
+.cfps-page .cfps-rank-tab.is-active { color: #fff; background: var(--teal); border-color: var(--teal); }
 .cfps-page .cfps-json { border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--hair); padding: 10px; font: 11px/1.5 var(--mono); overflow: auto; max-height: 18rem; margin: 0; color: var(--ink-2); white-space: pre; }
 .cfps-page .cfps-json--edit { display: block; width: 100%; box-sizing: border-box; resize: vertical; min-height: 12rem; max-height: 28rem; color: var(--ink); outline: none; }
 .cfps-page .cfps-json--edit:focus { border-color: var(--phosphor); }
@@ -401,6 +421,14 @@
 /* Field caption row: label text left, live char counter right. */
 .cfps-page .cf-lbl { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .cfps-page .cf-charcount { font: 9px var(--mono); color: var(--faint); letter-spacing: 0; text-transform: none; }
+/* Red asterisk marking a mandatory field label (e.g. the hypothesis). */
+.cfps-page .cf-req { color: var(--err); font-weight: 700; margin-left: 1px; cursor: default; }
+/* Batch submit: one comment field per experiment (Mix 1..N). */
+.cfps-page .cf-batch-comments { display: grid; gap: 10px; }
+.cfps-page .cf-batch-comments__hd { font: 9.5px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.cfps-page .cf-batch-comment { gap: 4px; padding-left: 8px; border-left: 2px solid var(--hair); }
+.cfps-page .cf-batch-comment__tgt { color: var(--faint); text-transform: none; }
+.cfps-page .cf-batch-comment textarea.cf-in { min-height: 3.2rem; }
 
 /* ---- select dropdowns: custom chevron with breathing room on the right ----
    Native selects render their arrow flush to the edge; swap in our own chevron

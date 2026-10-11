@@ -76,8 +76,83 @@ const DEV_DESIGNS = [
       magnesium_glutamate: 300, potassium_glutamate: 1500, spermidine: 100,
       nuclease_free_water: 9100
     }
+  },
+  // A three-member batch spanning all three targets, so the batch card + multi-target
+  // tags can be previewed on localhost. All share one batch_id and auto-increment.
+  {
+    id: 'dev-design-5',
+    name: 'ada_lovelace_2026-10-01_demo01_1',
+    author: 'Ada L.',
+    proteinTarget: 'sfGFP',
+    created: '2026-10-01T10:00:00Z',
+    rank: 1,
+    acknowledgements: '',
+    comments: 'Batch arm 1 — sfGFP baseline.',
+    experimentHypothesis: 'Comparing a range of reaction conditions across our target proteins to see which formulations generalize.',
+    batchId: 'ada_lovelace_2026-10-01_demo01',
+    batchSize: 3,
+    batchIndex: 1,
+    reagentList: {
+      base_buffer: 2000, lysate: 5000, template_sfgfp: 2000,
+      magnesium_glutamate: 300, potassium_glutamate: 1500, spermidine: 50,
+      nuclease_free_water: 9150
+    }
+  },
+  {
+    id: 'dev-design-6',
+    name: 'ada_lovelace_2026-10-01_demo01_2',
+    author: 'Ada L.',
+    proteinTarget: 'PETase',
+    created: '2026-10-01T10:00:01Z',
+    rank: 1,
+    acknowledgements: '',
+    comments: 'Batch arm 2 — PETase, extra maltodextrin.',
+    experimentHypothesis: 'Comparing a range of reaction conditions across our target proteins to see which formulations generalize.',
+    batchId: 'ada_lovelace_2026-10-01_demo01',
+    batchSize: 3,
+    batchIndex: 2,
+    reagentList: {
+      base_buffer: 2000, lysate: 5000, template_petase: 2000,
+      magnesium_glutamate: 250, potassium_glutamate: 2000, maltodextrin_17: 400,
+      nuclease_free_water: 8350
+    }
+  },
+  {
+    id: 'dev-design-7',
+    name: 'ada_lovelace_2026-10-01_demo01_3',
+    author: 'Ada L.',
+    proteinTarget: 'Reteplase',
+    created: '2026-10-01T10:00:02Z',
+    rank: 1,
+    acknowledgements: '',
+    comments: 'Batch arm 3 — Reteplase run.',
+    experimentHypothesis: 'Comparing a range of reaction conditions across our target proteins to see which formulations generalize.',
+    batchId: 'ada_lovelace_2026-10-01_demo01',
+    batchSize: 3,
+    batchIndex: 3,
+    reagentList: {
+      base_buffer: 2000, lysate: 5000, template_reteplase: 2000,
+      magnesium_glutamate: 275, potassium_glutamate: 1800, spermidine: 75,
+      nuclease_free_water: 8850
+    }
   }
 ];
+
+// Pull the batch-grouping fields the Submit flow stamps into metadata (see
+// confirmSubmitDesign). A lone submission has none of these (renders as a standalone
+// card); a batch shares one batch_id across its sibling records so the client can
+// collapse them into a single batch card and load them all together.
+function readBatch(md) {
+  const batchId =
+    typeof md.batch_id === 'string' && md.batch_id.trim() ? md.batch_id.trim() : null;
+  const size = Number(md.batch_size) || 0;
+  const index = Number(md.batch_index) || 0;
+  return {
+    batchId,
+    batchSize: size > 0 ? size : null,
+    batchIndex: index > 0 ? index : null
+  };
+}
 
 // A cfps_designs record → the minimal shape the client needs, or null when the
 // stored design_json has no usable reagent_list.
@@ -96,13 +171,32 @@ function normalizeDesign(rec) {
     name: name || 'community design',
     author: String(rec.author || '').trim() || null,
     proteinTarget: metadata.protein_target || null,
+    // Surfaced under the comparison table when a community column is loaded — the
+    // same rationale/credits the author sees in "My Compositions". The write path
+    // stores the rationale both top-level (`rec.rationale`) and in metadata.
+    aiModel: typeof metadata.ai_model === 'string' ? metadata.ai_model : '',
+    acknowledgements: typeof metadata.acknowledgements === 'string' ? metadata.acknowledgements : '',
+    comments:
+      typeof metadata.comments === 'string' ? metadata.comments
+        : (typeof rec.rationale === 'string' ? rec.rationale : ''),
+    // Group-level rationale shared across a batch's sibling records (Submit flow
+    // stamps the same value on every member). Empty for lone submissions.
+    experimentHypothesis:
+      typeof metadata.experiment_hypothesis === 'string' ? metadata.experiment_hypothesis : '',
     created: rec.created || null,
+    ...readBatch(metadata),
     reagentList
   };
 }
 
-// Never throws — a backend hiccup just renders no Community options.
-export async function loadCommunityDesigns() {
+// Community compositions are LOGIN-GATED — only a signed-in user (with a valid
+// Keycloak subject) may see other people's submissions, so anonymous visitors
+// can't scrape the dataset. Without a subject this returns [] and nothing about
+// the community designs ever leaves the server. Never throws — a backend hiccup
+// just renders no Community options.
+export async function loadCommunityDesigns(kcUser) {
+  const mySub = kcUser?.sub ? String(kcUser.sub).trim() : '';
+  if (!mySub) return [];
   if (dev) return DEV_DESIGNS;
   try {
     const pb = await pbAdmin();
@@ -137,21 +231,24 @@ function normalizeMine(rec) {
     aiModel: typeof md.ai_model === 'string' ? md.ai_model : '',
     acknowledgements: typeof md.acknowledgements === 'string' ? md.acknowledgements : '',
     comments: typeof md.comments === 'string' ? md.comments : '',
+    experimentHypothesis:
+      typeof md.experiment_hypothesis === 'string' ? md.experiment_hypothesis : '',
     // Drag-to-prioritise order within a target-protein group (1 = highest). 0 =
     // never dragged; those sort by recency as a stable fallback (see loadMyDesigns).
     rank: Number(rec.rank) || 0,
     created: rec.created || null,
     totalCostUsd: Number(rec.total_cost_usd) || null,
     costPerMlReaction: Number(rec.cost_per_ml_reaction) || null,
+    ...readBatch(md),
     reagentList
   };
 }
 
 // The signed-in user's own compositions, grouped/managed in the "My Compositions"
-// section. Matched by the stable Keycloak subject (author_sub) OR the display name
-// (author) so both new and legacy records surface. Never throws — a backend hiccup
-// just renders an empty manager. On localhost the dummy store is returned so the
-// section can be previewed without PocketBase.
+// section. Matched SOLELY by the stable Keycloak subject (author_sub) — display
+// names aren't unique, so matching on `author` caused ownership confusion. Never
+// throws — a backend hiccup just renders an empty manager. On localhost the dummy
+// store is returned so the section can be previewed without PocketBase.
 export async function loadMyDesigns(kcUser) {
   const me = kcUser?.name ? String(kcUser.name).trim() : '';
   const mySub = kcUser?.sub ? String(kcUser.sub).trim() : '';
@@ -166,24 +263,23 @@ export async function loadMyDesigns(kcUser) {
       aiModel: '',
       acknowledgements: d.acknowledgements || '',
       comments: d.comments || '',
+      experimentHypothesis: d.experimentHypothesis || '',
       rank: Number(d.rank) || 0,
       created: d.created || null,
       totalCostUsd: null,
       costPerMlReaction: null,
+      batchId: d.batchId || null,
+      batchSize: d.batchSize || null,
+      batchIndex: d.batchIndex || null,
       reagentList: d.reagentList || {}
     }));
   }
+  // Identity is the stable Keycloak subject only. Without one there's nothing we
+  // can reliably attribute to this user, so the manager stays empty.
+  if (!mySub) return [];
   try {
     const pb = await pbAdmin();
-    // Prefer the stable subject; still include name matches for legacy records.
-    let filter;
-    if (mySub && me) {
-      filter = pb.filter('author_sub = {:sub} || author = {:author}', { sub: mySub, author: me });
-    } else if (mySub) {
-      filter = pb.filter('author_sub = {:sub}', { sub: mySub });
-    } else {
-      filter = pb.filter('author = {:author}', { author: me });
-    }
+    const filter = pb.filter('author_sub = {:sub}', { sub: mySub });
     // Sort by rank (drag-priority) then recency; the client re-sorts the same way,
     // so unranked (rank 0) records fall back to newest-first.
     const rows = await pb.collection(DESIGNS).getFullList({ filter, sort: 'rank,-created' });

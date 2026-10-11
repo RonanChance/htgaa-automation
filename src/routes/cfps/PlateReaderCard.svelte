@@ -8,26 +8,36 @@
 
   let { target, onExpand } = $props();
 
-  let scale = $derived(computeScale(target?.grids));
-  let series = $derived(computeTimecourse(target));
-  let nLoadable = $derived((target?.wells ?? []).filter((w) => w.recipe).length);
-  let isKinetic = $derived((target?.grids?.length ?? 0) > 1);
+  // Each target carries one control plate per lysate batch (newest first). The
+  // card shows the current batch by default; a chip row switches to prior batches.
+  let batches = $derived(target?.batches ?? []);
+  let sel = $state(0);
+  $effect(() => {
+    if (sel > batches.length - 1) sel = 0; // clamp if the target/batches change
+  });
+  let plate = $derived(batches[sel] ?? null);
+
+  let scale = $derived(computeScale(plate?.grids));
+  let series = $derived(computeTimecourse(plate));
+  let nLoadable = $derived((plate?.wells ?? []).filter((w) => w.recipe).length);
+  let isKinetic = $derived((plate?.grids?.length ?? 0) > 1);
 
   // Inline timepoint scrubber (kinetic targets) — default to the last read so the
-  // card opens on the fully-developed signal, same as the modal.
+  // card opens on the fully-developed signal, same as the modal. Re-runs when the
+  // selected batch changes so each batch opens on its own final read.
   let tpIndex = $state(0);
   $effect(() => {
-    const n = target?.grids?.length ?? 0;
+    const n = plate?.grids?.length ?? 0;
     tpIndex = Math.max(0, n - 1);
   });
-  let currentGrid = $derived(target?.grids?.[tpIndex] ?? []);
+  let currentGrid = $derived(plate?.grids?.[tpIndex] ?? []);
 
-  // Whole card is clickable; the slider stops propagation so scrubbing never
-  // opens the modal.
+  // Whole card is clickable; the slider + batch chips stop propagation so they
+  // never open the modal. Expanding carries the selected batch into the modal.
   function onCardKey(e) {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      onExpand?.();
+      onExpand?.(sel);
     }
   }
   const stop = (e) => e.stopPropagation();
@@ -38,7 +48,7 @@
   class="prc"
   role="button"
   tabindex="0"
-  onclick={() => onExpand?.()}
+  onclick={() => onExpand?.(sel)}
   onkeydown={onCardKey}
   title="Open detailed plate reader"
 >
@@ -48,8 +58,23 @@
     <span class="prc-expand" aria-hidden="true">⤢</span>
   </div>
 
+  {#if batches.length > 1}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="prc-batches" onclick={stop} onkeydown={stop}>
+      {#each batches as b, bi}
+        <button
+          type="button"
+          class="prc-batch"
+          class:on={bi === sel}
+          onclick={() => (sel = bi)}
+          title="{b.chipLabelLong} — batch {b.lysateBatch}{b.lysateName ? ` (${b.lysateName})` : ''}"
+        >{b.chipLabelLong}</button>
+      {/each}
+    </div>
+  {/if}
+
   <div class="prc-plate">
-    <PlateGrid grid={currentGrid} wells={target.wells} rows={target.rows} cols={target.cols} {scale} kind={target.kind} />
+    <PlateGrid grid={currentGrid} wells={plate.wells} rows={plate.rows} cols={plate.cols} {scale} kind={target.kind} />
   </div>
 
   <div class="prc-ramp">
@@ -65,13 +90,13 @@
         type="range"
         class="prc-range"
         min="0"
-        max={target.grids.length - 1}
+        max={plate.grids.length - 1}
         bind:value={tpIndex}
         onmousedown={stop}
         onpointerdown={stop}
         aria-label="Timepoint"
       />
-      <span class="prc-t">time = {fmtHours(target.timepoints?.[tpIndex])}</span>
+      <span class="prc-t">time = {fmtHours(plate.timepoints?.[tpIndex])}</span>
     </div>
   {/if}
 
@@ -82,7 +107,7 @@
   <div class="prc-ft">
     <span>
       {#if isKinetic}
-        {target.grids.length} reads · {fmtHours(target.timepoints?.at(-1) ?? target.spanHours)}
+        {plate.grids.length} reads · {fmtHours(plate.timepoints?.at(-1) ?? plate.spanHours)}
       {:else}
         endpoint · single read
       {/if}
@@ -133,6 +158,27 @@
     margin-left: auto;
     font-size: 13px;
     color: var(--muted, #8a969c);
+  }
+  .prc-batches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .prc-batch {
+    font: 9px var(--mono, monospace);
+    padding: 2px 7px;
+    border-radius: var(--r-sm, 4px);
+    border: 1px solid var(--hair, #2a3339);
+    background: var(--recess, #0b1013);
+    color: var(--muted, #8a969c);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .prc-batch.on {
+    color: var(--ink, #e6edf0);
+    border-color: var(--phosphor, #4fd1c5);
+    background: color-mix(in srgb, var(--phosphor, #4fd1c5) 12%, transparent);
   }
   .prc-plate {
     /* Full width so the 1fr well grid (height derived from width via

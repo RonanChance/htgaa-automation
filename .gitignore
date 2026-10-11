@@ -38,3 +38,7 @@ total_reagents_temp.json
 .venv
 pb-backups
 scripts
+
+*.generated.json
+# Committed on purpose: the cost-free CFPS contract the app imports (costs live in PB).
+!src/lib/cfpsReagentSpec.generated.json
