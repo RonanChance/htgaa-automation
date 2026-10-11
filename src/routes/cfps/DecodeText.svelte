@@ -63,7 +63,7 @@
 </script>
 
 <p bind:this={el} class="decode-text" class:decode-text--done={done} aria-label={text}>
-  <span aria-hidden="true">{display}</span><span class="decode-caret" aria-hidden="true"></span>
+  <span aria-hidden="true">{display}</span>
 </p>
 
 <style>
@@ -79,20 +79,7 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .decode-caret {
-    display: inline-block;
-    width: 0.55ch;
-    height: 1.05em;
-    margin-left: 0.12em;
-    vertical-align: text-bottom;
-    background: #4be08f;
-    box-shadow: 0 0 12px rgba(75, 224, 143, 0.7);
-    animation: decode-caret-blink 1s steps(1, end) infinite;
-  }
-  .decode-text--done .decode-caret { opacity: 0.5; }
-  @keyframes decode-caret-blink { 50% { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) {
     .decode-text { text-shadow: none; }
-    .decode-caret { animation: none; opacity: 0.5; }
   }
 </style>

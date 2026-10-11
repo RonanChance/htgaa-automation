@@ -12,7 +12,7 @@
 
   // onSelectComposition({ label, recipe, wellNames }) → parent loads the picked
   // composition into the designer's Comparison column.
-  let { data, onLoadWell, onSelectComposition, onClose, initialIndex = 0 } = $props();
+  let { data, onLoadWell, onSelectComposition, onClose, initialIndex = 0, initialBatch = 0 } = $props();
 
   let targets = $derived(data?.targets ?? []);
   // Capture the opening target once — the modal remounts on each open, so the
@@ -20,29 +20,49 @@
   let activeIdx = $state(untrack(() => initialIndex));
   let target = $derived(targets[activeIdx] ?? null);
 
+  // Each target has one control plate per lysate batch (newest first). Honour the
+  // batch the card was showing on open; switching target tabs resets to the
+  // current (newest) batch.
+  let batches = $derived(target?.batches ?? []);
+  let batchIdx = $state(untrack(() => initialBatch));
+  let lastTab = untrack(() => activeIdx);
+  $effect(() => {
+    if (activeIdx !== lastTab) {
+      lastTab = activeIdx;
+      untrack(() => {
+        batchIdx = 0;
+      });
+    }
+  });
+  $effect(() => {
+    if (batchIdx > batches.length - 1) batchIdx = 0; // clamp defensively
+  });
+  let plate = $derived(batches[batchIdx] ?? null);
+
   // Timepoint scrubber — default to the last read (fully developed signal).
   let tpIndex = $state(0);
   $effect(() => {
-    const n = target?.grids?.length ?? 0;
+    const n = plate?.grids?.length ?? 0;
     tpIndex = Math.max(0, n - 1);
   });
 
   let showValues = $state(true); // exact per-well numbers on by default
 
-  let currentGrid = $derived(target?.grids?.[tpIndex] ?? []);
-  let wells = $derived(target?.wells ?? []);
-  let scale = $derived(computeScale(target?.grids));
-  let series = $derived(computeTimecourse(target));
+  let currentGrid = $derived(plate?.grids?.[tpIndex] ?? []);
+  let wells = $derived(plate?.wells ?? []);
+  let scale = $derived(computeScale(plate?.grids));
+  let series = $derived(computeTimecourse(plate));
 
   // ── ranked-sample titers + platemap spotlight ──────────────────────────────
-  let ranked = $derived(computeRankedTiters(target));
+  let ranked = $derived(computeRankedTiters(plate));
   // Hover in the chart = transient spotlight; a click sticks the selection so it
   // stays highlighted after loading into the Comparison column. Both reset when
-  // the active target (tab) changes.
+  // the active target (tab) or batch changes — different plates, different wells.
   let highlightLabel = $state(null);
   let selectedLabel = $state(null);
   $effect(() => {
     activeIdx; // re-run on tab switch
+    batchIdx; // ...and on batch switch
     untrack(() => {
       highlightLabel = null;
       selectedLabel = null;
@@ -72,8 +92,8 @@
     if (!w) return null;
     const ratios = [];
     if (v != null && !Number.isNaN(v)) {
-      if (target.posctrl) ratios.push(`${(v / target.posctrl).toFixed(2)}× pos ctrl`);
-      if (target.blank) ratios.push(`${(v / target.blank).toFixed(1)}× blank`);
+      if (plate?.posctrl) ratios.push(`${(v / plate.posctrl).toFixed(2)}× pos ctrl`);
+      if (plate?.blank) ratios.push(`${(v / plate.blank).toFixed(1)}× blank`);
     }
     return {
       well: w.well,
@@ -123,22 +143,35 @@
         {/each}
       </div>
       <span class="pr-spacer"></span>
-      {#if target}
-        <span class="pr-meta">{target.run} · {target.assayKind} · {target.grids.length} reads</span>
+      {#if plate}
+        <span class="pr-meta">{plate.chipLabelLong} · batch {plate.lysateBatch} · {plate.assayKind} · {plate.grids.length} reads</span>
       {/if}
       <button class="pr-x" title="Close" aria-label="Close" onclick={() => onClose?.()}>✕</button>
     </header>
 
     <div class="pr-bd">
-      {#if !target}
+      {#if !plate}
         <p class="pr-empty">No kinetic reads available.</p>
       {:else}
+        {#if batches.length > 1}
+          <div class="pr-batches">
+            <span class="pr-batches__lbl">lysate batch</span>
+            {#each batches as b, bi}
+              <button
+                class="pr-batch"
+                class:on={bi === batchIdx}
+                onclick={() => (batchIdx = bi)}
+                title="batch {b.lysateBatch}{b.lysateName ? ` (${b.lysateName})` : ''}"
+              >{b.chipLabelLong}</button>
+            {/each}
+          </div>
+        {/if}
         <div class="pr-scope">
           <PlateGrid
             grid={currentGrid}
             {wells}
-            rows={target.rows}
-            cols={target.cols}
+            rows={plate.rows}
+            cols={plate.cols}
             {scale}
             kind={target.kind}
             interactive
@@ -151,17 +184,17 @@
         </div>
 
         <!-- timepoint scrubber -->
-        {#if target.grids.length > 1}
+        {#if plate.grids.length > 1}
           <div class="pr-scrub">
             <input
               type="range"
               class="pr-range"
               min="0"
-              max={target.grids.length - 1}
+              max={plate.grids.length - 1}
               bind:value={tpIndex}
               aria-label="Timepoint"
             />
-            <span class="pr-t">time = {fmtHours(target.timepoints[tpIndex])}</span>
+            <span class="pr-t">time = {fmtHours(plate.timepoints[tpIndex])}</span>
           </div>
         {/if}
 
@@ -183,7 +216,7 @@
         </div>
 
         <!-- detailed timecourse (kinetic) or endpoint summary -->
-        {#if series && target.grids.length > 1}
+        {#if series && plate.grids.length > 1}
           <div class="pr-tc">
             <div class="pr-tc__hd">signal timecourse — median across the plate</div>
             <PlateTimecourse {series} unit={target.unit} kind={target.kind} detailed />
@@ -322,6 +355,34 @@
   .pr-bd {
     padding: 14px;
     overflow: auto;
+  }
+  .pr-batches {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    max-width: 600px;
+    margin: 0 auto 12px;
+  }
+  .pr-batches__lbl {
+    font: 10px var(--mono, monospace);
+    color: var(--faint, #5b666c);
+    margin-right: 2px;
+  }
+  .pr-batch {
+    font: 10.5px var(--mono, monospace);
+    padding: 3px 9px;
+    border-radius: var(--r-sm, 4px);
+    border: 1px solid var(--hair, #2a3339);
+    background: var(--recess, #0b1013);
+    color: var(--muted, #8a969c);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .pr-batch.on {
+    color: var(--ink, #e6edf0);
+    border-color: var(--phosphor, #4fd1c5);
+    background: color-mix(in srgb, var(--phosphor, #4fd1c5) 12%, transparent);
   }
   .pr-empty {
     color: var(--muted, #8a969c);

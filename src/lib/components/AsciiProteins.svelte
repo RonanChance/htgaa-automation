@@ -1032,6 +1032,8 @@
   bind:clientWidth={boxW}
   bind:clientHeight={boxH}
   class="ap-scene"
+  class:ap-scene--dragging={dragging}
+  ondragstart={(e) => e.preventDefault()}
   onpointermove={handlePointerMove}
   onpointerleave={handlePointerLeave}
   onpointerdown={handlePointerDown}
@@ -1049,13 +1051,15 @@
         href={l.url}
         target="_blank"
         rel="noreferrer"
+        draggable="false"
+        ondragstart={(e) => e.preventDefault()}
         aria-label="{l.name} on UniProt"
       ></a>
     {/if}
   {/each}
   {#each labels as l}
     {#if l.url}
-      <a class="ap-caption ap-caption--link" style="left:{l.xPct}%;" href={l.url} target="_blank" rel="noreferrer">{l.name}</a>
+      <a class="ap-caption ap-caption--link" style="left:{l.xPct}%;" href={l.url} target="_blank" rel="noreferrer" draggable="false" ondragstart={(e) => e.preventDefault()}>{l.name}</a>
     {:else}
       <div class="ap-caption" style="left:{l.xPct}%;">{l.name}</div>
     {/if}
@@ -1072,9 +1076,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: default;              /* folds still rotate on drag, but no grab-hand cursor */
+    cursor: grab;                 /* folds rotate on drag — show the grab hand */
     touch-action: pan-y;          /* let vertical page scroll pass; drag rotates */
+    user-select: none;            /* dragging rotates; never select the captions */
+    -webkit-user-select: none;
   }
+  /* while a fold is being turned by hand, show the closed-hand cursor everywhere */
+  .ap-scene--dragging,
+  .ap-scene--dragging .ap-hit { cursor: grabbing; }
   .ap-gl {
     position: absolute;
     inset: 0;
@@ -1087,9 +1096,10 @@
     top: 0;
     bottom: 26px;
     z-index: 3;
-    cursor: pointer;
+    cursor: grab;                 /* drag to rotate; a plain click opens UniProt */
     pointer-events: auto;
     touch-action: pan-y;
+    -webkit-user-drag: none;      /* no native link-drag ghost fighting the rotate */
   }
   .ap-caption {
     position: absolute;

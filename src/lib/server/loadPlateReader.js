@@ -51,30 +51,55 @@ const TARGETS = [
 
 const refPath = (run) => `${REF_DIR}/${run}/${run}_results.json`;
 
-// Pick the newest control run for a target: folders are named
-// "<Target>_control_<YYYYMMDD>-<lysate lot>", so the newest embedded date is the
-// current lysate. Returns the folder name, or null if none match.
-function newestRun(prefix) {
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Parse a control-run folder name "<Target>_control_<YYYYMMDD>-<lysate lot>" into
+// its date and lysate lot (the suffix after the date — e.g. "27-L", "39-L",
+// "DSB"). Returns null for folders that don't match the target's prefix.
+function parseRunName(prefix, name) {
+  const m = name.match(new RegExp(`^${prefix}_control_(\\d{4})(\\d{2})(\\d{2})-(.+)$`, 'i'));
+  if (!m) return null;
+  const [, y, mo, d, lot] = m;
+  const monIdx = Math.max(0, Math.min(11, Number(mo) - 1));
+  return {
+    run: name,
+    dateNum: Number(`${y}${mo}${d}`),
+    dateISO: `${y}-${mo}-${d}`,
+    dateShort: `${MONTHS[monIdx]} ${y}`, // compact, distinct chip label per batch
+    lysateLot: lot,
+  };
+}
+
+// Extract the lysate batch identity from a reagent_lots.lysate string. The batch
+// id is embedded as a YYYYMMDD-<lot> token — e.g. "20260722-39-L CFPS Standard
+// Lysate", "E. coli BL21StarDE3 lysate 20260428-27-L", "20260514-DSB Lysate".
+// This date is when the lysate BATCH was made (not when the plate was read), and
+// it — not the plate's read date — is what makes a batch current vs previous.
+function parseLysate(lysateStr) {
+  if (typeof lysateStr !== 'string') return null;
+  const m = lysateStr.match(/(\d{8})-([A-Za-z0-9-]+)/);
+  if (!m) return null;
+  return { batch: `${m[1]}-${m[2]}`, dateNum: Number(m[1]), lot: m[2] };
+}
+
+// Every control run for a target, newest first. Each run is one lysate-batch
+// control plate; the newest is the "current" lysate and the rest are prior
+// batches shown behind a selector.
+function listRuns(prefix) {
   let entries;
   try {
     entries = readdirSync(REF_DIR, { withFileTypes: true });
   } catch {
-    return null;
+    return [];
   }
-  const rx = new RegExp(`^${prefix}_control_(\\d{8})`, 'i');
-  let best = null;
-  let bestDate = -1;
+  const runs = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    const m = entry.name.match(rx);
-    if (!m) continue;
-    const date = Number(m[1]);
-    if (date > bestDate) {
-      bestDate = date;
-      best = entry.name;
-    }
+    const info = parseRunName(prefix, entry.name);
+    if (info) runs.push(info);
   }
-  return best;
+  runs.sort((a, b) => b.dateNum - a.dateNum); // newest first
+  return runs;
 }
 
 // Some reference files are dumped with allow_nan=True (bare NaN/Infinity tokens
@@ -147,12 +172,13 @@ function findKineticQuality(overview, target, plate) {
   return best;
 }
 
-function buildTarget(target, overview) {
-  const run = newestRun(target.prefix);
-  if (!run) return null;
+// Build the self-contained plate payload for ONE control run (one lysate batch):
+// the kinetic grids + aligned per-well recipes for that physical plate. Returns
+// null if the run's results file is missing or has no matching overview read.
+function buildPlate(target, info, overview) {
   let refData;
   try {
-    refData = parseJsonLenient(readFileSync(refPath(run), 'utf8'));
+    refData = parseJsonLenient(readFileSync(refPath(info.run), 'utf8'));
   } catch {
     return null;
   }
@@ -187,12 +213,20 @@ function buildTarget(target, overview) {
     }
   }
 
+  // The authoritative lysate batch comes from the plate's own reagent_lots, not
+  // the folder name (status — current vs previous — is assigned in buildTarget by
+  // ordering these batch dates).
+  const lysateName = plate?.reagent_lots?.lysate ?? null;
+  const lys = parseLysate(lysateName);
+
   return {
-    key: target.key,
-    label: target.label,
-    run,
-    unit: target.unit,
-    kind: target.kind,
+    run: info.run,
+    dateISO: info.dateISO,
+    dateShort: info.dateShort,
+    lysateLot: lys?.lot ?? info.lysateLot,
+    lysateName,
+    lysateBatch: lys?.batch ?? `${info.dateISO.replace(/-/g, '')}-${info.lysateLot}`,
+    lysateBatchDate: lys?.dateNum ?? info.dateNum,
     barcode: String(q.primary_barcode ?? ''),
     assayKind: q.assay_kind ?? 'kinetic',
     rows: nRows,
@@ -203,6 +237,33 @@ function buildTarget(target, overview) {
     timepoints,
     grids: grids.map((g) => g.map((v) => (v == null || Number.isNaN(v) ? null : Number(v)))),
     wells,
+  };
+}
+
+// A target = the stable protein identity (key/label/unit/kind) plus every lysate
+// batch's control plate under `batches`. Returns null if no batch resolves to a
+// kinetic read.
+function buildTarget(target, overview) {
+  const batches = listRuns(target.prefix)
+    .map((info) => buildPlate(target, info, overview))
+    .filter(Boolean);
+  if (!batches.length) return null;
+  // Order by the ACTUAL lysate batch (the prep date embedded in
+  // reagent_lots.lysate), not the plate's read date — the newest batch is the
+  // current lysate, the next is the previous one. The chip labels follow from
+  // this status so the UI reads "current / previous lysate" rather than a date.
+  batches.sort((a, b) => b.lysateBatchDate - a.lysateBatchDate);
+  batches.forEach((b, i) => {
+    b.status = i === 0 ? 'current' : i === 1 ? 'previous' : 'older';
+    b.chipLabel = i === 0 ? 'current' : i === 1 ? 'previous' : b.dateShort;
+    b.chipLabelLong = i === 0 ? 'current lysate' : i === 1 ? 'previous lysate' : b.dateShort;
+  });
+  return {
+    key: target.key,
+    label: target.label,
+    unit: target.unit,
+    kind: target.kind,
+    batches,
   };
 }
 
@@ -229,7 +290,7 @@ export function buildPlateReaderData() {
     ? {
         targets,
         label:
-          'Kinetic control reads — catalyst-agent-skills overview · joined to autonomous-cfps reference_results recipes',
+          'Kinetic control reads per lysate batch — catalyst-agent-skills overview · joined to autonomous-cfps reference_results recipes',
       }
     : null;
   return cache;

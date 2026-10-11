@@ -5,6 +5,7 @@
   import { invalidateAll } from '$app/navigation';
   import BenchmarksTable from './BenchmarksTable.svelte';
   import ProteinViewer from './ProteinViewer.svelte';
+  import FoldingSimulation from './FoldingSimulation.svelte';
   import PlateAnalysis from './PlateAnalysis.svelte';
   import PlateReaderModal from './PlateReaderModal.svelte';
   import PlateReaderCard from './PlateReaderCard.svelte';
@@ -24,6 +25,13 @@
     PETASE_CODING_REGION,
     RETEPLASE_CODING_REGION
   } from '$lib/dna.js';
+  import {
+    PYDANTIC_REAGENT_FIELDS,
+    TEMPLATE_FIELDS,
+    templateFieldForTarget,
+    validateReagentList
+  } from '$lib/cfpsReagentContract.js';
+  import { REAGENT_ID_TO_PYDANTIC, PYDANTIC_TO_REAGENT_ID } from '$lib/cfpsReagentIdMap.js';
 
   // ---- target-protein sequences ------------------------------------------
   // Amino-acid sequences are translated directly from the coding regions in
@@ -420,10 +428,10 @@
   }
 
   // Custom Mix "starting composition": the recipe the live design was seeded
-  // from (default = the sfGFP target/standard reference plate). Selecting one from
+  // from (default = the sfGFP PEP reference plate). Selecting one from
   // the Custom Mix dropdown loads it AND re-baselines; any later edit flips the
   // column label to "Custom" until the design matches the starting recipe again.
-  let customStartKey = $state('ginkgo-target-sfgfp');
+  let customStartKey = $state('ginkgo-target-sfgfp-pep');
   // Resolve a starting-composition key against the static benchmarks first, then
   // the community submissions (so a picked community design loads like any other).
   function findFormulation(key) {
@@ -462,42 +470,10 @@
   const fixedVolumeSummaryIds = new Set(['cell_lysate', 'dna_template']);
   const excludedFromExportIds = new Set(['cell_lysate', 'base_buffer', 'dna_template']);
 
-  // autonomous-cfps `CFPSReagentList` (models.py) — the 61 recognized reagent
-  // field names. The exported reagent_list must use exactly these keys (the
-  // validate-design gate rejects any others) and every value is a dispense
-  // VOLUME in nL, snapped to 25 nL increments.
-  const PYDANTIC_REAGENT_FIELDS = new Set([
-    'potassium_glutamate', 'magnesium_glutamate', 'base_buffer', 'hepes_koh',
-    'atp', 'ctp', 'gtp', 'utp', 'amino_acid_mix_17', 'tyrosine', 'cysteine',
-    'sodium_pyruvate', 'maltose', 'ribose', 'maltodextrin_17', 'folinic_acid',
-    'nad', 'nicotinamide', 'camp', 'spermidine', 'brij_35', 'dmso',
-    'pyruvate_oxidase', 'catalase', 'sodium_hexametaphosphate',
-    'potassium_phosphate_monobasic', 'potassium_phosphate_dibasic',
-    'kpo_monobasic_mix', 'kpo_dibasic_mix', 'dilithium_acetyl_phosphate',
-    'amp', 'cmp', 'gmp', 'ump', 'adenosine', 'cytidine', 'guanosine', 'uridine',
-    'thymidine', 'adenine', 'guanine', 'cytosine', 'uracil', 'thymine', 'lysate',
-    'nuclease_free_water', 'template_sfgfp', 'template_petase', 'template_reteplase',
-    'glucose', 'pep_mono', 'succinic_acid', 'potassium_formate', 'oxaloacetic_acid',
-    'ammonium_glutamate', 'coa', 'putrescine', 'oxidized_glutathione',
-    'reduced_glutathione', 'potassium_oxalate', 'dsbc_ecoli'
-  ]);
-  // App reagent id → CFPSReagentList field name, only where they differ. Ids not
-  // listed pass through unchanged when already valid, otherwise they're dropped.
-  const REAGENT_ID_TO_PYDANTIC = {
-    aa_mix_17: 'amino_acid_mix_17',
-    cell_lysate: 'lysate',
-    dna_template: 'template_sfgfp',
-    putrescine_dihydrochloride: 'putrescine',
-    potassium_phosphate_ratio_monobasic_dibasic: 'kpo_monobasic_mix',
-    potassium_phosphate_ratio_dibasic_monobasic: 'kpo_dibasic_mix',
-    phosphoenolpyruvic_acid_cyclohexylammonium_salt: 'pep_mono'
-  };
-  // Reverse of the above — CFPSReagentList field name → our app reagent id — so a
-  // clicked plate-reader well (whose recipe uses pydantic field names) can be
-  // mapped back onto the design sliders.
-  const PYDANTIC_TO_REAGENT_ID = Object.fromEntries(
-    Object.entries(REAGENT_ID_TO_PYDANTIC).map(([appId, field]) => [field, appId])
-  );
+  // The recognized `CFPSReagentList` field names (PYDANTIC_REAGENT_FIELDS) live in
+  // $lib/cfpsReagentContract.js; the app-id ↔ pydantic-field maps
+  // (REAGENT_ID_TO_PYDANTIC / PYDANTIC_TO_REAGENT_ID) live in $lib/cfpsReagentIdMap.js —
+  // both shared with the server submit gate and the model sync tool.
 
   // Load a plate-reader well's exact reagent combination into the design panel.
   // The well's `recipe` is { pydantic_field: nL } for the tunable reagents only
@@ -578,6 +554,7 @@
   let copyError = $state('');
   let plateReaderOpen = $state(false);
   let plateReaderTarget = $state(0); // which target the modal opens focused on
+  let plateReaderBatch = $state(0); // which lysate batch the modal opens on
   let wellLoadMessage = $state('');
   let showStandardCurves = $state(false); // std-curve reference tables, collapsed by default
 
@@ -597,14 +574,45 @@
     };
   });
 
-  function openPlateReader(index = 0) {
+  function openPlateReader(index = 0, batch = 0) {
     plateReaderTarget = index;
+    plateReaderBatch = batch;
     plateReaderOpen = true;
   }
   let volumesNl = $state({ ...initialVolumes });
   // Which target protein this composition is designed for — recorded in the
-  // metadata (protein_target) and chosen via a dropdown in the submit modal.
+  // metadata (protein_target) and chosen per-column via the Mix header dropdown.
   let proteinTarget = $state('sfGFP');
+
+  // ── mix columns (batch designing) ──────────────────────────────────────────
+  // Every candidate composition is a numbered "Mix N" column — all equal peers in
+  // the experiment batch, fixed in creation order (columns never reorder). Exactly
+  // one is SELECTED (editable): its live data lives in volumesNl / proteinTarget /
+  // customStartKey. Every mix (including the selected one) has an entry in `mixes`
+  // ({ id, n, volumes (nL map), proteinTarget, startKey }); the selected entry's
+  // snapshot is stale while editing (the live buffer is the truth — see
+  // resolvedMixes / commitSelectedMix). Selecting a mix commits the live buffer
+  // back into its slot then loads the newly-selected mix into the buffer IN PLACE
+  // — nothing moves. Submitting writes every mix in one pass. Mix numbers are
+  // always positional (1..N in column order) — renumberMixes keeps them gapless
+  // after every add/remove, so you never see Mix 1, 3, 4.
+  let mixes = $state([
+    { id: `mix-${randomToken()}`, n: 1, volumes: null, proteinTarget: 'sfGFP', startKey: 'ginkgo-target-sfgfp-pep' }
+  ]);
+  let selectedMixId = $state(mixes[0].id);
+  // Columns never reorder (addMix appends), so array order == display order; just
+  // stamp n = index + 1 to guarantee a contiguous Mix 1, 2, 3, … sequence.
+  const renumberMixes = (list) => list.map((m, i) => ({ ...m, n: i + 1 }));
+  const mixLabel = (n) => `Mix ${n}`;
+  // Total mixes a submit would write; >1 ⇒ batch territory (no single/batch toggle).
+  let batchMixCount = $derived(mixes.length);
+  // Mixes in column order (Mix 1..N) — used by the submit modal to render one comment
+  // field per experiment.
+  let submitMixList = $derived([...mixes].sort((a, b) => a.n - b.n));
+  // Each protein has its own DNA template plasmid (all dosed at 2000 nL). The
+  // reagent_list must carry EXACTLY the template matching protein_target — the
+  // mapping + helper (TEMPLATE_FIELDS / templateFieldForTarget) are imported from
+  // $lib/cfpsReagentContract.js, shared with the server.
   let isPublishing = $state(false);
   let publishMessage = $state('');
   let publishError = $state('');
@@ -671,7 +679,18 @@
   });
   let exportedSample = $derived(buildExportedSample());
   let exportedCompositionJson = $derived(JSON.stringify(exportedSample, null, 2));
-  let concentrationRankEntries = $derived(buildConcentrationRankEntries());
+  // Concentration-rank panel: a tab per mix lets you read any formulation's rank.
+  // `rankTabMixId` is the tab the user picked (null → follow the selected mix); it
+  // falls back to the selected mix when its tab is removed. The viewed volume map is
+  // the live buffer for the selected mix, else that mix's stored snapshot.
+  let rankTabMixId = $state(null);
+  let rankViewMixId = $derived(mixes.some((m) => m.id === rankTabMixId) ? rankTabMixId : selectedMixId);
+  let rankViewVolumes = $derived(
+    rankViewMixId === selectedMixId
+      ? volumesNl
+      : (mixes.find((m) => m.id === rankViewMixId)?.volumes || volumesNl)
+  );
+  let concentrationRankEntries = $derived(buildConcentrationRankEntriesForVolumes(rankViewVolumes));
   let costRankEntries = $derived(buildCostRankEntries());
 
   function toStepNl(value) {
@@ -1270,6 +1289,46 @@
     return out;
   }
 
+  // Per-paper-reagent stepper state for an ARBITRARY volume map — the same shape as
+  // customMixByPaper (value/label/adjustable/canInc/canDec) but computed from a given
+  // mix's stored volumes rather than the live editing buffer. Lets every mix column
+  // render live steppers; interacting with a non-selected one promotes it to selected
+  // (see BenchmarksTable), after which edits flow through the live buffer as usual.
+  function stepperMapForVolumes(volumes) {
+    const out = {};
+    const vols = volumes || {};
+    const waterNl = Number(vols[WATER_ID]) || 0;
+    for (const [paperName, alias] of Object.entries(REAGENT_ALIASES)) {
+      const id = alias?.ids?.[0];
+      if (!id) continue;
+      const reagent = allReagents.find((r) => r.id === id);
+      if (!reagent) continue;
+      const unit = alias.unit || 'mM';
+      const value = concInUnitFromVolumes(reagent, unit, vols);
+      const adjustable = reagent.fixedNl == null && reagent.id !== WATER_ID;
+      out[paperName] = {
+        reagentId: id,
+        unit,
+        value,
+        label: value == null ? '—' : `${fmtConc(value)} ${unit}`,
+        adjustable,
+        canInc: adjustable && waterNl >= STEP_NL,
+        canDec: adjustable && (Number(vols[id]) || 0) >= STEP_NL
+      };
+    }
+    return out;
+  }
+
+  // A benchmark formulation expressed as { paperName: concentration } after the
+  // same concentration → grid-snapped nL volumes → concentration round-trip the
+  // live Custom Mix goes through. BenchmarksTable's closest-match scores the live
+  // design against these (not the pristine paper numbers) so a freshly loaded
+  // formulation matches itself at 100% instead of losing points to grid snapping.
+  function formulationFingerprint(bm) {
+    const volumes = volumesForFormulation(bm);
+    return volumes ? componentsForVolumes(volumes) : (bm?.components ?? {});
+  }
+
   // Community submissions from the DB, shaped like BENCHMARK_FORMULATIONS entries
   // so BenchmarksTable can drop them into a comparison column. Yield/cost are
   // unknown for a user submission, so those cells read "—".
@@ -1277,6 +1336,7 @@
     const designs = data?.communityDesigns ?? [];
     return designs.map((d) => ({
       key: `community-${d.id}`,
+      id: d.id,
       name: d.name,
       year: d.created ? new Date(d.created).getFullYear() : null,
       category: 'community',
@@ -1284,9 +1344,216 @@
       components: componentsForVolumes(volumesFromReagentList(d.reagentList)),
       yield_g_l: null,
       cost_per_l: null,
-      cost_per_g: null
+      cost_per_g: null,
+      // Author's rationale + credits, carried through so BenchmarksTable can show
+      // the same details as "My Compositions" when this column is loaded.
+      author: d.author || null,
+      proteinTarget: d.proteinTarget || null,
+      created: d.created || null,
+      rationale: d.comments || '',
+      acknowledgements: d.acknowledgements || '',
+      aiModel: d.aiModel || '',
+      // Group-level hypothesis (batch submissions only); carried so loading a batch
+      // can repopulate the overall-hypothesis field and the JSON box.
+      experimentHypothesis: d.experimentHypothesis || '',
+      // Batch grouping — set when this submission was part of a batch (see
+      // confirmSubmitDesign). The community rail collapses same-batch columns into
+      // one card and loads them all together.
+      batchId: d.batchId || null,
+      batchSize: d.batchSize || null,
+      batchIndex: d.batchIndex || null
     }));
   });
+
+  // Has a non-selected mix's stored volume map diverged from its starting recipe?
+  // (Water absorbs snap-rounding, so it's excluded — mirrors customIsCustomized.)
+  function isMixCustomized(m) {
+    const start = volumesForFormulation(findFormulation(m.startKey));
+    if (!start || !m.volumes) return false;
+    for (const reagent of allReagents) {
+      if (reagent.id === WATER_ID) continue;
+      if ((Number(start[reagent.id]) || 0) !== (Number(m.volumes[reagent.id]) || 0)) return true;
+    }
+    return false;
+  }
+
+  // Every mix resolved to its current truth: the SELECTED mix reads from the live
+  // editing buffer (volumesNl / proteinTarget / customStartKey); the others read
+  // their stored snapshots. Order matches `mixes` (creation order) so columns stay
+  // put. `selected`/`isCustomized` are convenience flags for the render.
+  let resolvedMixes = $derived(
+    mixes.map((m) =>
+      m.id === selectedMixId
+        ? { ...m, volumes: volumesNl, proteinTarget, startKey: customStartKey, selected: true, isCustomized: customIsCustomized }
+        : { ...m, selected: false, isCustomized: isMixCustomized(m) }
+    )
+  );
+
+  // ── mix columns → comparison-table columns ────────────────────────────────
+  // Each mix rendered as a BENCHMARK_FORMULATIONS-shaped column (plus a `selected`
+  // flag) so BenchmarksTable can render them all as one frozen experimental group.
+  // The selected column is editable in place (steppers); the rest are read-only.
+  // Concentrations come from the same volumes→components pipeline the community
+  // columns use; cost is derived from the volume map so the $/mL · $/20µL rows read live.
+  let mixColumns = $derived(
+    resolvedMixes.map((m) => {
+      const vols = m.volumes || {};
+      const costUsd = costUsdForVolumes(vols);
+      return {
+        id: m.id,
+        key: m.id,
+        n: m.n,
+        name: mixLabel(m.n),
+        label: mixLabel(m.n),
+        selected: m.selected,
+        startKey: m.startKey,
+        isCustomized: m.isCustomized,
+        year: null,
+        category: 'mix',
+        citation: 'mix',
+        components: componentsForVolumes(vols),
+        // Live stepper state for THIS mix's own volumes (selected or not) so every
+        // column's +/- is clickable; the selected column still reads customMixByPaper.
+        stepper: stepperMapForVolumes(vols),
+        yield_g_l: null,
+        // cost_per_l back-solved so the table's /1000 ($/mL) and /50000 ($/20µL)
+        // divisions land on the live reaction cost (20 µL reaction ⇒ ×50,000).
+        cost_per_l: costUsd > 0 ? costUsd * 50000 : null,
+        cost_per_g: null,
+        proteinTarget: m.proteinTarget || null
+      };
+    })
+  );
+
+  // Raw direct-reagent cost ($) of a 20 µL reaction for an arbitrary volume map,
+  // mirroring totalCostUsd (direct + apportioned base-buffer share) so a saved
+  // column's cost matches what the live editor would show for the same mix.
+  function costUsdForVolumes(volumes) {
+    return visibleReagents.reduce(
+      (sum, r) =>
+        sum +
+        (effectiveVolumeNlForReagentFromVolumes(r.id, volumes) / 1_000_000) *
+          Number(r.costPerMl || 0),
+      0
+    );
+  }
+
+  // reagent_list ({ pydantic_field: nL }) for an arbitrary volume map + target —
+  // the export contract generalized off buildReagentListForExport so saved mixes
+  // serialize (clipboard copy) and submit (batch) exactly like the live mix.
+  function buildReagentListFromVolumes(volumes, target) {
+    const list = {};
+    const add = (key, nl) => { if (key) list[key] = (list[key] || 0) + nl; };
+    for (const reagent of allReagents) {
+      if (reagent.id === WATER_ID) continue;
+      const vol = toStepNl(Number(volumes?.[reagent.id]) || 0);
+      if (vol <= 0) continue;
+      const key = REAGENT_ID_TO_PYDANTIC[reagent.id] || reagent.id;
+      if (!PYDANTIC_REAGENT_FIELDS.has(key)) continue;
+      add(key, vol);
+    }
+    list.base_buffer = 2000;
+    list.lysate = 5000;
+    for (const t of TEMPLATE_FIELDS) delete list[t];
+    list[templateFieldForTarget(PROTEIN_TARGETS.includes(target) ? target : proteinTarget)] = 2000;
+    const subtotal = Object.values(list).reduce((sum, v) => sum + v, 0);
+    const water = toStepNl(Math.max(0, MAX_TOTAL_NL - subtotal));
+    if (water > 0) list.nuclease_free_water = water;
+    return Object.fromEntries(Object.keys(list).sort().map((k) => [k, list[k]]));
+  }
+
+  let mixActionMessage = $state('');
+  let mixActionError = $state('');
+
+  // Normalize an incoming id: '__live__' (legacy sentinel) or null → the selected mix.
+  function resolveMixId(id) {
+    return id == null || id === '__live__' ? selectedMixId : id;
+  }
+
+  // Flush the live editing buffer into the selected mix's slot so `mixes` is the
+  // source of truth before we read or mutate it (select / add / submit).
+  function commitSelectedMix() {
+    mixes = mixes.map((m) =>
+      m.id === selectedMixId
+        ? { ...m, volumes: { ...volumesNl }, proteinTarget, startKey: customStartKey }
+        : m
+    );
+  }
+
+  // ＋: append a new Mix column that starts as a copy of a source mix (the mix whose
+  // ＋ was pressed, or the selected mix from the rail). Columns never reorder and the
+  // selection doesn't change — the new peer simply lands at the right of the batch.
+  function addMix(sourceId) {
+    commitSelectedMix();
+    const src = mixes.find((m) => m.id === resolveMixId(sourceId)) ?? mixes.find((m) => m.id === selectedMixId);
+    if (!src) return;
+    const next = renumberMixes([
+      ...mixes,
+      { id: `mix-${randomToken()}`, n: 0, volumes: { ...(src.volumes || volumesNl) }, proteinTarget: src.proteinTarget, startKey: src.startKey }
+    ]);
+    mixes = next;
+    mixActionError = '';
+    mixActionMessage = `Added ${mixLabel(next[next.length - 1].n)}.`;
+  }
+
+  // Select (= make editable) a mix IN PLACE. The current live buffer is committed
+  // back into its slot first so no edits are lost, then the newly-selected mix is
+  // loaded into the buffer. No column moves — selection is purely which one is editable.
+  function selectMix(id) {
+    const realId = resolveMixId(id);
+    if (realId === selectedMixId) return;
+    const m = mixes.find((x) => x.id === realId);
+    if (!m) return;
+    commitSelectedMix();
+    selectedMixId = realId;
+    volumesNl = { ...(m.volumes || {}) };
+    if (PROTEIN_TARGETS.includes(m.proteinTarget)) proteinTarget = m.proteinTarget;
+    if (m.startKey) customStartKey = m.startKey;
+    mixActionError = '';
+    // No "Editing Mix N" status line — selecting a mix is now a quiet in-place action
+    // (the accent ring already marks which column is editable).
+    mixActionMessage = '';
+  }
+
+  // Remove a mix. The last remaining mix can't be removed (there's always one).
+  // Removing a non-selected mix just drops it, in place; removing the selected mix
+  // drops it and loads the lowest-numbered survivor into the editor.
+  function removeMix(id) {
+    const realId = resolveMixId(id);
+    if (mixes.length <= 1) return; // never remove the last mix
+    const remaining = renumberMixes(mixes.filter((m) => m.id !== realId));
+    if (!remaining.length) return;
+    if (realId === selectedMixId) {
+      const next = remaining[0]; // lowest-numbered survivor (= first column)
+      mixes = remaining;
+      selectedMixId = next.id;
+      volumesNl = { ...(next.volumes || {}) };
+      if (PROTEIN_TARGETS.includes(next.proteinTarget)) proteinTarget = next.proteinTarget;
+      if (next.startKey) customStartKey = next.startKey;
+    } else {
+      mixes = remaining;
+    }
+  }
+
+  // ↺: reset a mix to its starting composition. For the selected mix this clears the
+  // live +/- tweaks (resetCustomMix); for a non-selected mix it re-seeds its stored
+  // volume map from its recipe, in place.
+  function resetMix(id) {
+    const realId = resolveMixId(id);
+    if (realId === selectedMixId) { resetCustomMix(); return; }
+    const m = mixes.find((x) => x.id === realId);
+    if (!m) return;
+    const vols = volumesForFormulation(findFormulation(m.startKey));
+    if (vols) mixes = mixes.map((x) => (x.id === realId ? { ...x, volumes: { ...vols } } : x));
+  }
+
+  // Set a mix's protein target from its header dropdown (selected or a peer).
+  function setMixTarget(id, target) {
+    if (!PROTEIN_TARGETS.includes(target)) return;
+    const realId = resolveMixId(id);
+    if (realId === selectedMixId) { proteinTarget = target; return; }
+    mixes = mixes.map((m) => (m.id === realId ? { ...m, proteinTarget: target } : m));
+  }
 
   // +/- handler passed to BenchmarksTable's Custom Mix column. `dir` is +1/-1;
   // one Echo step (STEP_NL) per press, resolving the reagent by id.
@@ -1554,14 +1821,46 @@
     }
   }
 
-  function buildConcentrationRankEntries() {
+  // Concentration label + rank for a reagent in an ARBITRARY volume map — the
+  // volumes-parametrized twin of concentrationLabelAndRankForReagent, so the rank
+  // panel can show any mix's formulation (not just the live/selected one).
+  function concentrationLabelAndRankForReagentFromVolumes(reagent, volumes) {
+    if (reagent.id === WATER_ID) {
+      const volumeNl = Number(volumes?.[reagent.id]) || 0;
+      return { label: `${formatUl(volumeNl)}`, rankValue: -1 };
+    }
+    const targetGramsPerLiter = activeProfile()?.targetGramsPerLiter || {};
+    if (targetGramsPerLiter[reagent.id] != null) {
+      const finalGL = finalGramsPerLiterForReagentFromVolumes(reagent, volumes);
+      if (finalGL != null) return { label: `${finalGL.toFixed(3)} g/L`, rankValue: finalGL };
+    }
+    const targetUnitsPerMl = activeProfile()?.targetUnitsPerMl || {};
+    if (targetUnitsPerMl[reagent.id] != null) {
+      const finalUml = finalUnitsPerMlForReagentFromVolumes(reagent, volumes);
+      if (finalUml != null) return { label: `${finalUml.toFixed(2)} U/mL`, rankValue: finalUml };
+    }
+    const targetNgPerUl = activeProfile()?.targetNgPerUl || {};
+    if (targetNgPerUl[reagent.id] != null) {
+      const finalNgUl = finalNgPerUlForReagentFromVolumes(reagent, volumes);
+      if (finalNgUl != null) return { label: `${finalNgUl.toFixed(3)} ng/µL`, rankValue: finalNgUl };
+    }
+    const finalNm = finalNmForReagentFromVolumes(reagent, volumes);
+    if (finalNm != null) return { label: formatConcentration(finalNm), rankValue: finalNm };
+    const finalGL = finalGramsPerLiterForReagentFromVolumes(reagent, volumes);
+    if (finalGL != null) return { label: `${finalGL.toFixed(3)} g/L`, rankValue: finalGL };
+    const finalPercent = finalVolumePercentForReagentFromVolumes(reagent, volumes);
+    if (finalPercent != null) return { label: `${finalPercent.toFixed(2)}% v/v`, rankValue: finalPercent };
+    return { label: 'n/a', rankValue: -1 };
+  }
+
+  function buildConcentrationRankEntriesForVolumes(volumes) {
     return visibleReagents
       .filter((reagent) => {
-        const volumeNl = effectiveVolumeNlForReagent(reagent.id);
+        const volumeNl = effectiveVolumeNlForReagentFromVolumes(reagent.id, volumes);
         return volumeNl > 0 && !excludedFromExportIds.has(reagent.id);
       })
       .map((reagent) => {
-        const { label, rankValue } = concentrationLabelAndRankForReagent(reagent);
+        const { label, rankValue } = concentrationLabelAndRankForReagentFromVolumes(reagent, volumes);
         return {
           name: reagent.id === WATER_ID ? 'Water' : reagent.name,
           label,
@@ -1602,9 +1901,9 @@
     // Fixed volumes locked by the model's non-zero defaults / template rule.
     list.base_buffer = 2000;
     list.lysate = 5000;
-    delete list.template_petase;
-    delete list.template_reteplase;
-    list.template_sfgfp = 2000;
+    // Exactly one DNA template at 2000 nL — the one matching protein_target.
+    for (const t of TEMPLATE_FIELDS) delete list[t];
+    list[templateFieldForTarget(proteinTarget)] = 2000;
     // Balance to exactly 20 µL with nuclease-free water.
     const subtotal = Object.values(list).reduce((sum, v) => sum + v, 0);
     const water = toStepNl(Math.max(0, MAX_TOTAL_NL - subtotal));
@@ -1612,27 +1911,40 @@
     return Object.fromEntries(Object.keys(list).sort().map((k) => [k, list[k]]));
   }
 
+  // A short random suffix that makes every submission's sample_id unique, so two
+  // designs from the same author on the same day never collide (the server also
+  // rejects duplicate sample_ids). Regenerated after each successful submission so
+  // the next one mints a fresh id.
+  function randomToken() {
+    const buf =
+      typeof crypto !== 'undefined' && crypto.getRandomValues
+        ? crypto.getRandomValues(new Uint32Array(1))[0]
+        : Math.floor(Math.random() * 0xffffffff);
+    return (buf >>> 0).toString(36).padStart(6, '0').slice(-6);
+  }
+  let sampleIdToken = $state(randomToken());
+
   // sample_id is an empty string by default; once the user is signed in via
-  // Keycloak it's named after them plus today's date so submissions are
-  // attributable (e.g. "ada_lovelace_2026-09-26").
+  // Keycloak it's named after them, today's date, and a unique token so every
+  // submission is attributable AND unique (e.g. "ada_lovelace_2026-09-26_k3f9zq").
   function computeSampleId() {
     const name = data?.kcUser?.name;
     if (!name) return '';
     const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    return `${sanitizeSampleId(name)}_${date}`;
+    return `${sanitizeSampleId(name)}_${date}_${sampleIdToken}`;
   }
 
   // ── composition metadata (Sample.metadata in autonomous-cfps) ────────────
-  // Sample.metadata is an open `dict[str, Any] | None` on the pydantic side. Rather
-  // than a separate form, we seed it as a dictionary right inside the reagent
-  // supplement JSON with the conventional keys the author fills in — edited
-  // directly in the (editable) JSON box below.
+  // Sample.metadata is an open `dict[str, Any] | None` on the pydantic side. We mirror
+  // the designer's persistent metadata state here so the JSON box always shows the
+  // complete, submittable payload — ai_model / acknowledgements / the per-mix comment.
+  // Editing the box (or the matching modal fields) round-trips back into this state.
   function buildMetadata() {
     return {
-      ai_model: '',            // e.g. "claude-opus-4-8"
-      protein_target: proteinTarget, // sfGFP | PETase | Reteplase
-      acknowledgements: '',    // collaborators to credit
-      comments: ''             // free-form notes about this composition
+      ai_model: designAiModel,                    // e.g. "claude-opus-4-8"
+      protein_target: proteinTarget,              // sfGFP | PETase | Reteplase
+      acknowledgements: designAcknowledgements,   // collaborators to credit
+      comments: mixComments[selectedMixId] || ''  // this composition's rationale
     };
   }
 
@@ -1643,6 +1955,81 @@
       reagent_list: buildReagentListForExport(),
       metadata: buildMetadata()
     };
+  }
+
+  // ── batch submission preview ──────────────────────────────────────────────
+  // When more than one mix is designed, a submit writes one cfps_designs record per
+  // mix. This is the exact array of Sample dicts that goes to the database, with the
+  // live per-composition metadata folded in. The group-level `experiment_hypothesis`
+  // is NOT repeated here — it belongs to the batch, so it's hoisted to the wrapper
+  // document below (batchSubmissionDoc) instead of every composition dict.
+  let batchSubmission = $derived(
+    [...resolvedMixes]
+      .sort((a, b) => a.n - b.n)
+      .map((m) => {
+        const target = PROTEIN_TARGETS.includes(m.proteinTarget) ? m.proteinTarget : proteinTarget;
+        return {
+          sample_id: computeSampleId(),
+          sample_type: 'experimental',
+          reagent_list: buildReagentListFromVolumes(m.volumes || {}, target),
+          metadata: {
+            ai_model: designAiModel,
+            protein_target: target,
+            acknowledgements: designAcknowledgements,
+            comments: mixComments[m.id] || ''
+          }
+        };
+      })
+  );
+  // The batch document shown in the reagent supplement JSON panel: one group-level
+  // `experiment_hypothesis` for the whole batch, then the per-composition samples. A
+  // user can paste this whole thing back and submit it — applySupplementEdits reads
+  // the hypothesis from the top level and the compositions from `samples`.
+  let batchSubmissionDoc = $derived({ experiment_hypothesis: experimentHypothesis, samples: batchSubmission });
+  let batchSubmissionJson = $derived(JSON.stringify(batchSubmissionDoc, null, 2));
+
+  // Validate every sample in a batch against the same CFPSReagentList contract the
+  // single composition uses; errors are prefixed with the mix number.
+  function validateBatchSubmission(samples) {
+    const errors = [];
+    samples.forEach((s, i) => {
+      if (!s || typeof s !== 'object' || Array.isArray(s)) {
+        errors.push(`Mix ${i + 1}: each entry must be a JSON object.`);
+        return;
+      }
+      if (s.sample_type !== 'experimental') errors.push(`Mix ${i + 1}: sample_type must be "experimental".`);
+      for (const e of validateReagentList(s.reagent_list).errors) errors.push(`Mix ${i + 1}: ${e}`);
+    });
+    return { valid: errors.length === 0, errors };
+  }
+
+  // Pull the samples array out of whatever the batch box holds: the wrapper document
+  // ({ experiment_hypothesis, samples: [...] }) we generate, or — for back-compat and
+  // lenient pasting — a bare array of samples. Returns null if neither shape is found.
+  function batchSamplesOf(parsed) {
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.samples)) return parsed.samples;
+    return null;
+  }
+
+  // Parse + validate the batch supplement text. The box holds a batch document with a
+  // `samples` array (a bare array is also accepted); it must parse, carry a non-empty
+  // samples list, and every sample must satisfy validateBatchSubmission.
+  function validateBatchSubmissionJson(text) {
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return { valid: false, errors: ['Invalid JSON syntax.'] };
+    }
+    const samples = batchSamplesOf(parsed);
+    if (!samples) {
+      return { valid: false, errors: ['Expected a batch object with a "samples" array (or an array of samples).'] };
+    }
+    if (samples.length === 0) {
+      return { valid: false, errors: ['At least one sample is required.'] };
+    }
+    return validateBatchSubmission(samples);
   }
 
   // ── editable supplement JSON ────────────────────────────────────────────
@@ -1660,19 +2047,36 @@
   let jsonDraft = $state(null);
   $effect(() => {
     exportedCompositionJson;   // dependency: regenerate box whenever the model changes
+    batchSubmissionJson;       // …and whenever the batch payload changes
     jsonDraft = null;
   });
-  let supplementText = $derived(jsonDraft ?? exportedCompositionJson);
-  let supplementValidation = $derived(validateSupplementJson(supplementText));
+  // Single mix → the editable composition JSON (one Sample object). Batch (>1 mix) →
+  // the editable array of Sample dicts headed to the database (one per mix, in
+  // mix-number order). Both are hand-editable; edits commit on blur via
+  // applySupplementEdits() back onto the matching mix.
+  let supplementText = $derived(
+    jsonDraft ?? (batchMixCount > 1 ? batchSubmissionJson : exportedCompositionJson)
+  );
+  let supplementValidation = $derived(
+    batchMixCount > 1 ? validateBatchSubmissionJson(supplementText) : validateSupplementJson(supplementText)
+  );
 
-  // Commit an edited JSON draft back into the live model. Pushing the draft's
+  // Commit an edited JSON draft back into the live model. Pushing a draft's
   // reagent_list through volumesFromReagentList snaps every supplement to the
   // 25 nL Echo grid and, crucially, recomputes nuclease_free_water so the reaction
   // re-balances to exactly 20 µL — the user never hand-corrects the water backfill.
   // Because concentrationRankEntries derives from volumesNl, the rank refreshes
   // automatically. Called on blur so mid-edit keystrokes are never disrupted; if
-  // the draft doesn't parse into a reagent_list object we leave it as-is so the
+  // the draft doesn't parse into the expected shape we leave it as-is so the
   // validation errors stay on screen for the user to fix.
+  //
+  // Single mix → the draft is one Sample object; its reagent_list flows into the
+  // live buffer (volumesNl). Batch (>1 mix) → the draft is the array of Sample
+  // dicts (one per mix, in mix-number order); each sample's reagent_list + protein
+  // target is written back to the matching mix by position — the selected mix via
+  // the live buffer, the rest into their stored slots. Adding/removing array
+  // entries doesn't change how many mixes exist (edit the columns for that); extra
+  // or missing entries are ignored and the preview re-snaps to the real batch.
   function applySupplementEdits() {
     if (jsonDraft == null) return;
     let parsed;
@@ -1681,18 +2085,70 @@
     } catch {
       return;
     }
+
+    if (batchMixCount > 1) {
+      const samples = batchSamplesOf(parsed);
+      if (!samples) return;
+      // Map each sample position to a mix id using the same mix-number order the
+      // preview is generated in, so edits land on the column they're shown under.
+      const order = [...mixes].sort((a, b) => a.n - b.n).map((m) => m.id);
+      const n = Math.min(samples.length, order.length);
+      let nextMixes = mixes;
+      const nextComments = { ...mixComments };
+      for (let i = 0; i < n; i++) {
+        const sample = samples[i];
+        const rl = sample?.reagent_list;
+        if (!rl || typeof rl !== 'object' || Array.isArray(rl)) continue;
+        const vols = volumesFromReagentList(rl);
+        const md = sample?.metadata && typeof sample.metadata === 'object' ? sample.metadata : {};
+        const tgt = md.protein_target;
+        const target = PROTEIN_TARGETS.includes(tgt) ? tgt : null;
+        const id = order[i];
+        // Per-mix rationale rides in metadata.comments; round-trip it onto the mix.
+        if (typeof md.comments === 'string') nextComments[id] = md.comments;
+        if (id === selectedMixId) {
+          volumesNl = vols;
+          if (target) proteinTarget = target;
+        } else {
+          nextMixes = nextMixes.map((m) =>
+            m.id === id ? { ...m, volumes: vols, ...(target ? { proteinTarget: target } : {}) } : m
+          );
+        }
+      }
+      if (nextMixes !== mixes) mixes = nextMixes;
+      mixComments = nextComments;
+      // The group-level hypothesis lives at the top of the wrapper document. For a
+      // pasted bare array (no wrapper) fall back to the first sample's metadata so an
+      // older-shaped paste still seeds it. ai_model / acknowledgements are shared, so
+      // read them from the first sample's metadata either way.
+      const topHyp = (!Array.isArray(parsed) && parsed && typeof parsed === 'object')
+        ? parsed.experiment_hypothesis
+        : samples[0]?.metadata?.experiment_hypothesis;
+      if (typeof topHyp === 'string') experimentHypothesis = topHyp;
+      const head = samples[0]?.metadata && typeof samples[0].metadata === 'object' ? samples[0].metadata : {};
+      if (typeof head.ai_model === 'string') designAiModel = head.ai_model;
+      if (typeof head.acknowledgements === 'string') designAcknowledgements = head.acknowledgements;
+      return;
+    }
+
     const rl = parsed?.reagent_list;
     if (!rl || typeof rl !== 'object' || Array.isArray(rl)) return;
     volumesNl = volumesFromReagentList(rl);
+    // Round-trip single-composition metadata so a pasted Sample seeds its rationale
+    // and attribution too (the group hypothesis has no meaning for a lone sample).
+    const md = parsed?.metadata && typeof parsed.metadata === 'object' ? parsed.metadata : {};
+    if (typeof md.comments === 'string') mixComments = { ...mixComments, [selectedMixId]: md.comments };
+    if (typeof md.ai_model === 'string') designAiModel = md.ai_model;
+    if (typeof md.acknowledgements === 'string') designAcknowledgements = md.acknowledgements;
   }
 
-  // Validity mirrors the autonomous-cfps CFPSReagentList contract: parseable
-  // JSON, sample_type "experimental", recognized reagent fields, every volume a
-  // non-negative multiple of 25 nL, base_buffer=2000, lysate=5000, and a total
-  // that equals EXACTLY 20,000 nL (20 µL) — water balances any supplement
-  // shortfall, so undershooting is as invalid as overshooting.
+  // Validity mirrors the autonomous-cfps CFPSReagentList contract: parseable JSON,
+  // sample_type "experimental", then the shared reagent_list contract (recognized
+  // fields, non-negative 25 nL-grid volumes, base_buffer=2000, lysate=5000, exactly
+  // one DNA template at 2000 nL, total EXACTLY 20,000 nL). The reagent_list rules
+  // live in $lib/cfpsReagentContract.js so the browser and the server-side submit
+  // gate validate identically.
   function validateSupplementJson(text) {
-    const errors = [];
     let parsed;
     try {
       parsed = JSON.parse(text);
@@ -1702,40 +2158,11 @@
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return { valid: false, errors: ['Top-level value must be a JSON object.'] };
     }
+    const errors = [];
     if (parsed.sample_type !== 'experimental') {
       errors.push('sample_type must be "experimental".');
     }
-    const rl = parsed.reagent_list;
-    if (!rl || typeof rl !== 'object' || Array.isArray(rl)) {
-      errors.push('reagent_list must be an object.');
-      return { valid: false, errors };
-    }
-    let total = 0;
-    for (const [key, value] of Object.entries(rl)) {
-      if (!PYDANTIC_REAGENT_FIELDS.has(key)) {
-        errors.push(`"${key}" is not a recognized reagent field.`);
-        continue;
-      }
-      if (typeof value !== 'number' || !Number.isFinite(value)) {
-        errors.push(`${key}: volume must be a number.`);
-        continue;
-      }
-      if (value < 0) errors.push(`${key}: volume can't be negative.`);
-      if (value % STEP_NL !== 0) errors.push(`${key}: ${value} nL is not divisible by ${STEP_NL} nL.`);
-      total += value;
-    }
-    if (rl.base_buffer !== 2000) errors.push('base_buffer must equal 2000 nL.');
-    if (rl.lysate !== 5000) errors.push('lysate must equal 5000 nL.');
-    // The reaction is a fixed 20 µL: the volumes must sum to EXACTLY 20,000 nL.
-    // Undershooting is just as invalid as overshooting — nuclease_free_water has
-    // to make up whatever the supplements leave short so the total lands on 20 µL.
-    if (total > MAX_TOTAL_NL) {
-      errors.push(`Total ${total.toLocaleString()} nL exceeds the ${MAX_TOTAL_NL.toLocaleString()} nL (20 µL) reaction — those concentrations aren't reachable in this volume.`);
-    } else if (total < MAX_TOTAL_NL) {
-      const shortfall = MAX_TOTAL_NL - total;
-      const water = typeof rl.nuclease_free_water === 'number' ? rl.nuclease_free_water : 0;
-      errors.push(`Total ${total.toLocaleString()} nL is under the ${MAX_TOTAL_NL.toLocaleString()} nL (20 µL) reaction — add ${shortfall.toLocaleString()} nL of nuclease_free_water (set it to ${(water + shortfall).toLocaleString()} nL) so the volumes sum to exactly 20,000 nL.`);
-    }
+    errors.push(...validateReagentList(parsed.reagent_list).errors);
     return { valid: errors.length === 0, errors };
   }
 
@@ -1806,14 +2233,35 @@
   // sample_id and metadata (ai_model, acknowledgements, comments) before the write.
   // The reagent_list comes straight from the (validated) supplement JSON box.
   let showSubmitModal = $state(false);
+  // The review modal is shared by two flows: 'create' (Submit → new records) and
+  // 'update' (Update existing → overwrite the user's own loaded records in place,
+  // creating any brand-new columns alongside them). See confirmUpdateDesign.
+  let submitMode = $state('create');
   let submitBusy = $state(false);
   let submitError = $state('');
   let submitMessage = $state('');
   let submitSampleId = $state('');
-  let submitAiModel = $state('');
-  let submitProteinTarget = $state('sfGFP');
-  let submitAcknowledgements = $state('');
-  let submitComments = $state('');
+  // ── composition metadata, owned by the DESIGNER (not the submit modal) ───────
+  // These back the metadata block shown in the reagent supplement JSON box, so the
+  // JSON on screen is the complete, submittable payload. The submit modal's fields
+  // bind the SAME state, and the submit/update flow reads straight from here — so a
+  // user can paste a full JSON (reagent_list + metadata) into the box and hit submit
+  // and it just works, even if the metadata carries extra keys the pydantic model
+  // doesn't require (metadata is a free-form dict; validation ignores it).
+  let designAiModel = $state('');            // shared across a batch
+  let designAcknowledgements = $state('');   // shared across a batch
+  // Per-mix rationale: a map of mix id → note (1:1 with the Mix columns). REQUIRED
+  // for every mix before submit/update.
+  let mixComments = $state({});
+  // Batch-only: one overarching hypothesis for the whole GROUP of conditions, stamped
+  // identically onto every member's metadata.experiment_hypothesis. A lone composition
+  // has no "group", so it's hidden and not required there (and omitted from its JSON).
+  let experimentHypothesis = $state('');
+  let submitHypothesisMissing = $derived.by(() => {
+    if (batchMixCount === 1) return !(mixComments[mixes[0]?.id] || '').trim();
+    if (!experimentHypothesis.trim()) return true;
+    return submitMixList.some((m) => !(mixComments[m.id] || '').trim());
+  });
 
   const PROTEIN_TARGETS = ['sfGFP', 'PETase', 'Reteplase'];
 
@@ -1822,81 +2270,427 @@
   const LIMIT_SHORT = 300;    // sample_id · ai_model · acknowledgements
   const LIMIT_COMMENTS = 1500; // free-form comments
 
+  // One submit flow for any number of mixes: review the shared metadata, then write
+  // the active mix + every saved mix in one pass. Each mix carries its own protein
+  // target (set on its column), so there's no target picker here. When there's a
+  // single mix the sample_id is editable; for a batch, IDs are auto-generated.
   function openSubmitModal() {
     submitError = '';
     submitMessage = '';
+    mixActionMessage = '';
+    mixActionError = '';
     if (!data?.kcUser) { submitError = 'Sign in to submit a composition.'; return; }
+    // Metadata (ai_model / acknowledgements / per-mix comments / experiment_hypothesis)
+    // is persistent designer state bound by both the JSON box and the modal fields, so
+    // there's nothing to reseed here — whatever's on screen is what submits. Only the
+    // editable sample_id is pulled from the current (single-mode) supplement JSON.
     let parsed = null;
     try { parsed = JSON.parse(supplementText); } catch { parsed = null; }
-    const md = (parsed && parsed.metadata && typeof parsed.metadata === 'object') ? parsed.metadata : {};
-    submitSampleId = String(parsed?.sample_id || computeSampleId() || '').trim();
-    submitAiModel = md.ai_model ?? '';
-    const mdTarget = typeof md.protein_target === 'string' ? md.protein_target : '';
-    submitProteinTarget = PROTEIN_TARGETS.includes(mdTarget) ? mdTarget : proteinTarget;
-    submitAcknowledgements = md.acknowledgements ?? '';
-    submitComments = md.comments ?? '';
+    submitSampleId = String((parsed && !Array.isArray(parsed) && parsed.sample_id) || computeSampleId() || '').trim();
+    submitMode = 'create';
     showSubmitModal = true;
   }
 
   function closeSubmitModal() {
     if (submitBusy) return;
     showSubmitModal = false;
+    submitMode = 'create';
   }
 
+  // Escape closes whichever popup modal is open (the submit/update dialog takes
+  // priority over the recipe popover when both happen to be up). The submit modal
+  // keeps its own guard so Escape can't dismiss it mid-submit.
+  function handleGlobalKeydown(e) {
+    if (e.key !== 'Escape') return;
+    if (showSubmitModal) { closeSubmitModal(); return; }
+    if (activeRecipe) { closeRecipe(); return; }
+  }
+
+  // Submit every mix (active + saved) to cfps_designs sequentially, reusing the
+  // single-submit endpoint. Each mix is its own record with the shared metadata and
+  // its own protein target. Sample IDs are auto-generated per mix, except a lone mix
+  // uses the editable sample_id from the modal. Reports how many landed.
   async function confirmSubmitDesign() {
     submitError = '';
     submitMessage = '';
     if (!data?.kcUser) { submitError = 'Sign in to submit a composition.'; return; }
-    const sampleId = submitSampleId.trim();
-    if (!sampleId) { submitError = 'sample_id is required.'; return; }
     if (!supplementValidation.valid) {
       submitError = 'The composition JSON is invalid — fix it before submitting.';
       return;
     }
-    let parsed;
-    try { parsed = JSON.parse(supplementText); }
-    catch { submitError = 'The composition JSON is invalid — fix it before submitting.'; return; }
+    if (submitHypothesisMissing) {
+      submitError = 'State the hypothesis being tested for every composition before submitting.';
+      return;
+    }
+    const single = batchMixCount === 1;
+    const explicitId = submitSampleId.trim();
+    if (single && !explicitId) { submitError = 'sample_id is required.'; return; }
 
-    // Keep the page-level target in sync with the confirmed choice.
-    proteinTarget = submitProteinTarget;
+    commitSelectedMix(); // flush the live buffer into the selected mix before reading
+    const mixesToSubmit = [...mixes]
+      .sort((a, b) => a.n - b.n)
+      .map((m) => ({ id: m.id, n: m.n, volumes: m.volumes, target: m.proteinTarget }));
+    const ai_model = designAiModel.trim();
+    const acknowledgements = designAcknowledgements.trim();
+    const experimentHyp = experimentHypothesis.trim();
 
-    const sample = {
-      sample_id: sampleId,
-      sample_type: 'experimental',
-      reagent_list: parsed.reagent_list,
-      metadata: {
-        ai_model: submitAiModel.trim(),
-        protein_target: submitProteinTarget,
-        acknowledgements: submitAcknowledgements.trim(),
-        comments: submitComments.trim()
-      }
-    };
+    // For a batch, every mix shares one freshly-minted token so their sample_ids
+    // group together and auto-increment by Mix number (e.g. ada_2026-10-06_b2au5p_1,
+    // _2, _3). A lone mix keeps the editable sample_id from the modal. The shared
+    // base doubles as the batch_id grouping key stored in each sample's metadata.
+    const batchSize = mixesToSubmit.length;
+    let batchBase = '';
+    let batchId = '';
+    if (!single) {
+      sampleIdToken = randomToken();
+      batchBase = computeSampleId(); // e.g. ada_2026-10-06_b2au5p
+      batchId = batchBase;           // stable grouping key for this whole batch
+    }
+
+    // Build every sample_id up front so we can guarantee the batch has no duplicate
+    // IDs before sending anything (the server also rejects collisions, 409).
+    const plannedIds = mixesToSubmit.map((mix) =>
+      single ? explicitId : `${batchBase}_${mix.n}`
+    );
+    const dupes = plannedIds.filter((idv, i) => plannedIds.indexOf(idv) !== i);
+    if (dupes.length) {
+      submitError = `Duplicate sample IDs in this batch (${[...new Set(dupes)].join(', ')}). Each sample needs a unique ID.`;
+      return;
+    }
 
     submitBusy = true;
+    let ok = 0;
+    const failures = [];
     try {
-      const res = await fetch('/cfps/submit-design', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sample,
-          author: data?.kcUser?.name || '',
-          totalCostUsd,
-          costPerMlReaction
-        })
-      });
-      const result = await res.json();
-      if (!res.ok || !result.success) throw new Error(result.error || 'Submission failed.');
-      submitMessage = `Submitted composition — saved as ${result.id}.`;
-      showSubmitModal = false;
-      // Refresh so the new record appears in My Compositions, then drop the
-      // user at that section so their just-submitted design is in view.
-      await invalidateAll();
-      await tick();
-      if (typeof document !== 'undefined') {
-        document.querySelector('.cf-mydesigns')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      for (let i = 0; i < mixesToSubmit.length; i++) {
+        const mix = mixesToSubmit[i];
+        const target = PROTEIN_TARGETS.includes(mix.target) ? mix.target : proteinTarget;
+        const comments = (mixComments[mix.id] || '').trim(); // this experiment's own note
+        const sampleId = plannedIds[i];
+        const metadata = { ai_model, protein_target: target, acknowledgements, comments };
+        if (!single) {
+          // Batch grouping: lets My Compositions and the community rail collapse these
+          // sibling records into one batch card and load them all together.
+          metadata.batch_id = batchId;
+          metadata.batch_size = batchSize;
+          metadata.batch_index = mix.n;
+          // The group-level hypothesis belongs to the batch, not each composition, so
+          // store it once — on the batch's first member (batch_index 1). Reads look it
+          // up across the group, so any member can surface it.
+          if (mix.n === 1) metadata.experiment_hypothesis = experimentHyp;
+        }
+        const sample = {
+          sample_id: sampleId,
+          sample_type: 'experimental',
+          reagent_list: buildReagentListFromVolumes(mix.volumes, target),
+          metadata
+        };
+        try {
+          const res = await fetch('/cfps/submit-design', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sample,
+              author: data?.kcUser?.name || '',
+              totalCostUsd: costUsdForVolumes(mix.volumes),
+              costPerMlReaction: costUsdForVolumes(mix.volumes) * 50
+            })
+          });
+          const result = await res.json();
+          if (!res.ok || !result.success) throw new Error(result.error || 'rejected');
+          ok += 1;
+        } catch (e) {
+          failures.push(e?.message || 'failed');
+        }
       }
-    } catch (e) {
-      submitError = e?.message || 'Submission failed.';
+      sampleIdToken = randomToken(); // mint a fresh id for the next design
+      if (ok > 0) {
+        submitMessage =
+          failures.length === 0
+            ? `Submitted ${ok} composition${ok === 1 ? '' : 's'}.`
+            : `Submitted ${ok} of ${mixesToSubmit.length}; ${failures.length} failed.`;
+        // The batch is submitted; collapse back to a single editor seeded with the
+        // mix the user was on (renumbered Mix 1) so they can start the next batch.
+        const keep = mixes.find((m) => m.id === selectedMixId) ?? mixes[0];
+        mixes = [{ id: keep.id, n: 1, volumes: { ...volumesNl }, proteinTarget, startKey: customStartKey }];
+        selectedMixId = keep.id;
+        rankTabMixId = null;
+        // Clear the per-design rationale so the next design starts blank (ai_model and
+        // acknowledgements persist — they're usually the same across submissions).
+        mixComments = {};
+        experimentHypothesis = '';
+        showSubmitModal = false;
+        // Refresh so the new records appear in My Compositions, then drop the user
+        // at that section so their just-submitted designs are in view.
+        await invalidateAll();
+        await tick();
+        if (typeof document !== 'undefined') {
+          document.querySelector('.cf-mydesigns')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      } else {
+        submitError = single
+          ? (failures[0] || 'Submission failed.')
+          : `Submit failed — none of the ${mixesToSubmit.length} compositions saved.`;
+      }
+    } finally {
+      submitBusy = false;
+    }
+  }
+
+  // ── "Update existing" flow ──────────────────────────────────────────────────
+  // Lets a user who loaded one of THEIR OWN saved compositions (or batch), then
+  // tweaked it, save over the original instead of creating a fresh submission. A
+  // mix "belongs to" the user when its startKey is `community-<id>` and <id> is one
+  // of their own records (data.myDesigns, server-filtered by Keycloak author_sub).
+  let myDesignIdSet = $derived(new Set((data?.myDesigns ?? []).map((d) => String(d.id))));
+  let myDesignsById = $derived(
+    new Map((data?.myDesigns ?? []).map((d) => [String(d.id), d]))
+  );
+  function ownedDesignIdFor(startKey) {
+    const k = String(startKey || '');
+    if (!k.startsWith('community-')) return null;
+    const id = k.slice('community-'.length);
+    return myDesignIdSet.has(id) ? id : null;
+  }
+
+  // The loaded columns resolved into an update plan. Each column either UPDATES one
+  // of the user's records (the first column to claim a given record id — so a
+  // duplicated column maps to a new record, never a second write to the same one) or
+  // is CREATED as a new record. Order follows the columns left→right.
+  let updatePlan = $derived.by(() => {
+    const seen = new Set();
+    const rows = resolvedMixes.map((m) => {
+      const oid = ownedDesignIdFor(m.startKey);
+      const claim = oid && !seen.has(oid);
+      if (claim) seen.add(oid);
+      return {
+        id: m.id,
+        n: m.n,
+        volumes: m.volumes || {},
+        proteinTarget: PROTEIN_TARGETS.includes(m.proteinTarget) ? m.proteinTarget : proteinTarget,
+        recordId: claim ? oid : null,
+        isCustomized: m.isCustomized
+      };
+    });
+    return {
+      rows,
+      updates: rows.filter((r) => r.recordId),
+      creates: rows.filter((r) => !r.recordId)
+    };
+  });
+
+  // Show the "Update existing" button only once there's actually something to save:
+  // at least one of the user's own compositions is loaded AND either one of those
+  // columns has diverged from what's saved (volumes or protein target) or there are
+  // brand-new columns to fold into the batch.
+  let canUpdateExisting = $derived.by(() => {
+    if (!data?.kcUser) return false;
+    const { updates, creates } = updatePlan;
+    if (!updates.length) return false;
+    const ownedChanged = updates.some((u) => {
+      if (u.isCustomized) return true;
+      const saved = myDesignsById.get(u.recordId);
+      return !!saved && PROTEIN_TARGETS.includes(u.proteinTarget) && saved.proteinTarget !== u.proteinTarget;
+    });
+    return ownedChanged || creates.length > 0;
+  });
+
+  // Button / modal copy for the update flow.
+  let updateButtonLabel = $derived.by(() => {
+    const u = updatePlan.updates.length;
+    const c = updatePlan.creates.length;
+    if (c > 0) return `Update · ${u} + ${c} new`;
+    if (u > 1) return `Update batch · ${u}`;
+    return 'Update composition';
+  });
+
+  // Open the shared review modal in update mode: seed shared metadata + per-mix
+  // comments from the records being overwritten (new columns start blank).
+  function openUpdateModal() {
+    submitError = '';
+    submitMessage = '';
+    mixActionMessage = '';
+    mixActionError = '';
+    if (!data?.kcUser) { submitError = 'Sign in to update a composition.'; return; }
+    commitSelectedMix();
+    if (!canUpdateExisting) { submitError = 'Load one of your own compositions and edit it first.'; return; }
+    const firstSaved = myDesignsById.get(updatePlan.updates[0]?.recordId);
+    designAiModel = firstSaved?.aiModel ?? '';
+    designAcknowledgements = firstSaved?.acknowledgements ?? '';
+    const commentMap = { ...mixComments };
+    for (const r of updatePlan.rows) {
+      const saved = r.recordId ? myDesignsById.get(r.recordId) : null;
+      commentMap[r.id] = saved?.comments ?? '';
+    }
+    mixComments = commentMap;
+    // The whole batch shares one experiment hypothesis, stored on a single member —
+    // seed from whichever owned record actually carries it.
+    experimentHypothesis =
+      updatePlan.updates
+        .map((u) => myDesignsById.get(u.recordId))
+        .find((s) => s?.experimentHypothesis)?.experimentHypothesis ?? '';
+    submitMode = 'update';
+    showSubmitModal = true;
+  }
+
+  // Overwrite the user's own loaded records in place and, per their choice, fold any
+  // brand-new columns into the same batch. Updates go to /cfps/my-designs (op:update
+  // with a full validated sample); new columns reuse /cfps/submit-design. Both are
+  // ownership-checked server-side against the Keycloak subject.
+  async function confirmUpdateDesign() {
+    submitError = '';
+    submitMessage = '';
+    if (!data?.kcUser) { submitError = 'Sign in to update a composition.'; return; }
+    if (!supplementValidation.valid) {
+      submitError = 'The composition JSON is invalid — fix it before updating.';
+      return;
+    }
+    if (submitHypothesisMissing) {
+      submitError = 'State the hypothesis being tested for every composition before saving.';
+      return;
+    }
+    commitSelectedMix();
+    const plan = updatePlan;
+    if (!plan.updates.length) { submitError = 'Nothing of yours is loaded to update.'; return; }
+
+    const ai_model = designAiModel.trim();
+    const acknowledgements = designAcknowledgements.trim();
+    const experimentHyp = experimentHypothesis.trim();
+    const total = plan.rows.length;
+    const isBatch = total > 1;
+    // The group hypothesis is stored once, on the batch's lead (leftmost) composition —
+    // whichever row that is (an update or a new column). Every other record omits it,
+    // so re-saving clears any stale copies off the non-lead members.
+    const leadRowId = plan.rows[0]?.id;
+
+    // Batch grouping key: reuse the records' existing batch when they all share one,
+    // otherwise mint a fresh id so a single composition + new columns becomes a batch.
+    const ownedBatchIds = [
+      ...new Set(plan.updates.map((u) => myDesignsById.get(u.recordId)?.batchId).filter(Boolean))
+    ];
+    const batchBase = isBatch
+      ? (ownedBatchIds.length === 1 ? ownedBatchIds[0] : computeSampleId())
+      : null;
+
+    // New sample_ids continue after the highest batch index already in use, deduped
+    // against the user's existing titles so a create can never 409 on a collision.
+    const existingTitles = new Set((data?.myDesigns ?? []).map((d) => String(d.name)));
+    let nextIndex = 0;
+    for (const u of plan.updates) {
+      const idx = Number(myDesignsById.get(u.recordId)?.batchIndex) || 0;
+      if (idx > nextIndex) nextIndex = idx;
+    }
+
+    submitBusy = true;
+    let okU = 0, okC = 0;
+    const failures = [];
+    const createdByMix = new Map(); // mix id → new record id, to relink columns after
+    try {
+      // 1) Update owned records in place.
+      let col = 0;
+      for (const r of plan.rows) {
+        col += 1;
+        if (!r.recordId) continue;
+        const saved = myDesignsById.get(r.recordId);
+        const target = r.proteinTarget;
+        const comments = (mixComments[r.id] || '').trim();
+        const metadata = { ai_model, protein_target: target, acknowledgements, comments };
+        if (isBatch) {
+          metadata.batch_id = batchBase;
+          metadata.batch_size = total; // only needs to read as >1; exactness isn't used
+          metadata.batch_index = Number(saved?.batchIndex) || col;
+          if (r.id === leadRowId) metadata.experiment_hypothesis = experimentHyp;
+        }
+        const sample = {
+          sample_id: saved?.name || r.id, // keep the existing title (unique in the collection)
+          sample_type: 'experimental',
+          reagent_list: buildReagentListFromVolumes(r.volumes, target),
+          metadata
+        };
+        try {
+          const res = await fetch('/cfps/my-designs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              op: 'update',
+              id: r.recordId,
+              sample,
+              totalCostUsd: costUsdForVolumes(r.volumes),
+              costPerMlReaction: costUsdForVolumes(r.volumes) * 50
+            })
+          });
+          const result = await res.json();
+          if (!res.ok || !result.success) throw new Error(result.error || 'rejected');
+          okU += 1;
+        } catch (e) {
+          failures.push(e?.message || 'update failed');
+        }
+      }
+
+      // 2) Create brand-new columns, folded into the same batch.
+      for (const r of plan.creates) {
+        nextIndex += 1;
+        const target = r.proteinTarget;
+        const comments = (mixComments[r.id] || '').trim();
+        let sid = isBatch ? `${batchBase}_${nextIndex}` : computeSampleId();
+        while (existingTitles.has(sid)) sid = `${batchBase || 'mix'}_${nextIndex}_${randomToken()}`;
+        existingTitles.add(sid);
+        const metadata = { ai_model, protein_target: target, acknowledgements, comments };
+        if (isBatch) {
+          metadata.batch_id = batchBase;
+          metadata.batch_size = total;
+          metadata.batch_index = nextIndex;
+          if (r.id === leadRowId) metadata.experiment_hypothesis = experimentHyp;
+        }
+        const sample = {
+          sample_id: sid,
+          sample_type: 'experimental',
+          reagent_list: buildReagentListFromVolumes(r.volumes, target),
+          metadata
+        };
+        try {
+          const res = await fetch('/cfps/submit-design', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sample,
+              author: data?.kcUser?.name || '',
+              totalCostUsd: costUsdForVolumes(r.volumes),
+              costPerMlReaction: costUsdForVolumes(r.volumes) * 50
+            })
+          });
+          const result = await res.json();
+          if (!res.ok || !result.success) throw new Error(result.error || 'rejected');
+          if (result.id) createdByMix.set(r.id, result.id);
+          okC += 1;
+        } catch (e) {
+          failures.push(e?.message || 'create failed');
+        }
+      }
+
+      if (okU + okC > 0) {
+        // Relink any just-created columns to their new records so they read as saved
+        // (and a second Update targets them in place rather than creating again).
+        if (createdByMix.size) {
+          mixes = mixes.map((m) =>
+            createdByMix.has(m.id) ? { ...m, startKey: `community-${createdByMix.get(m.id)}` } : m
+          );
+          if (createdByMix.has(selectedMixId)) customStartKey = `community-${createdByMix.get(selectedMixId)}`;
+        }
+        submitMessage =
+          `Updated ${okU} composition${okU === 1 ? '' : 's'}` +
+          (okC ? `, added ${okC} new` : '') +
+          (failures.length ? `; ${failures.length} failed.` : '.');
+        showSubmitModal = false;
+        submitMode = 'create';
+        await invalidateAll();
+        await tick();
+        if (typeof document !== 'undefined') {
+          document.querySelector('.cf-mydesigns')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      } else {
+        submitError = failures[0] || 'Update failed.';
+      }
     } finally {
       submitBusy = false;
     }
@@ -1924,8 +2718,55 @@
   let orderedDesigns = $state(sortMyDesigns(data?.myDesigns));
   $effect(() => { orderedDesigns = sortMyDesigns(data?.myDesigns); });
 
-  let myDesignsGroups = $derived.by(() => {
+  // A batch_id → display label. The id IS the shared sample_id base
+  // (e.g. "ada_lovelace_2026-10-06_b2au5p"); show the whole thing as the batch name.
+  function batchDisplayName(batchId) {
+    return String(batchId || 'batch').trim() || 'batch';
+  }
+
+  // Partition My Compositions into batches (submitted together, sharing a batch_id)
+  // and standalone designs. A batch needs ≥2 members actually present — a lone
+  // survivor of a mostly-deleted batch falls back to a standalone card. Batch members
+  // are pulled OUT of the per-protein groups so they only appear in the batch section.
+  let myDesignsPartition = $derived.by(() => {
     const list = orderedDesigns;
+    const byBatch = new Map();
+    for (const d of list) {
+      const bid = d.batchId && Number(d.batchSize) > 1 ? d.batchId : null;
+      if (!bid) continue;
+      if (!byBatch.has(bid)) byBatch.set(bid, []);
+      byBatch.get(bid).push(d);
+    }
+    const batches = [];
+    const batchMemberIds = new Set();
+    for (const [bid, members] of byBatch) {
+      if (members.length < 2) continue; // not really a batch anymore
+      const sorted = [...members].sort(
+        (a, b) => (Number(a.batchIndex) || 0) - (Number(b.batchIndex) || 0)
+      );
+      sorted.forEach((m) => batchMemberIds.add(m.id));
+      // Distinct experimental targets present in the batch, in canonical order, plus
+      // an "Other" chip if any member has an unrecognised target.
+      const present = PROTEIN_TARGETS.filter((t) => sorted.some((m) => m.proteinTarget === t));
+      const hasOther = sorted.some((m) => !PROTEIN_TARGETS.includes(m.proteinTarget));
+      batches.push({
+        batchId: bid,
+        name: batchDisplayName(bid),
+        count: sorted.length,
+        members: sorted,
+        memberIds: sorted.map((m) => m.id),
+        targets: hasOther ? [...present, 'Other'] : present,
+        created: sorted.map((m) => m.created || '').sort().slice(-1)[0] || null
+      });
+    }
+    batches.sort((a, b) => String(b.created || '').localeCompare(String(a.created || '')));
+    const singletons = list.filter((d) => !batchMemberIds.has(d.id));
+    return { batches, singletons };
+  });
+  let myBatches = $derived(myDesignsPartition.batches);
+
+  let myDesignsGroups = $derived.by(() => {
+    const list = myDesignsPartition.singletons;
     const groups = PROTEIN_TARGETS.map((t) => ({
       key: t,
       label: t,
@@ -1939,7 +2780,10 @@
 
   let editingDesignId = $state(null);
   let confirmDeleteDesignId = $state(null);
+  let confirmDeleteBatchId = $state(null);
   let copiedDesignId = $state(null);
+  let copiedBatchId = $state(null);
+  let expandedBatchId = $state(null);
   let myDesignBusy = $state(false);
   let myDesignError = $state('');
   let myDesignMessage = $state('');
@@ -2041,6 +2885,41 @@
     }
   }
 
+  // Delete every record in a batch (they're independent cfps_designs rows that merely
+  // share a batch_id). Each is deleted via the same ownership-checked endpoint; we
+  // report how many landed and refresh once at the end.
+  async function deleteBatch(batch) {
+    if (myDesignBusy) return;
+    const members = batch?.members ?? [];
+    if (!members.length) return;
+    myDesignBusy = true;
+    myDesignError = '';
+    myDesignMessage = '';
+    let ok = 0;
+    try {
+      for (const m of members) {
+        try {
+          const res = await fetch('/cfps/my-designs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ op: 'delete', id: m.id })
+          });
+          const result = await res.json();
+          if (res.ok && result.success) ok += 1;
+        } catch { /* tallied below */ }
+      }
+      if (ok === members.length) {
+        myDesignMessage = `Deleted batch (${ok} composition${ok === 1 ? '' : 's'}).`;
+      } else {
+        myDesignError = `Deleted ${ok} of ${members.length}; some compositions could not be removed.`;
+      }
+      confirmDeleteBatchId = null;
+      await invalidateAll();
+    } finally {
+      myDesignBusy = false;
+    }
+  }
+
   // Shareable link → equips the composition into the visitor's Custom Mix on load
   // (handled in onMount via the ?design=<id> param). Uses the PocketBase record id,
   // which also keys the "community-<id>" Custom Mix formulation.
@@ -2059,19 +2938,199 @@
     }
   }
 
+  // Shareable link for a whole batch → equips every member into its own Custom Mix
+  // column on load (handled in onMount via the ?batch=<id,id,…> param, mirroring the
+  // single-design ?design=<id> path).
+  function shareableBatchUrl(batch) {
+    if (typeof window === 'undefined') return '';
+    const ids = (batch?.memberIds ?? []).map((id) => encodeURIComponent(id)).join(',');
+    return `${window.location.origin}/cfps?batch=${ids}`;
+  }
+  async function copyBatchLink(batch) {
+    myDesignError = '';
+    try {
+      await navigator.clipboard.writeText(shareableBatchUrl(batch));
+      copiedBatchId = batch.batchId;
+      setTimeout(() => { if (copiedBatchId === batch.batchId) copiedBatchId = null; }, 1600);
+    } catch {
+      myDesignError = 'Could not copy the link to your clipboard.';
+    }
+  }
+
+  // "Edit" on a batch card expands it so each member can be edited inline (a batch is
+  // just a set of independent compositions sharing a batch_id, so editing happens per
+  // member, reusing the same inline editor the singleton cards use).
+  function toggleBatchEdit(batch) {
+    const willOpen = expandedBatchId !== batch.batchId;
+    expandedBatchId = willOpen ? batch.batchId : null;
+    if (!willOpen) editingDesignId = null;
+    confirmDeleteBatchId = null;
+    myDesignError = '';
+    myDesignMessage = '';
+  }
+
   // Load a saved composition back into the working Custom Mix (reusing the same
   // "community-<id>" formulation the shareable link equips), then scroll up to the
   // comparison table so the loaded mix is in view.
   function loadDesignIntoMix(d) {
     const key = `community-${d.id}`;
-    if (!findFormulation(key)) {
+    const fm = findFormulation(key);
+    if (!fm) {
       myDesignError = 'Could not load this composition into the Custom Mix.';
       return;
     }
     myDesignError = '';
-    setCustomStart(key);
+    setCustomStart(key); // keeps the current selected mix; writes the recipe into it
+    // Bring the composition's metadata back too so the JSON box + modal reflect it (a
+    // lone composition has no group hypothesis, so that field stays as-is).
+    mixComments = { ...mixComments, [selectedMixId]: fm.rationale || '' };
+    designAiModel = fm.aiModel || '';
+    designAcknowledgements = fm.acknowledgements || '';
     myDesignMessage = `Loaded “${d.name}” into the Custom Mix.`;
     try { scrollToComparison(); } catch { /* ignore */ }
+  }
+
+  // Load an ENTIRE batch into the Custom Mix columns at once: one column per member,
+  // ordered by batch index, each seeded from its own "community-<id>" formulation
+  // (so the targets/recipes come back exactly as submitted). Used by the batch cards
+  // in both My Compositions and the community rail. `memberIds` is the batch members'
+  // record ids in display order; `label` is the batch name for the status line.
+  function loadBatchIntoMixes(memberIds, label = 'batch') {
+    const fms = (Array.isArray(memberIds) ? memberIds : [])
+      .map((id) => findFormulation(`community-${id}`))
+      .filter(Boolean);
+    if (!fms.length) {
+      myDesignError = 'Could not load this batch into the Custom Mix.';
+      return false;
+    }
+    const built = renumberMixes(
+      fms.map((fm) => ({
+        id: `mix-${randomToken()}`,
+        n: 0,
+        volumes: { ...(volumesForFormulation(fm) || {}) },
+        proteinTarget: PROTEIN_TARGETS.includes(fm.proteinTarget) ? fm.proteinTarget : proteinTarget,
+        startKey: fm.key
+      }))
+    );
+    mixes = built;
+    // Repopulate the metadata that backs the JSON box + submit modal from the loaded
+    // batch, so what's on screen round-trips: per-mix rationale per column, and the
+    // shared ai_model / acknowledgements / overall hypothesis from the first member.
+    const commentMap = {};
+    built.forEach((m, i) => { commentMap[m.id] = fms[i]?.rationale || ''; });
+    mixComments = commentMap;
+    designAiModel = fms[0]?.aiModel || '';
+    designAcknowledgements = fms[0]?.acknowledgements || '';
+    // The group hypothesis is stored on just one member, so find it across the batch.
+    experimentHypothesis = fms.find((f) => f?.experimentHypothesis)?.experimentHypothesis || '';
+    const first = built[0];
+    selectedMixId = first.id;
+    volumesNl = { ...(first.volumes || {}) };
+    if (PROTEIN_TARGETS.includes(first.proteinTarget)) proteinTarget = first.proteinTarget;
+    customStartKey = first.startKey;
+    rankTabMixId = null;
+    myDesignError = '';
+    myDesignMessage = `Loaded ${fms.length} composition${fms.length === 1 ? '' : 's'} from “${label}” into the Custom Mix.`;
+    try { scrollToComparison(); } catch { /* ignore */ }
+    return true;
+  }
+
+  // The user's own customized mixes, captured as fresh column slots in column order.
+  // "Customized" = the volume map has diverged from that mix's starting recipe (the
+  // same rule that flips a column's label to "Custom"). The selected mix reads the
+  // live editing buffer; the rest read their stored snapshots. Used when focusing a
+  // community composition so hand-edited work survives while standard / other-author
+  // columns are cleared.
+  function keptCustomMixSlots() {
+    return mixes
+      .map((m) => {
+        const isSel = m.id === selectedMixId;
+        const customized = isSel ? customIsCustomized : isMixCustomized(m);
+        if (!customized) return null;
+        return {
+          id: m.id,
+          n: 0,
+          volumes: isSel ? { ...volumesNl } : { ...(m.volumes || {}) },
+          proteinTarget: isSel ? proteinTarget : m.proteinTarget,
+          startKey: isSel ? customStartKey : m.startKey
+        };
+      })
+      .filter(Boolean);
+  }
+
+  // Clicking a community composition in the rail FOCUSES it: standard recipes and
+  // other authors' un-edited compositions are cleared, the picked composition becomes
+  // the leftmost (selected) column, and any mixes the user has personally customized
+  // are kept to its right — so it's always obvious whose composition you're viewing.
+  function pickCommunityStart(key) {
+    const bm = findFormulation(key);
+    if (!bm) return;
+    const kept = keptCustomMixSlots(); // capture BEFORE the live buffer is reseeded
+    const vols = volumesForFormulation(bm) || {};
+    const target = PROTEIN_TARGETS.includes(bm.proteinTarget) ? bm.proteinTarget : proteinTarget;
+    const picked = {
+      id: `mix-${randomToken()}`,
+      n: 0,
+      volumes: { ...vols },
+      proteinTarget: target,
+      startKey: key
+    };
+    mixes = renumberMixes([picked, ...kept]);
+    selectedMixId = picked.id;
+    volumesNl = { ...vols };
+    proteinTarget = target;
+    customStartKey = key;
+    rankTabMixId = null;
+    // Round-trip this composition's metadata into the JSON box + submit modal: its
+    // rationale as the focused column's comment, plus the author's ai_model /
+    // acknowledgements / overall hypothesis. Merge comments so kept mixes keep theirs,
+    // and only overwrite the shared fields when this composition actually carries a
+    // value — so focusing one card never wipes metadata the user has already typed.
+    mixComments = { ...mixComments, [picked.id]: bm.rationale || '' };
+    if (bm.aiModel) designAiModel = bm.aiModel;
+    if (bm.acknowledgements) designAcknowledgements = bm.acknowledgements;
+    if (bm.experimentHypothesis) experimentHypothesis = bm.experimentHypothesis;
+  }
+
+  // Same focus behavior for a whole community batch clicked in the rail: load every
+  // member as its own leftmost column, keep the user's customized mixes to the right.
+  // (My Compositions "load all" and the shared ?batch= link use loadBatchIntoMixes,
+  // which fully replaces the columns — a deliberate difference per context.)
+  function pickCommunityBatch(memberIds, label = 'batch') {
+    const fms = (Array.isArray(memberIds) ? memberIds : [])
+      .map((id) => findFormulation(`community-${id}`))
+      .filter(Boolean);
+    if (!fms.length) {
+      myDesignError = 'Could not load this batch into the Custom Mix.';
+      return false;
+    }
+    const kept = keptCustomMixSlots(); // capture BEFORE the live buffer is reseeded
+    const batchSlots = fms.map((fm) => ({
+      id: `mix-${randomToken()}`,
+      n: 0,
+      volumes: { ...(volumesForFormulation(fm) || {}) },
+      proteinTarget: PROTEIN_TARGETS.includes(fm.proteinTarget) ? fm.proteinTarget : proteinTarget,
+      startKey: fm.key
+    }));
+    mixes = renumberMixes([...batchSlots, ...kept]);
+    // Repopulate the metadata that backs the JSON box + submit modal from the focused
+    // batch, so the overall hypothesis / ai_model / acknowledgements / per-column
+    // rationale round-trip. Merge (don't replace) comments so any kept custom mixes
+    // keep theirs.
+    const nextComments = { ...mixComments };
+    batchSlots.forEach((m, i) => { nextComments[m.id] = fms[i]?.rationale || ''; });
+    mixComments = nextComments;
+    designAiModel = fms[0]?.aiModel || '';
+    designAcknowledgements = fms[0]?.acknowledgements || '';
+    // The group hypothesis is stored on just one member, so find it across the batch.
+    experimentHypothesis = fms.find((f) => f?.experimentHypothesis)?.experimentHypothesis || '';
+    const first = batchSlots[0];
+    selectedMixId = first.id;
+    volumesNl = { ...(first.volumes || {}) };
+    if (PROTEIN_TARGETS.includes(first.proteinTarget)) proteinTarget = first.proteinTarget;
+    customStartKey = first.startKey;
+    rankTabMixId = null;
+    return true;
   }
 
   // ── drag-to-rank within a target-protein group ──────────────────────────────
@@ -2163,6 +3222,21 @@
         try { document.querySelector('#comparison')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* ignore */ }
         stateRestored = true;
         return;
+      }
+      // Shared batch link (?batch=<id,id,…>): load every member into its own Custom Mix
+      // column. Wins like the single-design link and strips the param afterwards.
+      const batchParam = page?.url?.searchParams?.get('batch');
+      if (batchParam) {
+        const ids = batchParam.split(',').map((s) => s.trim()).filter(Boolean);
+        if (ids.length && loadBatchIntoMixes(ids, 'shared batch')) {
+          try {
+            const u = new URL(window.location.href);
+            u.searchParams.delete('batch');
+            history.replaceState(history.state, '', u);
+          } catch { /* ignore */ }
+          stateRestored = true;
+          return;
+        }
       }
       if (!data?.initialDesign) {
         const raw = localStorage.getItem(DESIGNER_STATE_KEY);
@@ -2596,10 +3670,16 @@
       </button>
       <a
         class="hero-doclink"
-        href="https://docs.google.com/document/d/1hFs2_vGpHP_hZ7UB3lRBsfVlN4xVPOoLy1Hu2INrBoo/edit?tab=t.0"
+        href="https://docs.google.com/document/d/1E9RKXezEU5pMO5A10kkUHjHrfL5f8segL0QeNHXAs_E"
         target="_blank"
         rel="noopener noreferrer"
       >Coopetition Details ↗</a>
+      <a
+        class="hero-doclink"
+        href="https://forum.htgaa.org/#narrow/channel/43-cfps-coopetition"
+        target="_blank"
+        rel="noopener noreferrer"
+      >Forum Discussion ↗</a>
     </div>
   </div>
 
@@ -2636,15 +3716,17 @@
     <div class="cf-block-sub">Reagent concentrations in <b style="color:#fff;">mM</b> (proteins in mg/mL, enzymes in U/mL, DNA in ng/µL).</div>
     <BenchmarksTable
       benchmarkFormulations={benchmarkFormulations}
+      fingerprintFor={formulationFingerprint}
       onLoad={loadBenchmarkFormulation}
       onShowRecipe={openRecipe}
       customMix={customMixByPaper}
       customWaterUl={customWaterUl}
       onAdjust={comparisonAdjust}
-      onReset={resetCustomMix}
       customStartKey={customStartKey}
       customIsCustomized={customIsCustomized}
       onSetCustomStart={setCustomStart}
+      onPickCommunity={pickCommunityStart}
+      onLoadBatch={pickCommunityBatch}
       discrepancies={concentrationDiscrepancies}
       theoretical={theoreticalBanner}
       customCostPerMl={costPerMlReaction}
@@ -2652,6 +3734,14 @@
       communityFormulations={communityFormulations}
       externalComparison={platedComparison}
       onClearExternalComparison={() => (platedComparison = null)}
+      mixColumns={mixColumns}
+      proteinTarget={proteinTarget}
+      proteinTargets={PROTEIN_TARGETS}
+      onAddMix={addMix}
+      onSelectMix={selectMix}
+      onRemoveMix={removeMix}
+      onResetMix={resetMix}
+      onSetMixTarget={setMixTarget}
     >
       <!-- Supplement export panels rendered INSIDE the designer section so they
            read as part of the same cell-free reaction designer. -->
@@ -2659,6 +3749,23 @@
         <div class="cfps-2col">
           <div class="panel">
             <div class="panel__hd"><span class="label">concentration rank</span><span class="spacer"></span><button class="icon" onclick={copyConcentrationRank} title="Copy rank">⧉</button></div>
+            {#if mixColumns.length > 1}
+              <!-- One tab per mix — swap the rank view between the batch's formulations
+                   without changing which mix is being edited. -->
+              <div class="cfps-rank-tabs" role="tablist" aria-label="Mix formulations">
+                {#each mixColumns as col (col.id)}
+                  <button
+                    type="button"
+                    role="tab"
+                    class="cfps-rank-tab"
+                    class:is-active={rankViewMixId === col.id}
+                    aria-selected={rankViewMixId === col.id}
+                    onclick={() => (rankTabMixId = col.id)}
+                    title={`Show ${col.label}'s concentration rank`}
+                  >{col.label}</button>
+                {/each}
+              </div>
+            {/if}
             <div class="panel__bd">
               <div class="cfps-rank">
                 {#if concentrationRankEntries.length === 0}
@@ -2672,15 +3779,19 @@
             </div>
           </div>
           <div class="panel">
-            <div class="panel__hd"><span class="label">reagent supplement JSON</span><span class="spacer"></span><button class="icon" onclick={copyCompositionJson} title="Copy JSON">⧉</button></div>
+            <div class="panel__hd"><span class="label">{batchMixCount > 1 ? `batch submission JSON · ${batchMixCount} mixes` : 'reagent supplement JSON'}</span><span class="spacer"></span><button class="icon" onclick={copyCompositionJson} title="Copy JSON">⧉</button></div>
             <div class="panel__bd">
+              <!-- Editable in both modes. Single mix: one Sample object. Batch (>1 mix):
+                   the array of Sample dicts (one per mix, in mix-number order) that will be
+                   written to the database. Edits commit on blur via applySupplementEdits();
+                   volumes re-snap to the 25 nL grid and water re-balances to 20 µL. -->
               <textarea
                 class="cfps-json cfps-json--edit"
                 class:invalid={!supplementValidation.valid}
                 spellcheck="false"
                 rows="14"
                 value={supplementText}
-                oninput={(e) => (jsonDraft = e.currentTarget.value)}
+                oninput={(e) => { jsonDraft = e.currentTarget.value; }}
                 onchange={applySupplementEdits}
               ></textarea>
               {#if !supplementValidation.valid}
@@ -2705,24 +3816,45 @@
            confirm modal to review the sample_id + metadata. -->
       {#snippet submitRow()}
         <div class="cfps-submit">
-          <button
-            type="button"
-            class="btn-bp cfps-submit__btn"
-            class:is-busy={submitBusy}
-            onclick={openSubmitModal}
-            disabled={!supplementValidation.valid || submitBusy || !data?.kcUser}
-            title={!data?.kcUser ? 'Sign in to submit a composition' : (supplementValidation.valid ? 'Submit this composition to cfps_designs' : 'Fix the composition JSON before submitting')}
-          >
-            <svg class="cfps-submit__mol" viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
-              <path d="M4 15 L9 9 L15 14 L20 8" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-              <circle cx="4" cy="15" r="2" fill="#fff" />
-              <circle cx="9" cy="9" r="2" fill="#fff" />
-              <circle cx="15" cy="14" r="2" fill="#fff" />
-              <circle cx="20" cy="8" r="2" fill="#fff" />
-            </svg>
-            <span class="cfps-submit__label">{submitBusy ? 'Transmitting' : 'Submit composition'}</span>
-            <span class="cfps-submit__arrow" aria-hidden="true">▸</span>
-          </button>
+          <div class="cfps-submit__btns">
+            <button
+              type="button"
+              class="btn-bp cfps-submit__btn"
+              class:is-busy={submitBusy}
+              onclick={openSubmitModal}
+              disabled={!supplementValidation.valid || submitBusy || !data?.kcUser}
+              title={!data?.kcUser ? 'Sign in to submit a composition' : (!supplementValidation.valid ? 'Fix the composition JSON before submitting' : (batchMixCount > 1 ? `Submit all ${batchMixCount} mixes to cfps_designs — you can edit or update them later` : 'Submit this composition to cfps_designs — you can edit or update it later'))}
+            >
+              <svg class="cfps-submit__mol" viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+                <path d="M4 15 L9 9 L15 14 L20 8" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                <circle cx="4" cy="15" r="2" fill="#fff" />
+                <circle cx="9" cy="9" r="2" fill="#fff" />
+                <circle cx="15" cy="14" r="2" fill="#fff" />
+                <circle cx="20" cy="8" r="2" fill="#fff" />
+              </svg>
+              <span class="cfps-submit__label">{submitBusy ? 'Transmitting' : (batchMixCount > 1 ? `Submit batch · ${batchMixCount}` : 'Submit composition')}</span>
+              <span class="cfps-submit__arrow" aria-hidden="true">▸</span>
+            </button>
+            {#if canUpdateExisting}
+              <button
+                type="button"
+                class="btn-bp cfps-submit__btn cfps-submit__btn--update"
+                class:is-busy={submitBusy}
+                onclick={openUpdateModal}
+                disabled={!supplementValidation.valid || submitBusy}
+                title={updatePlan.creates.length
+                  ? `Save your edits over ${updatePlan.updates.length} of your composition${updatePlan.updates.length === 1 ? '' : 's'} and add ${updatePlan.creates.length} new to the batch`
+                  : `Save your edits over your existing composition${updatePlan.updates.length === 1 ? '' : 's'} (no new record)`}
+              >
+                <svg class="cfps-submit__mol" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                  <polyline points="17 21 17 13 7 13 7 21" />
+                  <polyline points="7 3 7 8 15 8" />
+                </svg>
+                <span class="cfps-submit__label">{submitBusy ? 'Saving' : updateButtonLabel}</span>
+              </button>
+            {/if}
+          </div>
           {#if !data?.kcUser}
             <p class="cfps-submit__msg" style="color:var(--muted);">
               <a href="/cfps/auth/login" style="color:var(--teal);text-decoration:none;">Sign in</a> to submit a composition.
@@ -2731,6 +3863,8 @@
             <p class="cfps-submit__msg" style="color:var(--err);">{submitError}</p>
           {:else if submitMessage}
             <p class="cfps-submit__msg" style="color:var(--phosphor);">{submitMessage}</p>
+          {:else if mixActionError}
+            <p class="cfps-submit__msg" style="color:var(--err);">{mixActionError}</p>
           {/if}
         </div>
       {/snippet}
@@ -2746,6 +3880,38 @@
       <circle cx="15" cy="14" r="2.1" fill={color} />
       <circle cx="20" cy="8" r="2.1" fill={color} />
     </svg>
+  {/snippet}
+  <!-- Inline composition editor (name + metadata). Parameterless: it binds the shared
+       editDesign* state, so it's reused by both singleton cards and batch members. -->
+  {#snippet editDesignForm()}
+    <label class="cf-mydesign__field">
+      <span>name</span>
+      <input class="cf-mydesign__input" type="text" bind:value={editDesignName} maxlength="300" placeholder="composition name" />
+    </label>
+    <label class="cf-mydesign__field">
+      <span>target protein</span>
+      <select class="cf-mydesign__input" bind:value={editDesignTarget}>
+        {#each PROTEIN_TARGETS as t}
+          <option value={t}>{t}</option>
+        {/each}
+      </select>
+    </label>
+    <label class="cf-mydesign__field">
+      <span>AI model</span>
+      <input class="cf-mydesign__input" type="text" bind:value={editDesignAiModel} maxlength="300" placeholder="e.g. claude-opus-4-8" />
+    </label>
+    <label class="cf-mydesign__field">
+      <span>acknowledgements</span>
+      <input class="cf-mydesign__input" type="text" bind:value={editDesignAck} maxlength="300" placeholder="collaborators to credit" />
+    </label>
+    <label class="cf-mydesign__field">
+      <span>hypothesis being tested</span>
+      <textarea class="cf-mydesign__input" rows="3" bind:value={editDesignComments} maxlength="1500" placeholder="the hypothesis this composition tests"></textarea>
+    </label>
+    <div class="cf-mydesign__actions">
+      <button type="button" class="btn-bp" onclick={saveEditDesign} disabled={myDesignBusy}>Save</button>
+      <button type="button" class="btn-bp" onclick={cancelEditDesign} disabled={myDesignBusy}>Cancel</button>
+    </div>
   {/snippet}
   {#if data?.kcUser}
     <div class="cf-mydesigns">
@@ -2765,6 +3931,104 @@
           <p class="muted" style="margin:0;">You haven’t submitted any compositions yet. Design a mix above and hit <b>Submit composition</b> to see it here.</p>
         </div></div>
       {:else}
+        {#if myBatches.length}
+          <div class="cf-mydesigns__group">
+            <div class="cf-mydesigns__grouphd" style="--grp:var(--teal);">
+              <svg class="cf-mydesigns__glyph" viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
+                <rect x="4" y="4" width="12" height="12" rx="2" stroke="var(--teal)" stroke-width="1.6" />
+                <path d="M8 8 h12 v12" stroke="var(--teal)" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.55" />
+              </svg>
+              <span class="label cf-mydesigns__grouptitle" style="color:var(--teal);">Batches</span>
+              <span class="faint">{myBatches.length} batch{myBatches.length === 1 ? '' : 'es'}</span>
+            </div>
+            <div class="cf-mydesigns__grid" role="list">
+              {#each myBatches as batch (batch.batchId)}
+                {@const batchOpen = expandedBatchId === batch.batchId}
+                <div
+                  class="cf-batchcard panel"
+                  class:cf-batchcard--editing={batchOpen}
+                  role="listitem"
+                >
+                  <div class="panel__bd">
+                    <div class="cf-batchcard__open">
+                      <div class="cf-batchcard__hd">
+                        <span class="cf-batchcard__count" title="{batch.count} compositions in this batch">{batch.count}×</span>
+                        <span class="cf-batchcard__name" title={batch.name}>{batch.name}</span>
+                      </div>
+                      {#if batch.targets.length}
+                        <div class="cf-batchcard__tags">
+                          {#each batch.targets as t}
+                            {@const pal = PROTEIN_PALETTE[t] || null}
+                            <span class="cf-mydesign__badge" style={pal ? `color:${pal.ink};background:${pal.wash};border-color:${pal.line};` : ''}>{t}</span>
+                          {/each}
+                        </div>
+                      {/if}
+                      {#if batchOpen}
+                        <ul class="cf-batchcard__editlist">
+                          {#each batch.members as m (m.id)}
+                            <li class="cf-batchcard__editmember" class:cf-batchcard__editmember--editing={editingDesignId === m.id}>
+                              {#if editingDesignId === m.id}
+                                {@render editDesignForm()}
+                              {:else}
+                                <div class="cf-batchcard__memberrow">
+                                  <span class="cf-batchcard__mix">Mix {m.batchIndex}</span>
+                                  <span class="cf-batchcard__mname" title={m.name}>{m.name}</span>
+                                  {#if m.proteinTarget}
+                                    <span class="cf-batchcard__mtarget">{m.proteinTarget}</span>
+                                  {/if}
+                                  <div class="cf-mydesign__tools">
+                                    <button type="button" class="cf-mydesign__tool cf-mydesign__tool--load" title="Load this composition into the Custom Mix" aria-label="Load composition into Custom Mix" onclick={() => loadDesignIntoMix(m)} disabled={myDesignBusy}>{@html ICON_LOAD}</button>
+                                    <button type="button" class="cf-mydesign__tool" class:cf-mydesign__tool--ok={copiedDesignId === m.id} title={copiedDesignId === m.id ? 'Link copied' : 'Copy shareable link'} aria-label="Copy shareable link" onclick={() => copyDesignLink(m)} disabled={myDesignBusy}>{@html copiedDesignId === m.id ? ICON_CHECK : ICON_LINK}</button>
+                                    <button type="button" class="cf-mydesign__tool" title="Edit this composition" aria-label="Edit composition" onclick={() => startEditDesign(m)} disabled={myDesignBusy}>{@html ICON_PENCIL}</button>
+                                  </div>
+                                </div>
+                              {/if}
+                            </li>
+                          {/each}
+                        </ul>
+                      {:else}
+                        <ul class="cf-batchcard__members">
+                          {#each batch.members as m (m.id)}
+                            <li class="cf-batchcard__member">
+                              <span class="cf-batchcard__mix">Mix {m.batchIndex}</span>
+                              <span class="cf-batchcard__mname" title={m.name}>{m.name}</span>
+                              {#if m.proteinTarget}
+                                <span class="cf-batchcard__mtarget">{m.proteinTarget}</span>
+                              {/if}
+                            </li>
+                          {/each}
+                        </ul>
+                        {#if batch.members.some((m) => m.comments)}
+                          <div class="cf-batchcard__comments">
+                            <span class="cf-batchcard__commentshd">comments</span>
+                            <ul class="cf-batchcard__commentlist">
+                              {#each batch.members as m (m.id)}
+                                <li><span class="cf-batchcard__commentn">{m.batchIndex}.</span> {m.comments || '—'}</li>
+                              {/each}
+                            </ul>
+                          </div>
+                        {/if}
+                      {/if}
+                    </div>
+                    <div class="cf-batchcard__foot">
+                      <div class="cf-mydesign__tools">
+                        <button type="button" class="cf-mydesign__tool cf-mydesign__tool--load" title="Load all {batch.count} compositions into the Custom Mix" aria-label="Load whole batch into Custom Mix" onclick={() => loadBatchIntoMixes(batch.memberIds, batch.name)} disabled={myDesignBusy}>{@html ICON_LOAD}</button>
+                        <button type="button" class="cf-mydesign__tool" class:cf-mydesign__tool--ok={copiedBatchId === batch.batchId} title={copiedBatchId === batch.batchId ? 'Link copied' : 'Copy shareable link for the whole batch'} aria-label="Copy shareable batch link" onclick={() => copyBatchLink(batch)} disabled={myDesignBusy}>{@html copiedBatchId === batch.batchId ? ICON_CHECK : ICON_LINK}</button>
+                        <button type="button" class="cf-mydesign__tool" class:cf-mydesign__tool--on={batchOpen} title={batchOpen ? 'Done editing' : 'Edit the compositions in this batch'} aria-label="Edit batch compositions" onclick={() => toggleBatchEdit(batch)} disabled={myDesignBusy}>{@html ICON_PENCIL}</button>
+                        {#if confirmDeleteBatchId === batch.batchId}
+                          <button type="button" class="cf-mydesign__tool cf-mydesign__tool--danger" title="Confirm delete whole batch" aria-label="Confirm delete batch" onclick={() => deleteBatch(batch)} disabled={myDesignBusy}>{@html ICON_TRASH}</button>
+                          <button type="button" class="cf-mydesign__tool" title="Cancel" aria-label="Cancel delete batch" onclick={() => (confirmDeleteBatchId = null)} disabled={myDesignBusy}>{@html ICON_X}</button>
+                        {:else}
+                          <button type="button" class="cf-mydesign__tool cf-mydesign__tool--del" title="Delete whole batch" aria-label="Delete whole batch" onclick={() => { confirmDeleteBatchId = batch.batchId; myDesignError = ''; myDesignMessage = ''; }} disabled={myDesignBusy}>{@html ICON_TRASH}</button>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
         {#each myDesignsGroups as grp (grp.key)}
           {#if grp.items.length}
             <div class="cf-mydesigns__group">
@@ -2794,35 +4058,7 @@
                     {/if}
                     <div class="panel__bd">
                       {#if editingDesignId === d.id}
-                        <!-- inline editor: name + metadata -->
-                        <label class="cf-mydesign__field">
-                          <span>name</span>
-                          <input class="cf-mydesign__input" type="text" bind:value={editDesignName} maxlength="300" placeholder="composition name" />
-                        </label>
-                        <label class="cf-mydesign__field">
-                          <span>target protein</span>
-                          <select class="cf-mydesign__input" bind:value={editDesignTarget}>
-                            {#each PROTEIN_TARGETS as t}
-                              <option value={t}>{t}</option>
-                            {/each}
-                          </select>
-                        </label>
-                        <label class="cf-mydesign__field">
-                          <span>AI model</span>
-                          <input class="cf-mydesign__input" type="text" bind:value={editDesignAiModel} maxlength="300" placeholder="e.g. claude-opus-4-8" />
-                        </label>
-                        <label class="cf-mydesign__field">
-                          <span>acknowledgements</span>
-                          <input class="cf-mydesign__input" type="text" bind:value={editDesignAck} maxlength="300" placeholder="collaborators to credit" />
-                        </label>
-                        <label class="cf-mydesign__field">
-                          <span>comments</span>
-                          <textarea class="cf-mydesign__input" rows="3" bind:value={editDesignComments} maxlength="1500" placeholder="notes about this composition"></textarea>
-                        </label>
-                        <div class="cf-mydesign__actions">
-                          <button type="button" class="btn-bp" onclick={saveEditDesign} disabled={myDesignBusy}>Save</button>
-                          <button type="button" class="btn-bp" onclick={cancelEditDesign} disabled={myDesignBusy}>Cancel</button>
-                        </div>
+                        {@render editDesignForm()}
                       {:else}
                         <div class="cf-mydesign__hd">
                           <span class="cf-mydesign__name" title={d.name}>{d.name}</span>
@@ -2861,18 +4097,17 @@
     </div>
   {/if}
 
-  <!-- ===== community reagents + reagent prompt (LLM hand-off), side by side ===== -->
-  <div class="cf-reagent-row">
-    <!-- community reagents on the left, scrollable and matched in height -->
+  <!-- ===== community reagents (full width) over the reagent prompt (LLM hand-off) ===== -->
+  <div class="cf-reagent-stack">
+    <!-- community reagents span the full width -->
     <ReagentSuggestions
-      embedded
       suggestions={data.suggestions ?? []}
       votedSuggestionIds={data.votedSuggestionIds ?? []}
       kcUser={data.kcUser ?? null}
       kcConfigured={data.kcConfigured ?? false}
       devMode={data.devMode ?? false}
     />
-    <!-- terminal-styled prompt on the right -->
+    <!-- terminal-styled prompt underneath -->
     <div class="panel panel--term cf-fill" style="position:relative;">
       <div class="panel__hd"><span class="label">reagent prompt</span><span class="spacer"></span><button class="icon" onclick={copyReagentPrompt} title="Copy prompt">⧉</button></div>
       <div class="panel__bd">
@@ -2959,16 +4194,20 @@
          (reference_results/*_results.json → concentration_results.concentration_g_L)
          and validation_report.py, whose unit_qualification reads "observed
          measurement; does not imply verified physical yield". sfGFP carries a real
-         MW (27,015 Da) and yields plausible g/L (~0.4–2.7); PETase/reteplase have
-         MW=None and back-calculate implausible g/L (PETase ~190–390, reteplase
-         ~0–26) — i.e. activity mapped to an apparent concentration, not a titer. -->
+         MW (27,015 Da), so its fluorescence maps to a true g/L titer. PETase and
+         reteplase have MW=None, so the pipeline's concentration_g_L field is
+         dimensionally µM of released product (PNP / AMC) read off each assay's
+         product standard curve — an apparent activity, not a titer. Verified: the
+         stored value is reproduced (R²≈0.98) from endpoint fluorescence via that
+         curve, and equals the initial release rate × read time. -->
     <p class="assay-metric-note">
       <strong>Key metric.</strong> sfGFP reports a true expression <em>titer</em> — g/L of folded
       protein, read directly by fluorescence against a purified-sfGFP curve. PETase and reteplase
-      report enzyme <em>activity</em> — the initial product-release rate (pNP for PETase, AMC for
-      reteplase), expressed as an <em>apparent</em> g/L via each assay's standard curve. That is an
-      observed activity measurement, not a verified physical yield, and g/L values are never
-      comparable across the three targets.
+      report enzyme <em>activity</em> — the amount of product released (pNP for PETase, AMC for
+      reteplase), read as an endpoint concentration in <em>µM</em> against each assay's product
+      standard curve (equivalently, the initial release rate × read time). That is an observed
+      activity measurement, not a verified physical yield, and the numbers are never comparable
+      across the three targets.
     </p>
     <div class="cf-3col">
       <div class="cf-card">
@@ -3001,7 +4240,7 @@
           <p class="assay-cap">The esterase attacks the ester bond of p-nitrophenyl hexanoate (pNPH): a water molecule splits the substrate into hexanoic acid and para-nitrophenol. In the alkaline buffer (pH 8) the para-nitrophenol loses a proton — it deprotonates to the para-nitrophenolate anion, whose extended, delocalised electron system now absorbs violet and blue light. With those wavelengths removed, the solution transmits the rest and reads yellow to the eye — tracked as absorbance at OD 405 nm.</p>
         </div>
         <div class="cf-dl">
-          <span class="cf-dk">Key metric</span><span class="cf-dv"><strong>Activity</strong> — pNP-release rate (OD 405 slope) → apparent g/L, not a yield</span>
+          <span class="cf-dk">Key metric</span><span class="cf-dv"><strong>Activity</strong> — pNP released (µM endpoint vs standard curve), not a yield</span>
           <span class="cf-dk">Dilution</span><span class="cf-dv">600× (final read)</span>
           <span class="cf-dk">Buffer</span><span class="cf-dv">PBS pH 8</span>
           <span class="cf-dk">Reads</span><span class="cf-dv">15 cycles, 0–28 min (~2 min apart)</span>
@@ -3026,7 +4265,7 @@
           <p class="assay-cap">Reteplase is a serine protease: it hydrolyses the amide bond just after the arginine of the D-Ile-Pro-Arg peptide, releasing free 7-amino-4-methylcoumarin (AMC). Tethered to the peptide the coumarin is held dark, but once its amino group is freed it donates electrons into the ring's conjugated system. Ultraviolet excitation at 345 nm now lifts those electrons; as they relax they emit blue light at 445 nm — and the rate at which that fluorescence climbs scales with protease activity.</p>
         </div>
         <div class="cf-dl">
-          <span class="cf-dk">Key metric</span><span class="cf-dv"><strong>Activity</strong> — AMC-release rate (fluorescence slope) → apparent g/L, not a yield</span>
+          <span class="cf-dk">Key metric</span><span class="cf-dv"><strong>Activity</strong> — AMC released (µM endpoint vs standard curve), not a yield</span>
           <span class="cf-dk">Dilution</span><span class="cf-dv">2× (direct in CFPS plate)</span>
           <span class="cf-dk">Buffer</span><span class="cf-dv">Assay buffer e12461 — 50 mM Tris-HCl pH 8.0, 150 mM NaCl, 0.1% Tween-20</span>
           <span class="cf-dk">Reads</span><span class="cf-dv">15 reads over ~8 h — ambient between reads (kinetic loop)</span>
@@ -3042,7 +4281,7 @@
   <div class="cf-block-sub">How the signal is captured — kinetic plate reads and the calibration curves behind each unit — plus the reagent ranges across the plates we actually ran.</div>
   <div class="panel"><div class="panel__bd">
 
-    <!-- 2b · plate reads (control kinetic reads for the current lysate) -->
+    <!-- 2b · plate reads (control kinetic reads, one plate per lysate batch) -->
     {#if data.plateReader?.targets?.length}
       <div class="cf-sechd" style="margin:16px 0 8px;">
         <span class="label">plate reads</span>
@@ -3053,7 +4292,7 @@
       {/if}
       <div class="cf-3col">
         {#each data.plateReader.targets as t, i}
-          <PlateReaderCard target={t} onExpand={() => openPlateReader(i)} />
+          <PlateReaderCard target={t} onExpand={(batch) => openPlateReader(i, batch)} />
         {/each}
       </div>
     {/if}
@@ -3120,6 +4359,19 @@
       <PlateAnalysis analysis={data.plateAnalysis} />
     {/if}
 
+  </div></div>
+
+  <!-- ================= FOLDING SIMULATION ================= -->
+  <div class="cf-block-hd">Folding Simulation</div>
+  <div class="cf-block-sub">From a flat chain of amino acids to the working shape each assay measures — scrub the timeline to watch secondary structure, hydrophobic collapse, and the disulfide bonds snap into place.</div>
+  <div class="panel"><div class="panel__bd">
+    <FoldingSimulation
+      structures={[
+        { key: 'sfgfp',     name: 'sfGFP',     pdb: 'https://files.rcsb.org/download/2B3P.pdb', accent: '#2f8f4e', glow: '#37e27a', sites: [65, 66, 67] },
+        { key: 'petase',    name: 'PETase',    pdb: 'https://files.rcsb.org/download/4CG1.pdb', accent: '#e08a1e', glow: '#ff9d2e', sites: [130, 176, 208] },
+        { key: 'reteplase', name: 'Reteplase', pdb: 'https://files.rcsb.org/download/1RTF.pdb', accent: '#cc3b2e', glow: '#ff4a3a', sites: [57, 102, 195] }
+      ]}
+    />
   </div></div>
 
   <!-- ================= PROCESS DETAILS ================= -->
@@ -3214,6 +4466,27 @@
 
   </div></div>
 
+  <!-- ================= page footer · repository link ================= -->
+  <footer class="cf-footer">
+    <a
+      class="btn-bp cf-footer__gh"
+      href="https://github.com/RonanChance/htgaa-automation"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="View this project on GitHub"
+    >
+      <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      View on GitHub
+    </a>
+    <nav class="cf-footer__legal" aria-label="Legal and data-use policies">
+      <a href="/cfps/legal#privacy">Privacy</a>
+      <span aria-hidden="true">·</span>
+      <a href="/cfps/legal#cookies">Cookies</a>
+      <span aria-hidden="true">·</span>
+      <a href="/cfps/legal#terms">Terms</a>
+    </nav>
+  </footer>
+
 </div>
 {/if}
 {:else}
@@ -3256,49 +4529,79 @@
      write to cfps_designs. Backdrop or ✕ closes (unless a submit is in flight). -->
 {#if showSubmitModal}
   <div class="ck-modal-ov" onclick={closeSubmitModal} role="presentation">
-    <div class="ck-modal__panel" style="width:min(520px,96vw);" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Submit composition">
+    <div class="ck-modal__panel" style="width:min(520px,96vw);" onclick={(e) => e.stopPropagation()} role="dialog" aria-label={submitMode === 'update' ? 'Update composition' : 'Submit composition'}>
       <div class="ck-modal__hd">
         <div class="ck-modal__ttl">
-          <b>Submit composition</b>
-          <span class="ck-modal__sub">Review the sample ID and metadata, then save to cfps_designs.</span>
+          {#if submitMode === 'update'}
+            <b>{updatePlan.creates.length
+              ? `Update ${updatePlan.updates.length} + add ${updatePlan.creates.length} new`
+              : (updatePlan.updates.length > 1 ? `Update batch · ${updatePlan.updates.length} compositions` : 'Update composition')}</b>
+            <span class="ck-modal__sub">{updatePlan.creates.length
+              ? `Overwrites your ${updatePlan.updates.length} loaded composition${updatePlan.updates.length === 1 ? '' : 's'} in place and adds ${updatePlan.creates.length} new column${updatePlan.creates.length === 1 ? '' : 's'} to the same batch. Sample IDs of your existing compositions are kept.`
+              : `Overwrites your loaded composition${updatePlan.updates.length === 1 ? '' : 's'} in place — the sample ID${updatePlan.updates.length === 1 ? '' : 's'} and submission${updatePlan.updates.length === 1 ? '' : 's'} stay, only the recipe and notes change.`}</span>
+          {:else}
+            <b>{batchMixCount > 1 ? `Submit batch · ${batchMixCount} compositions` : 'Submit composition'}</b>
+            <span class="ck-modal__sub">{batchMixCount > 1
+              ? 'Writes every Mix column to cfps_designs. Sample IDs are generated per composition; each mix keeps its own protein target and per-mix rationale. The overall experiment hypothesis, AI model, and acknowledgements apply to the whole group.'
+              : 'Review the sample ID and metadata, then save to cfps_designs.'}</span>
+          {/if}
         </div>
         <button type="button" class="icon ck-modal__x" onclick={closeSubmitModal} aria-label="Close">✕</button>
       </div>
       <div class="ck-modal__bd">
         <div class="cf-form">
+          {#if batchMixCount === 1 && submitMode === 'create'}
+            <label>
+              <span class="cf-lbl">Sample ID <span class="cf-charcount">{submitSampleId.length}/{LIMIT_SHORT}</span></span>
+              <input type="text" class="cf-in no-autofill" placeholder="e.g. ada_lovelace_2026-09-27" autocomplete="off" maxlength={LIMIT_SHORT} bind:value={submitSampleId} />
+            </label>
+          {/if}
           <label>
-            <span class="cf-lbl">Sample ID <span class="cf-charcount">{submitSampleId.length}/{LIMIT_SHORT}</span></span>
-            <input type="text" class="cf-in no-autofill" placeholder="e.g. ada_lovelace_2026-09-27" autocomplete="off" maxlength={LIMIT_SHORT} bind:value={submitSampleId} />
+            <span class="cf-lbl">AI model <span class="cf-charcount">{designAiModel.length}/{LIMIT_SHORT}</span></span>
+            <input type="text" class="cf-in no-autofill" placeholder="e.g. claude-opus-4-8" autocomplete="off" maxlength={LIMIT_SHORT} bind:value={designAiModel} />
           </label>
           <label>
-            <span class="cf-lbl">Protein target</span>
-            <select class="cf-in" bind:value={submitProteinTarget}>
-              {#each PROTEIN_TARGETS as t}
-                <option value={t}>{t}</option>
+            <span class="cf-lbl">Acknowledgements <span class="cf-charcount">{designAcknowledgements.length}/{LIMIT_SHORT}</span></span>
+            <input type="text" class="cf-in no-autofill" placeholder="collaborators to credit" autocomplete="off" maxlength={LIMIT_SHORT} bind:value={designAcknowledgements} />
+          </label>
+          {#if batchMixCount === 1}
+            <label>
+              <span class="cf-lbl"><span>Hypothesis being tested <span class="cf-req" title="Required">*</span></span> <span class="cf-charcount">{(mixComments[mixes[0].id] || '').length}/{LIMIT_COMMENTS}</span></span>
+              <textarea class="cf-in" placeholder="e.g. Increasing X by 100 nL will increase sfGFP yield" maxlength={LIMIT_COMMENTS} bind:value={mixComments[mixes[0].id]}></textarea>
+            </label>
+          {:else}
+            <label>
+              <span class="cf-lbl"><span>Overall Experiment Hypothesis <span class="cf-req" title="Required">*</span></span> <span class="cf-charcount">{experimentHypothesis.length}/{LIMIT_COMMENTS}</span></span>
+              <textarea class="cf-in" placeholder={`e.g. the question this group of ${batchMixCount} conditions is designed to answer`} maxlength={LIMIT_COMMENTS} bind:value={experimentHypothesis}></textarea>
+            </label>
+            <div class="cf-batch-comments">
+              <span class="cf-batch-comments__hd">Per-mix rationale <span class="cf-req" title="Required, one per composition">*</span></span>
+              {#each submitMixList as m (m.id)}
+                <label class="cf-batch-comment">
+                  <span class="cf-lbl">
+                    <span>{mixLabel(m.n)} <span class="cf-batch-comment__tgt">· {m.proteinTarget}</span></span>
+                    <span class="cf-charcount">{(mixComments[m.id] || '').length}/{LIMIT_COMMENTS}</span>
+                  </span>
+                  <textarea class="cf-in" rows="2" placeholder={`rationale for ${mixLabel(m.n)}`} maxlength={LIMIT_COMMENTS} bind:value={mixComments[m.id]}></textarea>
+                </label>
               {/each}
-            </select>
-          </label>
-          <label>
-            <span class="cf-lbl">AI model <span class="cf-charcount">{submitAiModel.length}/{LIMIT_SHORT}</span></span>
-            <input type="text" class="cf-in no-autofill" placeholder="e.g. claude-opus-4-8" autocomplete="off" maxlength={LIMIT_SHORT} bind:value={submitAiModel} />
-          </label>
-          <label>
-            <span class="cf-lbl">Acknowledgements <span class="cf-charcount">{submitAcknowledgements.length}/{LIMIT_SHORT}</span></span>
-            <input type="text" class="cf-in no-autofill" placeholder="collaborators to credit" autocomplete="off" maxlength={LIMIT_SHORT} bind:value={submitAcknowledgements} />
-          </label>
-          <label>
-            <span class="cf-lbl">Comments <span class="cf-charcount">{submitComments.length}/{LIMIT_COMMENTS}</span></span>
-            <textarea class="cf-in" placeholder="free-form notes about this composition" maxlength={LIMIT_COMMENTS} bind:value={submitComments}></textarea>
-          </label>
+            </div>
+          {/if}
           {#if submitError}
             <p style="margin:0;font-size:11px;color:var(--err);">{submitError}</p>
           {/if}
         </div>
         <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px;">
           <button type="button" class="btn-bp" onclick={closeSubmitModal} disabled={submitBusy}>Cancel</button>
-          <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={confirmSubmitDesign} disabled={submitBusy}>
-            {#if !submitBusy}Submit ▸{:else}Submitting…{/if}
-          </button>
+          {#if submitMode === 'update'}
+            <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={confirmUpdateDesign} disabled={submitBusy || submitHypothesisMissing} title={submitHypothesisMissing ? 'Add the hypothesis being tested before saving' : ''}>
+              {#if submitBusy}Saving…{:else}{updateButtonLabel} ▸{/if}
+            </button>
+          {:else}
+            <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={confirmSubmitDesign} disabled={submitBusy || submitHypothesisMissing} title={submitHypothesisMissing ? 'Add the hypothesis being tested before submitting' : ''}>
+              {#if submitBusy}Submitting…{:else if batchMixCount > 1}Submit {batchMixCount} ▸{:else}Submit ▸{/if}
+            </button>
+          {/if}
         </div>
       </div>
     </div>
@@ -3343,6 +4646,7 @@
   <PlateReaderModal
     data={data.plateReader}
     initialIndex={plateReaderTarget}
+    initialBatch={plateReaderBatch}
     onLoadWell={loadWellRecipe}
     onSelectComposition={loadCompositionIntoComparison}
     onClose={() => (plateReaderOpen = false)}
@@ -3351,7 +4655,7 @@
 
 </div>
 
-<svelte:window onpointermove={handlePointerMove} onpointerup={endReagentDrag} />
+<svelte:window onpointermove={handlePointerMove} onpointerup={endReagentDrag} onkeydown={handleGlobalKeydown} />
 
 <style>
   /* thinner outer frame: halve the standard page padding (drives .page padding,
@@ -3424,25 +4728,17 @@
     font-size: clamp(12px, 1.5vw, 18px);  /* a touch smaller than the component default */
   }
 
-  /* reagent prompt + community reagents, side by side and matched in height.
-     The row has a definite height so both cards fill it and scroll internally. */
-  .cf-reagent-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* community reagents (full width) stacked over the reagent prompt. The prompt
+     keeps a definite height so its <pre> scrolls internally. */
+  .cf-reagent-stack {
+    display: flex;
+    flex-direction: column;
     gap: 12px;
-    align-items: stretch;
     margin: 28px auto 0;
-    height: clamp(420px, 50vh, 540px);
   }
-  @media (max-width: 900px) {
-    .cf-reagent-row {
-      grid-template-columns: 1fr;
-      height: auto;
-      grid-auto-rows: 380px;   /* each stacked card keeps a fixed, scrollable height */
-    }
-  }
-  /* left card fills the cell; the prompt <pre> scrolls inside it */
-  .cf-fill { height: 100%; display: flex; flex-direction: column; min-height: 0; margin: 0; }
+  .cf-reagent-stack .cf-fill { height: clamp(360px, 46vh, 520px); }
+  /* the prompt card fills its height; the prompt <pre> scrolls inside it */
+  .cf-fill { display: flex; flex-direction: column; min-height: 0; margin: 0; }
   .cf-fill .panel__bd {
     flex: 1 1 auto;
     min-height: 0;
@@ -3453,8 +4749,14 @@
   .cf-fill .cfps-prompt { flex: 1 1 auto; min-height: 0; max-height: none; margin: 0; }
 
   /* terminal aesthetic for the reagent prompt — dark ground, white text + outline,
-     to match the rest of the page rather than the light data cards. */
-  .panel--term {
+     to match the rest of the page rather than the light data cards.
+     Written as `.panel.panel--term` (not just `.panel--term`) on purpose: the global
+     `.cfps-page .panel` rule sets a light background at the SAME specificity (0,2,0),
+     so a bare `.panel--term` only wins by source order — which flips between the dev
+     (inline <style>) and production (bundled CSS) builds, and dropped the dark ground
+     in production. The extra class makes this rule (0,3,0) so the dark ground always
+     wins. (The descendant rules below already compute higher and are unaffected.) */
+  .panel.panel--term {
     background: rgba(8, 9, 11, 0.92);
     border-color: rgba(255, 255, 255, 0.28);
   }
@@ -3856,6 +5158,16 @@
     gap: 6px;
     margin-top: 0;
   }
+  .cfps-submit__btns {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    /* shrink to the widest button so Submit + Update share one width and stay
+       centered under the toolbar (see .cfps-submit { align-items: center }). */
+    width: max-content;
+    max-width: 100%;
+  }
   /* Tech-forward "transmit" button: gradient teal panel, a folding protein glyph
      that comes alive on hover, a sheen that sweeps on hover, and a nudging arrow. */
   .cfps-submit__btn {
@@ -3890,6 +5202,22 @@
   }
   .cfps-submit__btn:hover:not([disabled])::before { transform: translateX(120%); }
   .cfps-submit__btn:active:not([disabled]) { transform: translateY(1px); }
+  /* "Update existing" — a secondary, outline variant that sits directly beneath the
+     primary Submit button and stretches to match its width (column flex above). */
+  .cfps-submit__btn--update {
+    color: var(--teal-ink);
+    background: var(--surface);
+    border-color: var(--teal);
+    box-shadow: none;
+    font-size: 11px;
+    padding: 7px 18px;
+  }
+  .cfps-submit__btn--update:hover:not([disabled]) {
+    color: var(--teal-ink);
+    background: var(--teal-wash);
+    filter: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  }
   /* protein glyph — static at rest; its beads pulse in a wave (a signal running
      down the chain) only while hovering, and it tumbles while transmitting. */
   .cfps-submit__mol { display: block; overflow: visible; }
@@ -4026,6 +5354,72 @@
   }
   .cf-mydesign__input:focus { outline: none; border-color: var(--teal); }
   textarea.cf-mydesign__input { resize: vertical; }
+
+  /* Batch card in My Compositions: a group of compositions submitted together. The
+     header/members are display-only; a footer toolbar carries load-all, copy-link,
+     edit (expands the members for inline editing) and delete-batch controls. */
+  .cf-batchcard { position: relative; }
+  .cf-batchcard .panel__bd { display: flex; flex-direction: column; gap: 8px; }
+  .cf-batchcard--editing { border-color: var(--teal); }
+  .cf-batchcard__open {
+    display: flex; flex-direction: column; gap: 8px; width: 100%;
+  }
+  .cf-batchcard__hd { display: flex; align-items: center; gap: 8px; }
+  .cf-batchcard__count {
+    flex-shrink: 0; font: 700 12px/1 var(--mono); letter-spacing: .04em;
+    color: var(--teal-ink); background: var(--teal-wash); border: 1px solid var(--teal);
+    border-radius: var(--r-sm); padding: 3px 6px;
+  }
+  .cf-batchcard__name {
+    font: 600 12px/1.3 var(--mono); color: var(--ink); word-break: break-all;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .cf-batchcard__tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .cf-batchcard__members {
+    list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px;
+  }
+  .cf-batchcard__member {
+    display: flex; align-items: center; gap: 6px; font: 10px/1.3 var(--mono); color: var(--muted);
+  }
+  .cf-batchcard__mix {
+    flex-shrink: 0; color: var(--faint); min-width: 34px;
+  }
+  .cf-batchcard__mname {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto;
+  }
+  .cf-batchcard__mtarget { flex-shrink: 0; color: var(--faint); }
+  /* Per-member comments, enumerated by mix number in a bounded scroll box so a chatty
+     batch never balloons the card's height. */
+  .cf-batchcard__comments { display: flex; flex-direction: column; gap: 3px; }
+  .cf-batchcard__commentshd {
+    font: 500 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+  }
+  .cf-batchcard__commentlist {
+    list-style: none; margin: 0; padding: 6px 7px; display: flex; flex-direction: column; gap: 4px;
+    max-height: 84px; overflow-y: auto;
+    border: 1px solid var(--hair); border-radius: var(--r-sm); background: var(--surface-2);
+    font: 10px/1.35 var(--mono); color: var(--muted);
+  }
+  .cf-batchcard__commentlist li { display: flex; gap: 5px; overflow-wrap: anywhere; }
+  .cf-batchcard__commentn { flex: 0 0 auto; color: var(--teal-ink); }
+  /* Expanded (editing) member list — each row carries its own load/link/edit tools,
+     and swaps to the shared inline editor while that member is being edited. */
+  .cf-batchcard__editlist {
+    list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
+  }
+  .cf-batchcard__editmember {
+    border: 1px solid var(--hair); border-radius: var(--r-sm); padding: 6px 7px;
+    background: var(--surface-2); display: flex; flex-direction: column; gap: 6px;
+  }
+  .cf-batchcard__editmember--editing { border-color: var(--teal); }
+  .cf-batchcard__memberrow {
+    display: flex; align-items: center; gap: 6px; font: 10px/1.3 var(--mono); color: var(--muted);
+  }
+  .cf-batchcard__foot {
+    display: flex; align-items: center; gap: 8px;
+    border-top: 1px solid var(--hair); padding-top: 8px;
+  }
+  .cf-mydesign__tool--on { color: var(--teal-ink); border-color: var(--teal); background: var(--teal-wash); }
 
   /* Sequence viewer inside each target-protein card: amino-acid ⇄ DNA toggle,
      length readout, copy button, and a scrollable monospace sequence box. */
@@ -4232,4 +5626,31 @@
     color: var(--muted);
     text-align: center;
   }
+
+  /* page footer — repository link + legal links, centered under the last section */
+  .cf-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-top: calc(var(--pad) * 2);
+    padding-top: var(--pad);
+    border-top: 1px solid var(--hair);
+  }
+  .cf-footer__gh {
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-decoration: none;
+  }
+  .cf-footer__legal {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 10px/1 var(--mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .cf-footer__legal a { color: var(--muted); text-decoration: none; }
+  .cf-footer__legal a:hover { color: var(--teal); text-decoration: underline; }
 </style>

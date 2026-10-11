@@ -256,6 +256,13 @@
                 const activeElement = document.activeElement;
                 const isTypable = activeElement?.nodeName === 'INPUT' || activeElement?.nodeName === 'TEXTAREA' || activeElement?.isContentEditable;
 
+                // Escape closes the bacteria-color popup first, before any canvas shortcut.
+                if (event.key === 'Escape' && showBacteriaModal) {
+                    event.preventDefault();
+                    showBacteriaModal = false;
+                    return;
+                }
+
                 const isUndoShortcut = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z';
                 if (isUndoShortcut && !isTypable) {
                     event.preventDefault();

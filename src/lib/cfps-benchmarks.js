@@ -29,6 +29,24 @@ export const BIORXIV_URL = 'https://www.biorxiv.org/content/10.64898/2026.02.05.
 //    rounding, e.g. AMP 125 nL = 0.625 mM printed as "0.6"). Literature targets
 //    (Olsen Table 1 + oxidizing controls) are NOT Echo-native: their published
 //    concentrations weren't designed around our Echo, so 25 nL rounding is real.
+// Literature formulations whose phosphate was reassigned from the bare
+// "Phosphate" key to the explicit "Phosphate (di:mono)" mix. These papers
+// specify a phosphate concentration but NOT a dibasic:monobasic ratio; they run
+// it at pH ~7.0–7.2 (Cai 2015 / Zawada 2011 = 7.0; Warfel 2023 used K-phosphate
+// dibasic titrated to 7.2). At cell-free ionic strength the apparent pKa2 of
+// phosphate is ~6.8 (not the thermodynamic 7.2), so the 1.6:1 dibasic:monobasic
+// mix buffers to ~pH 7.0 — the accurate match. The app marks these values with
+// an asterisk footnote so the "ratio not stated in the paper" caveat is visible.
+export const PHOSPHATE_RATIO_INFERRED_KEYS = new Set([
+    'calhoun-2005',
+    'zawada-2011',
+    'cai-2015',
+    'warfel-2023',
+    'rfopt-2026',
+    'rfopt-2026-ox'
+]);
+const PHOSPHATE_INFERRED_REAGENT = 'Phosphate (di:mono)';
+
 // Exported so the server-side loader can apply the same category → paperUrl /
 // echoNative derivation to formulations pulled from PocketBase (static_values)
 // before they reach the page — keeping DB-edited and file-default rows identical.
@@ -38,6 +56,11 @@ export function augmentFormulations(list) {
         if (bm.category === 'gpt5-autonomous') { bm.paperUrl = BIORXIV_URL; bm.echoNative = true; }
         else if (bm.category === 'ginkgo-target') { bm.paperUrl = null; bm.echoNative = true; }
         else { bm.paperUrl = NATURE_URL; bm.echoNative = false; }
+        // Flag phosphate values whose dibasic:monobasic ratio we inferred (the
+        // paper stated only "phosphate"). Rendered with an asterisk + footnote.
+        if (PHOSPHATE_RATIO_INFERRED_KEYS.has(bm.key) && bm.components?.[PHOSPHATE_INFERRED_REAGENT] != null) {
+            bm.ratioInferred = [PHOSPHATE_INFERRED_REAGENT];
+        }
     }
     return list;
 }
@@ -64,9 +87,11 @@ export const REAGENT_ALIASES = {
                          notes: 'Composite: 17 aa mix + tyrosine + cysteine. Each contributes the same mM target.' },
     'Tyrosine':        { ids: ['tyrosine'],                       stockMm: 50,  unit: 'mM' },
     'Cysteine':        { ids: ['cysteine'],                       stockMm: 200, unit: 'mM' },
-    'Phosphate':       { ids: ['potassium_phosphate_ratio_dibasic_monobasic'], stockMm: 500, unit: 'mM' },
+    // Bare "Phosphate" retired: we only stock the two 1.6:1 ratio mixes, never a
+    // plain/unspecified phosphate. The literature formulations that used it are
+    // folded into "Phosphate (di:mono)" (see PHOSPHATE_RATIO_INFERRED_KEYS).
     'Phosphate (di:mono)': { ids: ['potassium_phosphate_ratio_dibasic_monobasic'], stockMm: 500, unit: 'mM',
-                             notes: '1.6:1 dibasic:monobasic molar ratio.' },
+                             notes: '1.6:1 dibasic:monobasic molar ratio (buffers to ~pH 7.0 at cell-free ionic strength).' },
     'Phosphate (mono:di)': { ids: ['potassium_phosphate_ratio_monobasic_dibasic'], stockMm: 500, unit: 'mM',
                              notes: '1.6:1 monobasic:dibasic molar ratio.' },
     'Dilithium acetyl phosphate': { ids: ['dilithium_acetyl_phosphate'], stockMm: 50, unit: 'mM' },
@@ -86,13 +111,13 @@ export const REAGENT_ALIASES = {
     'Nicotinamide':    { ids: ['nicotinamide'],                  stockMm: 100,  unit: 'mM' },
     'Ribose':          { ids: ['ribose'],                        stockMm: 666.09,  unit: 'mM' },
     'HEPES pH 7.5':           { ids: ['hepes_koh'],                     stockMm: 1000, unit: 'mM' },
-    'Bis-Tris':        { ids: ['bis_tris_ph_6_5'], stockMm: 200, unit: 'mM',
+    'Bis-Tris':        { ids: null /* out of stock — was ['bis_tris_ph_6_5'] */, stockMm: 200, unit: 'mM',
                          notes: 'Bis-Tris buffer not in stock. HEPES-KOH pH 7.5 is closest substitute.' },
     'Sodium pyruvate':        { ids: ['sodium_pyruvate'],               stockMm: 908.76,  unit: 'mM' },
     'Putrescine':      { ids: ['putrescine_dihydrochloride'], stockMm: 500, unit: 'mM',
                          notes: 'Putrescine not in stock. Spermidine partially compensates.' },
     'Spermidine':      { ids: ['spermidine'],                    stockMm: 250,  unit: 'mM' },
-    'Dithiothreitol':  { ids: ['dithiothreitol'], stockMm: 1000, unit: 'mM',
+    'Dithiothreitol':  { ids: null /* out of stock — was ['dithiothreitol'] */, stockMm: 1000, unit: 'mM',
                          notes: 'DTT not in stock. Cell lysate contains endogenous reducing power.' },
     'Folinic acid':    { ids: ['folinic_acid'],                  stockMm: 10,   unit: 'mg/mL',
                          notes: 'Stock is 10 mg/mL; target values in paper are mg/mL.' },
@@ -104,7 +129,7 @@ export const REAGENT_ALIASES = {
     'cAMP':            { ids: ['camp'],                          stockMm: 200,  unit: 'mM' },
     'PEP':             { ids: ['pep_mono'],                       stockMm: 100, unit: 'mM',
                          notes: 'Uses the in-stock pep_mono variant (100 mM).' },
-    '3-PGA':           { ids: ['three_pga'], stockMm: 75, unit: 'mM',
+    '3-PGA':           { ids: null /* out of stock — was ['three_pga'] */, stockMm: 75, unit: 'mM',
                          notes: '3-Phosphoglycerate not in stock. Related to central carbon metabolism.' },
     'Oxalic acid':     { ids: ['potassium_oxalate'],             stockMm: 500,  unit: 'mM',
                          notes: 'Supplied as potassium oxalate (0.5 M stock).' },
@@ -112,8 +137,8 @@ export const REAGENT_ALIASES = {
     'GSH':             { ids: ['reduced_glutathione'],           stockMm: 100,  unit: 'mM' },
     'Maltodextrin':    { ids: ['maltodextrin_17'],               stockMm: 300,  unit: 'mg/mL',
                          notes: 'Stock is 300 mg/mL; target values are mg/mL.' },
-    'PEG-8000':        { ids: ['peg_8000'], stockMm: 10, unit: '% w/v',
-                         notes: 'PEG-8000 (crowding agent) not in stock.' },
+    'PEG-8000':        { ids: ['peg_8000'],                      stockMm: 10, unit: '% w/v',
+                         notes: 'PEG-8000 (crowding agent); stock and targets are % w/v.' },
     'ATP':             { ids: ['atp'],                           stockMm: 100,  unit: 'mM' },
     'CTP':             { ids: ['ctp'],                           stockMm: 100,  unit: 'mM' },
     'GTP':             { ids: ['gtp'],                           stockMm: 100,  unit: 'mM' },
@@ -213,7 +238,7 @@ export const CUSTOM_REAGENT_IDS = new Set(CUSTOM_REAGENTS.map((r) => r.id));
 export const REAGENT_GROUPS = [
     { name: 'Salts', reagents: ['K(Glu)', 'Mg(Glu)2', 'NH4(Glu)', 'Ammonium acetate'] },
     { name: 'Amino acids', reagents: ['Amino acids', 'Tyrosine', 'Cysteine'] },
-    { name: 'Buffers', reagents: ['HEPES pH 7.5', 'Bis-Tris', 'Phosphate', 'Phosphate (di:mono)', 'Phosphate (mono:di)'] },
+    { name: 'Buffers', reagents: ['HEPES pH 7.5', 'Bis-Tris', 'Phosphate (di:mono)', 'Phosphate (mono:di)'] },
     { name: 'Energy substrates', reagents: ['Glucose', 'Sodium pyruvate', 'Maltose', 'Maltodextrin', 'Ribose', 'PEP', '3-PGA', 'Dilithium acetyl phosphate'] },
     { name: 'Cofactors', reagents: ['Folinic acid', 'tRNA', 'CoA', 'NAD', 'cAMP', 'Nicotinamide'] },
     { name: 'Polyamines / redox', reagents: ['Putrescine', 'Spermidine', 'Dithiothreitol', 'GSSG', 'GSH', 'Oxalic acid'] },
