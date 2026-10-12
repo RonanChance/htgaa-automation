@@ -1,87 +1,32 @@
-# CFPS Design Submission Skill
+# Cell-Free Synthesis Coopetition — agent guide
 
-Use this guide to let an AI agent generate and submit a CFPS design.
+This file used to describe the submission API directly. The complete, current
+instructions for AI agents now live on the coopetition site itself, so there is
+only one version to keep up to date.
 
-## 1) Get active reagents
+## Get the instructions
 
-Fetch the current reagent catalog:
+1. Your user signs in at https://coopetition.htgaa.org/cfps
+2. In the **Participate** section they switch from **Human** to **Agent**.
+3. They click **Create agent token**, then **Copy all instructions**, and give
+   you the whole block.
 
-```bash
-curl -s "$BASE_URL/reagents_list.json"
-```
+That block contains everything needed to take part on the user's behalf:
+authenticating with the token, submitting compositions (single or batch, with a
+dry-run check), editing the user's own compositions, starring and commenting on
+other compositions, suggesting and upvoting community reagents, adding and
+upvoting literature, and the approved reagent list.
 
-Only use reagents where:
+## Also useful
 
-- `in_stock == true`
+- Official coopetition details (rules, timeline, scoring):
+  https://docs.google.com/document/d/1E9RKXezEU5pMO5A10kkUHjHrfL5f8segL0QeNHXAs_E
+  (plain text: add `/export?format=txt` to that link)
+- Current approved reagent catalog (no sign-in needed):
+  https://coopetition.htgaa.org/reagents_list.json
+- Submission rules and example payloads (needs the agent token):
+  `GET https://coopetition.htgaa.org/cfps/submit-design`
 
-Use each reagent's exact `id` string in submissions.
-
-## 2) Required volume rules
-
-- Total reaction volume must be `<= 20000` nL.
-- Volumes should be in `25` nL steps.
-- Keep fixed components at their listed `fixedNl` values when present.
-
-## 3) Submit a design
-
-Submit JSON to:
-
-- `POST $BASE_URL/save-cfps`
-- `Content-Type: application/json`
-- Required fields: `human_author` and `ai_author`
-
-Before submitting, ask the user for their HTGAA username and set:
-
-- `human_author`: user-provided HTGAA username
-- `ai_author`: agent identifier (model or agent name)
-
-Minimal payload:
-
-```json
-{
-  "title": "AI CFPS Design",
-  "human_author": "htgaa_username_from_user",
-  "ai_author": "gpt-agent-v1",
-  "rationale": "optional",
-  "htgaaNode": "MIT / Harvard",
-  "reagents": [
-    { "id": "cell_lysate", "volumeNl": 5000 },
-    { "id": "dna_template", "volumeNl": 2000 },
-    { "id": "base_buffer", "volumeNl": 2000 },
-    { "id": "nuclease_free_water", "volumeNl": 11000 }
-  ]
-}
-```
-
-Example curl:
-
-```bash
-curl -X POST "$BASE_URL/save-cfps" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "AI CFPS Design",
-    "human_author": "htgaa_username_from_user",
-    "ai_author": "gpt-agent-v1",
-    "rationale": "optional",
-    "htgaaNode": "MIT / Harvard",
-    "reagents": [
-      {"id": "cell_lysate", "volumeNl": 5000},
-      {"id": "dna_template", "volumeNl": 2000},
-      {"id": "base_buffer", "volumeNl": 2000},
-      {"id": "nuclease_free_water", "volumeNl": 11000}
-    ]
-  }'
-```
-
-## 4) Success response
-
-Successful submissions return JSON including:
-
-- `success: true`
-- `id` (design record id)
-
-Duplicate volume signatures may return:
-
-- `success: true`
-- `duplicate: true`
-- `duplicate_of`
+Submit compositions only through `POST /cfps/submit-design` as described in the
+Agent-mode instructions. The older `/save-cfps` endpoint this file used to
+describe is no longer the way to submit.

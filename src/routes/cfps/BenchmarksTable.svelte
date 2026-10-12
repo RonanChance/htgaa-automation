@@ -6,8 +6,8 @@
 
     import { onDestroy, onMount } from 'svelte';
     import {
-        REAGENT_ALIASES,
-        REAGENT_GROUPS,
+        REAGENT_ALIASES as STATIC_REAGENT_ALIASES,
+        REAGENT_GROUPS as STATIC_REAGENT_GROUPS,
         CUSTOM_REAGENT_IDS,
         feasibilityFor,
         limsUrlForReagentId,
@@ -20,6 +20,13 @@
     const CUSTOM_COLOR = '#4a5560';
 
     let {
+        // Reagent groups (row order) + paper-name → inventory aliases. Default to
+        // the literature-only static sets for safety, but the parent always passes
+        // the merged versions (REAGENT_GROUPS/REAGENT_ALIASES + buildCatalogExtras),
+        // so the table also lists reagents from the live PocketBase catalog that no
+        // benchmark formulation mentions.
+        reagentGroups = STATIC_REAGENT_GROUPS,
+        reagentAliases = STATIC_REAGENT_ALIASES,
         onLoad,
         onShowRecipe,
         // Live design bridge from the parent designer. `customMix` is a map
@@ -70,6 +77,9 @@
         // as a "Community" group in the added-column dropdowns so any submission
         // can be pulled in as a comparison column.
         communityFormulations = [],
+        // Signed-in viewer's display name — added to a card's starrer list
+        // optimistically while a star request is in flight.
+        viewerName = '',
         // A composition picked in the plate-reader modal's ranked-titers chart,
         // shaped like a BENCHMARK_FORMULATIONS entry. When set it takes over the
         // Comparison Mix column (forced visible) instead of the dropdown selection;
@@ -176,7 +186,7 @@
     // per-cell wiring. An unset id falls back to the column's design default.
     // Floors are chosen so a column can't be dragged narrow enough to clip/wrap
     // its content; the reference/literature columns stay content-sized as before.
-    const COL_DEFAULTS = { rcol: 200, custom: 96, comparison: 96, closest: 132 };
+    const COL_DEFAULTS = { rcol: 212, custom: 96, comparison: 96, closest: 132 }; // rcol 212: fits "Phosphate (di:mono)" + stock + ⓘ on one line
     const COL_FLOOR = { rcol: 150, value: 64 };
     const COL_MAX = { rcol: 480, value: 260 };
     let colWidths = $state({});
@@ -362,18 +372,30 @@
         stepClick(e, reagentId, dir);
     }
 
+    // CSV of the table: your Mix columns first (the same values their cells show),
+    // then every visible reference / literature column. Every stocked reagent row is
+    // kept even when empty, so the export lists the full reagent set; reference-only
+    // rows (nothing in stock, e.g. Bis-Tris) are kept only when some column uses them.
     function downloadCSV() {
-        const allReagents = REAGENT_GROUPS.flatMap(g => g.reagents);
-        const header = ['Reagent', 'Unit', ...displayFormulations.map(bm => `${bm.name} (${bm.year})`)];
-        const rows = allReagents.map(paperName => {
-            const alias = REAGENT_ALIASES[paperName];
+        const allReagentPapers = reagentGroups.flatMap(g => g.reagents);
+        const mixCols = resolvedMixColumns.map((col) => ({
+            header: `${col.label}${col.proteinTarget ? ` (${col.proteinTarget})` : ''}`,
+            value: (paperName) => (col.selected ? customMix?.[paperName] : col.stepper?.[paperName])?.value ?? null
+        }));
+        const header = ['Reagent', 'Unit', ...mixCols.map((c) => c.header), ...displayFormulations.map(bm => `${bm.name} (${bm.year})`)];
+        const tidy = (v) => (v == null || !Number.isFinite(Number(v)) || Number(v) === 0 ? '' : Number(Number(v).toPrecision(6)));
+        const rows = allReagentPapers.map(paperName => {
+            const alias = reagentAliases[paperName];
             const unit = alias?.unit ?? 'mM';
+            const mixValues = mixCols.map((c) => tidy(c.value(paperName)));
             const values = displayFormulations.map(bm => {
                 const v = applyAll(bm).components[paperName];
                 return v == null ? '' : v;
             });
-            return [paperName, unit, ...values];
-        }).filter(row => row.slice(2).some(v => v !== ''));
+            return { stocked: !!alias?.ids, cells: [paperName, unit, ...mixValues, ...values] };
+        })
+            .filter(({ stocked, cells }) => stocked || cells.slice(2).some(v => v !== ''))
+            .map(({ cells }) => cells);
 
         const csv = [header, ...rows]
             .map(row => row.map(cell => {
@@ -431,10 +453,125 @@
     let hoveredCell = $state(null); // {row: string, col: string} | null
     let activeSynopsis = $state(null); // { name, synopsis } | null
 
-    // Escape closes the reagent synopsis popup.
+    // Escape closes the reagent synopsis popup first, then leaves fullscreen focus
+    // mode (only reachable without the Fullscreen API — with it, the browser eats
+    // Escape itself and onFullscreenChange syncs focusMode back off).
     function handleSynopsisKeydown(e) {
-        if (e.key === 'Escape' && activeSynopsis) activeSynopsis = null;
+        if (e.key !== 'Escape') return;
+        hideSynopsisHover();
+        if (activeSynopsis) activeSynopsis = null;
+        else if (focusMode) exitFocus();
     }
+
+    // ─── Hover preview of a reagent synopsis ──────────────────────────────────
+    // Hovering the ⓘ shows the same summary as the click modal in a popover beside
+    // it. A short show delay stops it flickering as the pointer sweeps down the
+    // reagent column; a short hide delay lets the pointer cross into the popover
+    // (so its PubChem link is clickable). Mouse only — touch keeps tap → modal.
+    // Positioned with fixed coords from the button's rect: it grows downward from
+    // buttons in the top half of the viewport and upward from the bottom half, with
+    // a max-height so it never runs off-screen (no measuring needed).
+    let hoverSynopsis = $state(null); // { name, synopsis, left, top|bottom, maxH } | null
+
+    // A row's reagent summary: the written synopsis, or — when nobody has written
+    // one yet (e.g. a reagent auto-added from the live catalog) — a short generated
+    // one, so every stocked row gets an ⓘ. Carries the alias's "just added" flags:
+    // `addedOn` (curated, dated) and `autoAdded` (catalog safety net), which turn
+    // the ⓘ light blue and add a note to the popup.
+    function synopsisFor(paperName) {
+        const alias = reagentAliases[paperName];
+        const written = REAGENT_SYNOPSES[paperName];
+        if (!written && !alias?.ids) return null;
+        const synopsis = written ?? {
+            role: `${paperName} — stock ${alias.stockMm} ${alias.unit}. A description hasn’t been written yet.`,
+            mol: null,
+            wiki: paperName
+        };
+        return { ...synopsis, addedOn: alias?.addedOn ?? null, autoAdded: !!alias?.autoAdded };
+    }
+    const isNewReagent = (syn) => !!(syn?.addedOn || syn?.autoAdded);
+    // '2026-10-11' → '10/11/26' (string-sliced, so no time-zone shift).
+    function fmtAddedOn(iso) {
+        const [y, m, d] = String(iso || '').split('-');
+        return y && m && d ? `${Number(m)}/${Number(d)}/${y.slice(2)}` : '';
+    }
+    let synShowTimer = null;
+    let synHideTimer = null;
+    const SYN_POP_W = 320;
+
+    function queueSynopsisHover(e, paperName) {
+        if (e.pointerType !== 'mouse') return;
+        clearTimeout(synHideTimer);
+        clearTimeout(synShowTimer);
+        const r = e.currentTarget.getBoundingClientRect();
+        synShowTimer = setTimeout(() => {
+            const vw = window.innerWidth, vh = window.innerHeight, pad = 8;
+            const left = r.right + pad + SYN_POP_W <= vw ? r.right + pad : Math.max(pad, r.left - pad - SYN_POP_W);
+            const down = r.top < vh / 2;
+            hoverSynopsis = {
+                name: paperName,
+                synopsis: synopsisFor(paperName),
+                left,
+                ...(down
+                    ? { top: Math.max(pad, r.top - 6), maxH: vh - Math.max(pad, r.top - 6) - pad }
+                    : { bottom: Math.max(pad, vh - r.bottom - 6), maxH: r.bottom + 6 - pad })
+            };
+        }, 180);
+    }
+    function leaveSynopsisHover() {
+        clearTimeout(synShowTimer);
+        clearTimeout(synHideTimer);
+        synHideTimer = setTimeout(() => (hoverSynopsis = null), 140);
+    }
+    function hideSynopsisHover() {
+        clearTimeout(synShowTimer);
+        clearTimeout(synHideTimer);
+        hoverSynopsis = null;
+    }
+
+    // ─── Fullscreen focus mode ────────────────────────────────────────────────
+    // Pins the designer over the whole viewport: community contributions on the
+    // left half (wide, readable cards), the comparison table on the right half,
+    // and the toggle bar along the bottom. Also asks the browser for real
+    // fullscreen on <html> (not this section) so the page-level modals — recipe,
+    // submit, plate reader, synopsis — still layer above it as usual.
+    let focusMode = $state(false);
+
+    async function enterFocus() {
+        focusMode = true;
+        try {
+            if (document.fullscreenEnabled && !document.fullscreenElement) {
+                await document.documentElement.requestFullscreen();
+            }
+        } catch { /* denied / unsupported (e.g. iOS) — the overlay alone still works */ }
+    }
+    async function exitFocus() {
+        focusMode = false;
+        if (document.fullscreenElement) {
+            try { await document.exitFullscreen(); } catch { /* already exiting */ }
+        }
+    }
+    function toggleFocus() {
+        hideSynopsisHover();
+        if (focusMode) exitFocus();
+        else enterFocus();
+    }
+    // Leaving browser fullscreen (Esc / F11 / browser UI) also leaves focus mode.
+    function onFullscreenChange() {
+        if (!document.fullscreenElement && focusMode) focusMode = false;
+    }
+    // Freeze the page behind the overlay so wheel scrolling stays in the panes.
+    $effect(() => {
+        if (!focusMode) return;
+        const html = document.documentElement;
+        const prev = html.style.overflow;
+        html.style.overflow = 'hidden';
+        return () => { html.style.overflow = prev; };
+    });
+    onDestroy(() => {
+        clearTimeout(synShowTimer);
+        clearTimeout(synHideTimer);
+    });
 
     // 2D structure image from PubChem's name→PNG endpoint. Small molecules
     // resolve directly by common name; proteins/polymers/mixes carry mol:null
@@ -489,14 +626,6 @@
         if (!overrides) return bm;
         return { ...bm, components: { ...bm.components, ...overrides } };
     }
-    // Click-to-cycle through the salt-optima presets (Default → sfGFP → PETase →
-    // Reteplase → Default), replacing the old dropdown.
-    function cycleSaltOptima() {
-        const keys = Object.keys(SALT_OPTIMA);
-        const i = keys.indexOf(saltOptima);
-        saltOptima = keys[(i + 1) % keys.length];
-    }
-    const saltOptimaLabel = $derived((SALT_OPTIMA[saltOptima] ?? SALT_OPTIMA.default).label);
 
     function formulationPaperGroup(bm) {
         if (bm.category === 'gpt5-autonomous')   return 'smith';
@@ -642,7 +771,7 @@
         let ok = 0, total = 0;
         for (const [name] of Object.entries(bm.components)) {
             total += 1;
-            const a = REAGENT_ALIASES[name];
+            const a = reagentAliases[name];
             if (a?.ids) ok += 1;
         }
         return { ok, total, missing: total - ok };
@@ -678,7 +807,7 @@
     const ECHO_MIN_TRANSFER_NL = 25;     // 25 nL minimum step
 
     function inventoryLabel(paperName) {
-        const a = REAGENT_ALIASES[paperName];
+        const a = reagentAliases[paperName];
         if (!a?.ids) return 'not in stock';
         return a.ids.join(' + ');
     }
@@ -816,6 +945,144 @@
         items.sort((a, b) => new Date(b.created || 0) - new Date(a.created || 0));
         return items;
     });
+
+    // ─── Stars on community compositions ─────────────────────────────────────
+    // Server truth arrives on each formulation (starCount / starredBy / starredByMe).
+    // A click applies optimistically into `starOverrides` (record id → same shape),
+    // then settles to the server's reply — or rolls back if the request fails. A
+    // batch card stars/unstars every member; its count is the union of starrers.
+    let starOverrides = $state({});
+    let starError = $state('');
+
+    function starsFor(c) {
+        return starOverrides[c.id] ?? {
+            starCount: Number(c.starCount) || 0,
+            starredBy: c.starredBy ?? [],
+            starredByMe: !!c.starredByMe
+        };
+    }
+    function itemStars(item) {
+        if (item.kind !== 'batch') return starsFor(item.card);
+        const names = new Set();
+        let mine = false;
+        for (const m of item.members) {
+            const st = starsFor(m);
+            st.starredBy.forEach((n) => names.add(n));
+            mine ||= st.starredByMe;
+        }
+        return { starCount: names.size, starredBy: [...names], starredByMe: mine };
+    }
+
+    async function toggleStar(item) {
+        const members = item.kind === 'batch' ? item.members : [item.card];
+        const on = !itemStars(item).starredByMe;
+        const me = viewerName || 'you';
+        const prev = {};
+        for (const m of members) {
+            const st = starsFor(m);
+            prev[m.id] = starOverrides[m.id];
+            if (st.starredByMe === on) continue;
+            const names = [...st.starredBy];
+            if (on) names.push(me);
+            else { const i = names.lastIndexOf(me); if (i >= 0) names.splice(i, 1); }
+            starOverrides[m.id] = { starCount: Math.max(0, st.starCount + (on ? 1 : -1)), starredBy: names, starredByMe: on };
+        }
+        starError = '';
+        try {
+            const res = await fetch('/cfps/stars', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: on ? 'star' : 'unstar', ids: members.map((m) => m.id) })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error || `Star failed (${res.status}).`);
+            for (const [id, st] of Object.entries(data.stars ?? {})) starOverrides[id] = st;
+        } catch (e) {
+            for (const m of members) {
+                if (prev[m.id] === undefined) delete starOverrides[m.id];
+                else starOverrides[m.id] = prev[m.id];
+            }
+            starError = e?.message || 'Could not update the star.';
+        }
+    }
+
+    // ─── Comment threads on community compositions ───────────────────────────
+    // Same behaviour as the community-reagent threads: a 💬 count toggles the
+    // thread open inside the card, anyone signed in can post (500-word cap), and
+    // authors can delete their own. Threads arrive on each formulation (`comments`)
+    // and are replaced by the server's refreshed thread after every write. A batch
+    // card's thread lives on its first member — the record that also carries the
+    // batch hypothesis.
+    let threadOverrides = $state({}); // composition id → [comment, ...]
+    let openThreads = $state(new Set()); // item keys with an expanded thread
+    let commentDraft = $state({}); // composition id → draft text
+    let commentBusy = $state(new Set());
+    let commentError = $state({}); // composition id → message
+    const COMMENT_WORD_LIMIT = 500;
+    const CHARS_PER_WORD = 15; // a long space-free run counts as several words (mirrors the server)
+    function wordCount(t) {
+        const str = String(t || '').trim();
+        return str ? str.split(/\s+/).reduce((n, tok) => n + Math.max(1, Math.ceil(tok.length / CHARS_PER_WORD)), 0) : 0;
+    }
+    const threadOwner = (item) => (item.kind === 'batch' ? item.members[0] : item.card);
+    const commentsFor = (c) => threadOverrides[c.id] ?? c.comments ?? [];
+    function toggleThread(item) {
+        const next = new Set(openThreads);
+        if (next.has(item.key)) next.delete(item.key); else next.add(item.key);
+        openThreads = next;
+    }
+    async function sendComment(owner, payload) {
+        commentBusy = new Set(commentBusy).add(owner.id);
+        commentError = { ...commentError, [owner.id]: '' };
+        try {
+            const res = await fetch('/cfps/design-comments', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error || `Request failed (${res.status}).`);
+            threadOverrides[owner.id] = data.comments ?? [];
+            return true;
+        } catch (e) {
+            commentError = { ...commentError, [owner.id]: e?.message || 'Could not update the thread.' };
+            return false;
+        } finally {
+            const next = new Set(commentBusy); next.delete(owner.id); commentBusy = next;
+        }
+    }
+    async function postComment(owner) {
+        const text = (commentDraft[owner.id] || '').trim();
+        if (!text || commentBusy.has(owner.id)) return;
+        if (await sendComment(owner, { action: 'comment', id: owner.id, body: text })) {
+            commentDraft = { ...commentDraft, [owner.id]: '' };
+        }
+    }
+    function fmtWhen(iso) {
+        const d = iso ? new Date(iso) : null;
+        return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+    }
+
+    // All / Starred tabs on the contributions list (shared by the rail and the
+    // fullscreen pane). "Starred" = the viewer's own stars.
+    let commTab = $state('all'); // 'all' | 'starred'
+    const starredRailItems = $derived(communityRailItems.filter((i) => itemStars(i).starredByMe));
+    const visibleRailItems = $derived(commTab === 'starred' ? starredRailItems : communityRailItems);
+
+    // Hover list of who starred a card — fixed-position, so the rail's scroll
+    // container can't clip it. Placed below the star, flipped above near the bottom.
+    let hoverStars = $state(null); // { names, left, top|bottom } | null
+    function showStarHover(e, item) {
+        const names = itemStars(item).starredBy;
+        if (e.pointerType !== 'mouse' || !names.length) return;
+        const r = e.currentTarget.getBoundingClientRect();
+        const below = r.bottom < window.innerHeight - 160;
+        hoverStars = {
+            names,
+            left: Math.max(8, Math.min(r.left - 6, window.innerWidth - 228)),
+            ...(below ? { top: r.bottom + 6 } : { bottom: window.innerHeight - r.top + 6 })
+        };
+    }
 
     // Load a batch (or, without an onLoadBatch bridge, its first arm) from the rail.
     function loadCommunityBatch(item) {
@@ -959,7 +1226,183 @@
 
 </script>
 
-<section class="mt-2 mb-4">
+<section class="mt-2 mb-4" class:bench-focus={focusMode} aria-label={focusMode ? 'Cell-Free Reaction Designer (fullscreen)' : undefined}>
+    {#if focusMode}
+        <div class="bench-focus__hd">
+            <span class="bench-focus__ttl">Cell-Free Reaction Designer</span>
+            <span class="bench-focus__sub">fullscreen · Esc to exit</span>
+            <button type="button" class="btn-bp" onclick={exitFocus} title="Exit fullscreen (Esc)">✕ Exit fullscreen</button>
+        </div>
+    {/if}
+    <!-- One community-composition card, shared by the slim browse rail and the wide
+         fullscreen pane. `wide` adds what the rail has no room for: the AI model,
+         acknowledgements, and each batch member's own rationale. The card is a
+         div[role=button] rather than a <button> so the star inside it can be a real
+         button of its own. -->
+    {#snippet starBtn(item)}
+        {@const st = itemStars(item)}
+        <button
+            type="button"
+            class="cf-star"
+            class:is-on={st.starredByMe}
+            aria-pressed={st.starredByMe}
+            aria-label={`${st.starredByMe ? 'Unstar' : 'Star'} ${item.kind === 'batch' ? item.name : item.card.name} · ${st.starCount} star${st.starCount === 1 ? '' : 's'}`}
+            title=""
+            onclick={(e) => { e.stopPropagation(); toggleStar(item); }}
+            onkeydown={(e) => e.stopPropagation()}
+            onpointerenter={(e) => showStarHover(e, item)}
+            onpointerleave={() => (hoverStars = null)}
+        >
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                <path
+                    d="M8 1.4l1.95 4.1 4.45.55-3.28 3.08.84 4.42L8 11.4l-3.96 2.15.84-4.42L1.6 6.05l4.45-.55z"
+                    fill={st.starredByMe ? 'currentColor' : 'none'}
+                    stroke="currentColor"
+                    stroke-width="1.3"
+                    stroke-linejoin="round"
+                />
+            </svg>
+            {#if st.starCount}<span class="cf-star__n">{st.starCount}</span>{/if}
+        </button>
+    {/snippet}
+    {#snippet commentBtn(item)}
+        {@const n = commentsFor(threadOwner(item)).length}
+        {@const open = openThreads.has(item.key)}
+        <button
+            type="button"
+            class="cf-cbtn"
+            class:is-on={open}
+            aria-expanded={open}
+            title={open ? 'Hide comments' : 'Show comments'}
+            onclick={(e) => { e.stopPropagation(); toggleThread(item); }}
+            onkeydown={(e) => e.stopPropagation()}
+        >💬 {n}</button>
+    {/snippet}
+    <!-- Expanded thread. Clicks/keys inside it never reach the card (which would
+         load the composition into the designer). -->
+    {#snippet commentThread(item)}
+        {@const owner = threadOwner(item)}
+        {@const comments = commentsFor(owner)}
+        {@const words = wordCount(commentDraft[owner.id])}
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions (handlers only stop propagation to the card) -->
+        <div class="cf-thread" role="group" aria-label="Comments" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+            {#if comments.length === 0}
+                <p class="cf-thread__empty">No comments yet — start the thread.</p>
+            {:else}
+                {#each comments as c (c.id)}
+                    <div class="cf-comment">
+                        <div class="cf-comment__meta">
+                            <span class="cf-comment__who">{c.author}</span>
+                            {#if c.created}<span class="cf-comment__when">· {fmtWhen(c.created)}</span>{/if}
+                            {#if c.mine}
+                                <button type="button" class="cf-comment__del" disabled={commentBusy.has(owner.id)} onclick={() => sendComment(owner, { action: 'uncomment', id: c.id })} title="Delete your comment" aria-label="Delete your comment">✕</button>
+                            {/if}
+                        </div>
+                        <p class="cf-comment__body">{c.body}</p>
+                    </div>
+                {/each}
+            {/if}
+            {#if commentError[owner.id]}<p class="cf-thread__err" role="alert">{commentError[owner.id]}</p>{/if}
+            <div class="cf-compose">
+                <textarea class="cf-compose__in" rows="2" placeholder="Add a comment…" bind:value={commentDraft[owner.id]} aria-label="Add a comment"></textarea>
+                <span class="cf-compose__count" class:is-over={words > COMMENT_WORD_LIMIT}>{COMMENT_WORD_LIMIT - words}</span>
+                <button type="button" class="cf-compose__btn" disabled={commentBusy.has(owner.id) || words === 0 || words > COMMENT_WORD_LIMIT} onclick={() => postComment(owner)}>Post</button>
+            </div>
+        </div>
+    {/snippet}
+    {#snippet commCard(item, wide)}
+        {@const activate = () => (item.kind === 'batch' ? loadCommunityBatch(item) : (onPickCommunity ?? onSetCustomStart)?.(item.card.key))}
+        <div
+            role="button"
+            tabindex="0"
+            class="cf-comm-card"
+            class:cf-comm-card--batch={item.kind === 'batch'}
+            class:is-active={item.kind !== 'batch' && item.card.key === customStartKey}
+            onclick={activate}
+            onkeydown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); activate(); } }}
+            title={item.kind === 'batch'
+                ? `Batch of ${item.count} — click to load all into the designer`
+                : (wide ? 'Click to load into the designer' : item.card.rationale || item.card.name)}
+        >
+            {#if item.kind === 'batch'}
+                <div class="cf-comm-card__top">
+                    <span class="cf-comm-card__name">{item.name}</span>
+                    {@render starBtn(item)}
+                    <span class="cf-comm-card__count" title="{item.count} compositions in this batch">{item.count}×</span>
+                </div>
+                {#if item.targets.length}
+                    <div class="cf-comm-card__tags">
+                        {#each item.targets as t}
+                            <span class="cf-comm-card__badge" style={proteinBadgeStyle(t)}>{t}</span>
+                        {/each}
+                    </div>
+                {/if}
+                {#if item.experimentHypothesis}
+                    <p class="cf-comm-card__desc" title={wide ? undefined : item.experimentHypothesis}>{item.experimentHypothesis}</p>
+                {/if}
+                {#if wide}
+                    {#each item.members as m (m.key)}
+                        {#if m.rationale}
+                            <div class="cf-comm-card__member">
+                                <div class="cf-comm-card__top">
+                                    <span class="cf-comm-card__name">{m.name}</span>
+                                    {#if m.proteinTarget}<span class="cf-comm-card__badge" style={proteinBadgeStyle(m.proteinTarget)}>{m.proteinTarget}</span>{/if}
+                                </div>
+                                <p class="cf-comm-card__desc">{m.rationale}</p>
+                            </div>
+                        {/if}
+                    {/each}
+                {/if}
+                <div class="cf-comm-card__foot">
+                    {#if item.author}<span class="cf-comm-card__by">{item.author}</span>{/if}
+                    {#if wide && item.members[0]?.aiModel}<span class="cf-comm-card__ai">{item.members[0].aiModel}</span>{/if}
+                    {#if item.created}<span class="cf-comm-card__date">{fmtDate(item.created)}</span>{/if}
+                    {@render commentBtn(item)}
+                </div>
+                {#if openThreads.has(item.key)}{@render commentThread(item)}{/if}
+            {:else}
+                {@const c = item.card}
+                <div class="cf-comm-card__top">
+                    <span class="cf-comm-card__name">{c.name}</span>
+                    {@render starBtn(item)}
+                    {#if c.proteinTarget}<span class="cf-comm-card__badge" style={proteinBadgeStyle(c.proteinTarget)}>{c.proteinTarget}</span>{/if}
+                </div>
+                {#if c.rationale}<p class="cf-comm-card__desc">{c.rationale}</p>{/if}
+                {#if wide && c.acknowledgements}<p class="cf-comm-card__ack">Acknowledgements: {c.acknowledgements}</p>{/if}
+                <div class="cf-comm-card__foot">
+                    {#if c.author}<span class="cf-comm-card__by">{c.author}</span>{/if}
+                    {#if wide && c.aiModel}<span class="cf-comm-card__ai">{c.aiModel}</span>{/if}
+                    {#if c.created}<span class="cf-comm-card__date">{fmtDate(c.created)}</span>{/if}
+                    {@render commentBtn(item)}
+                </div>
+                {#if openThreads.has(item.key)}{@render commentThread(item)}{/if}
+            {/if}
+        </div>
+    {/snippet}
+    <!-- Contributions list header + list, shared by the rail and the fullscreen pane:
+         All / Starred tabs, the star error (if a request failed), and the cards. -->
+    {#snippet commList(wide)}
+        <div class="cf-comm-rail__hd">
+            <span class="label">HTBAA Contributions</span>
+            <div class="cf-comm-tabs" role="tablist" aria-label="Filter contributions">
+                <button type="button" role="tab" aria-selected={commTab === 'all'} onclick={() => (commTab = 'all')}>
+                    All <span class="cf-comm-tabs__n">{communityRailItems.length}</span>
+                </button>
+                <button type="button" role="tab" aria-selected={commTab === 'starred'} onclick={() => (commTab = 'starred')}>
+                    ★ Starred <span class="cf-comm-tabs__n">{starredRailItems.length}</span>
+                </button>
+            </div>
+        </div>
+        {#if starError}<div class="cf-comm-err" role="alert">{starError}</div>{/if}
+        <div class="cf-comm-rail__list" role="tabpanel">
+            {#each visibleRailItems as item (item.key)}{@render commCard(item, wide)}{/each}
+            {#if !visibleRailItems.length}
+                <p class="cf-comm-empty">
+                    {commTab === 'starred' ? 'Nothing starred yet — click the ☆ on any composition to keep it here.' : 'No contributions yet.'}
+                </p>
+            {/if}
+        </div>
+    {/snippet}
     <!-- Drag handle pinned to a header cell's right edge: drag to resize the column,
          double-click to restore its default width. The host <th> is position:relative
          (or sticky) so this absolute handle rides its right border. -->
@@ -973,11 +1416,41 @@
             ondblclick={() => resetColWidth(id)}
         ></span>
     {/snippet}
+    <!-- Header corner over the group-label + reagent-name columns. Fully opaque (no
+         element-level opacity) so scrolling value cells can't show through it. Holds
+         the fullscreen toggle (top-left) and the reagent column's resize handle. -->
+    {#snippet cornerCell(rowspan)}
+        <th
+            colspan="2"
+            {rowspan}
+            class="bench-corner border-b border-base-300 sticky left-0 z-40"
+            style="min-width: 182px; background: oklch(var(--b2)); "
+        >
+            <button
+                type="button"
+                class="bench-fs-btn"
+                class:is-on={focusMode}
+                onclick={toggleFocus}
+                title={focusMode ? 'Exit fullscreen (Esc)' : 'Fullscreen: community contributions beside the comparison table'}
+                aria-label={focusMode ? 'Exit fullscreen' : 'Enter fullscreen'}
+                aria-pressed={focusMode}
+            >
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                    {#if focusMode}
+                        <path d="M6 1.5V6H1.5M10 1.5V6h4.5M6 14.5V10H1.5M10 14.5V10h4.5" />
+                    {:else}
+                        <path d="M1.5 6V1.5H6M10 1.5h4.5V6M1.5 10v4.5H6M14.5 10v4.5H10" />
+                    {/if}
+                </svg>
+            </button>
+            {@render colResizeHandle('rcol', COL_DEFAULTS.rcol, COL_FLOOR.rcol, COL_MAX.rcol)}
+        </th>
+    {/snippet}
     <!-- Supplement-volume sub-line (Details view): the snapped Echo transfer nL to
          hit `value` for this reagent, computed with the same feasibilityFor model
          as the data columns so numbers line up across the whole row. -->
     {#snippet nlLine(paperName, value)}
-        {@const feas = feasibilityFor(paperName, value)}
+        {@const feas = feasibilityFor(paperName, value, { aliases: reagentAliases })}
         {#if feas.status === 'over-baseline'}
             <div class="text-[8px] opacity-50" title="Base buffer already meets target — no supplement needed">0 nL</div>
         {:else if feas.status === 'ok' || feas.status === 'tight' || feas.status === 'very-tight'}
@@ -1162,7 +1635,7 @@
             {#if col.selected}
                 {#if customWaterUl != null}<span class="opacity-80">{customWaterUl.toFixed(2)}</span>{:else}<span class="opacity-30">—</span>{/if}
             {:else if col.bm}
-                {@const colWaterUl = waterFillNlForFormulation(col.bm) / 1000}
+                {@const colWaterUl = waterFillNlForFormulation(col.bm, { aliases: reagentAliases }) / 1000}
                 {@const colWaterPct = pctDiff(colWaterUl, customWaterUl)}
                 <div class="opacity-80 leading-tight">{colWaterUl.toFixed(2)}</div>
                 {#if showSupplementNl}<div class="text-[8px] leading-tight {pctClass(colWaterPct)}">{pctLabel(colWaterPct)}</div>{/if}
@@ -1233,68 +1706,24 @@
          mirroring the ＋ add-column rail pinned to the right edge. Pressing the tab
          slides a browse drawer out to the tab's left. Only offered when there are
          community compositions to show (none for a signed-out visitor). -->
-    <div class="cf-designer-row">
+    <div class="cf-designer-row" class:is-split={focusMode && communityByRecent.length > 0}>
         <!-- The browse drawer opens to the LEFT of the toggle tab, so the tab stays
              welded to the table's left edge (right beside the reagent-category
              column) in both states. The tab — or, when open, the drawer — supplies
              the table's rounded left corners; the table card itself is squared on the
              left so the pieces read as one. -->
-        {#if showCommunityRail && communityByRecent.length > 0}
+        {#if focusMode && communityByRecent.length > 0}
+            <!-- Fullscreen: the contributions get the whole left half, with wide,
+                 taller text boxes for reading long rationales. -->
+            <aside class="cf-comm-rail cf-comm-rail--wide" aria-label="Community compositions, newest first">
+                {@render commList(true)}
+            </aside>
+        {:else if showCommunityRail && communityByRecent.length > 0}
             <aside class="cf-comm-rail" aria-label="Community compositions, newest first">
-                <div class="cf-comm-rail__hd"><span class="label">HTBAA Contributions</span></div>
-                <div class="cf-comm-rail__list">
-                    {#each communityRailItems as item (item.key)}
-                        {#if item.kind === 'batch'}
-                            <button
-                                type="button"
-                                class="cf-comm-card cf-comm-card--batch"
-                                onclick={() => loadCommunityBatch(item)}
-                                title={`Batch of ${item.count} — click to load all into the designer`}
-                            >
-                                <div class="cf-comm-card__top">
-                                    <span class="cf-comm-card__name">{item.name}</span>
-                                    <span class="cf-comm-card__count" title="{item.count} compositions in this batch">{item.count}×</span>
-                                </div>
-                                {#if item.targets.length}
-                                    <div class="cf-comm-card__tags">
-                                        {#each item.targets as t}
-                                            <span class="cf-comm-card__badge" style={proteinBadgeStyle(t)}>{t}</span>
-                                        {/each}
-                                    </div>
-                                {/if}
-                                {#if item.experimentHypothesis}
-                                    <p class="cf-comm-card__desc" title={item.experimentHypothesis}>{item.experimentHypothesis}</p>
-                                {/if}
-                                <div class="cf-comm-card__foot">
-                                    {#if item.author}<span class="cf-comm-card__by">{item.author}</span>{/if}
-                                    {#if item.created}<span class="cf-comm-card__date">{fmtDate(item.created)}</span>{/if}
-                                </div>
-                            </button>
-                        {:else}
-                            {@const c = item.card}
-                            <button
-                                type="button"
-                                class="cf-comm-card"
-                                class:is-active={c.key === customStartKey}
-                                onclick={() => (onPickCommunity ?? onSetCustomStart)?.(c.key)}
-                                title={c.rationale || c.name}
-                            >
-                                <div class="cf-comm-card__top">
-                                    <span class="cf-comm-card__name">{c.name}</span>
-                                    {#if c.proteinTarget}<span class="cf-comm-card__badge" style={proteinBadgeStyle(c.proteinTarget)}>{c.proteinTarget}</span>{/if}
-                                </div>
-                                {#if c.rationale}<p class="cf-comm-card__desc">{c.rationale}</p>{/if}
-                                <div class="cf-comm-card__foot">
-                                    {#if c.author}<span class="cf-comm-card__by">{c.author}</span>{/if}
-                                    {#if c.created}<span class="cf-comm-card__date">{fmtDate(c.created)}</span>{/if}
-                                </div>
-                            </button>
-                        {/if}
-                    {/each}
-                </div>
+                {@render commList(false)}
             </aside>
         {/if}
-        {#if communityByRecent.length > 0}
+        {#if communityByRecent.length > 0 && !focusMode}
             <button
                 type="button"
                 class="cf-comm-toggle-rail"
@@ -1315,7 +1744,7 @@
          card hug the table's own width (no white side gutters) but still scroll when
          the grid is wider than the viewport. Radius tracks var(--r) to match the
          sibling .panel sections; bg-base-100 keeps the grid opaque. -->
-    <div class="pb-3 pr-3 overflow-auto max-h-[78vh] isolate border border-base-300 bg-base-100 w-fit max-w-full mx-auto {communityByRecent.length > 0 ? 'rounded-r-[var(--r,5px)]' : 'rounded-[var(--r,5px)]'}" bind:this={tableScrollEl}>
+    <div class="bench-scroll pb-3 pr-3 overflow-auto max-h-[78vh] isolate border border-base-300 bg-base-100 w-fit max-w-full mx-auto {communityByRecent.length > 0 ? 'rounded-r-[var(--r,5px)]' : 'rounded-[var(--r,5px)]'}" bind:this={tableScrollEl} onscroll={hideSynopsisHover}>
         <!-- Flex rail wrapper: the table plus a thin full-height "add column" button
              pinned to its right edge, so you can add a comparison column the moment
              you scroll to the edge. -->
@@ -1359,11 +1788,10 @@
                          above the header, so skip it entirely then. -->
                     {#if displayColumnGroups.length}
                         <tr class="text-[9px]">
-                            <th
-                                colspan="2"
-                                class="sticky left-0 z-40"
-                                style="background: oklch(var(--b2)); "
-                            ></th>
+                            <!-- With the group row present the corner spans both header
+                                 rows, so the fullscreen icon sits in the table's true
+                                 top-left corner. -->
+                            {@render cornerCell(2)}
                             <!-- The whole frozen experimental group (mixes + add-mix rail
                                  + optional comparison / closest reference columns) sits
                                  immediately right of the reagent names as one blank frozen
@@ -1389,11 +1817,7 @@
                              the reagent-name column. Intentionally empty + fully opaque
                              (no element-level opacity) so scrolling value cells can't
                              show through it. -->
-                        <th
-                            colspan="2"
-                            class="bench-corner border-b border-base-300 sticky left-0 z-40"
-                            style="min-width: 182px; background: oklch(var(--b2)); "
-                        >{@render colResizeHandle('rcol', COL_DEFAULTS.rcol, COL_FLOOR.rcol, COL_MAX.rcol)}</th>
+                        {#if !displayColumnGroups.length}{@render cornerCell(1)}{/if}
                         <!-- Mix batch — every custom mix is an equal peer that stays in
                              its creation slot. The selected mix renders editable steppers;
                              the rest are read-only snapshots. Every header carries the same
@@ -1592,9 +2016,9 @@
                      the Show controls below the table (default off = concentrations
                      only). Cell tooltips (title on hover) are always available. -->
                 <tbody>
-                    {#each REAGENT_GROUPS as group, groupIndex}
+                    {#each reagentGroups as group, groupIndex}
                         {#each group.reagents as paperName, reagentIndex}
-                            {@const alias = REAGENT_ALIASES[paperName]}
+                            {@const alias = reagentAliases[paperName]}
                             {@const missing = !alias?.ids}
                             {@const isGroupFirstRow = reagentIndex === 0}
                             <!-- Category-group boundary: the first reagent row of each
@@ -1607,6 +2031,7 @@
                             {@const isCustom = !!(alias?.ids && CUSTOM_REAGENT_IDS.has(alias.ids[0]))}
                             {@const isExcluded = excludedReagents.has(paperName)}
                             {@const compVal = comparisonBm?.components?.[paperName]}
+                            {@const syn = synopsisFor(paperName)}
                             <tr class="hover:bg-base-200/30 transition" class:bench-grp={isGroupFirstRow && groupIndex > 0}>
                                 {#if isGroupFirstRow}
                                     <!-- Rotated group-label column. z-40 so it sits above value
@@ -1672,11 +2097,16 @@
                                                 aria-label={`View recipe for ${paperName}`}
                                             >&#9432;</button>
                                         {/if}
-                                        {#if REAGENT_SYNOPSES[paperName]}
+                                        {#if syn}
+                                            <!-- Light blue = recently added reagent (see synopsisFor). title="" stops the
+                                                 browser showing the cell's own tooltip on top of the hover popup. -->
                                             <button
                                                 type="button"
-                                                class="text-[10px] leading-none px-1 py-0.5 rounded text-base-content/40 hover:text-base-content hover:bg-base-content/10"
-                                                onclick={(e) => { e.stopPropagation(); activeSynopsis = { name: paperName, synopsis: REAGENT_SYNOPSES[paperName] }; }}
+                                                class="text-[10px] leading-none px-1 py-0.5 rounded {isNewReagent(syn) ? 'bench-info--new' : 'text-base-content/40 hover:text-base-content hover:bg-base-content/10'}"
+                                                title=""
+                                                onclick={(e) => { e.stopPropagation(); hideSynopsisHover(); activeSynopsis = { name: paperName, synopsis: syn }; }}
+                                                onpointerenter={(e) => queueSynopsisHover(e, paperName)}
+                                                onpointerleave={leaveSynopsisHover}
                                                 aria-label={`About ${paperName}`}
                                             >&#9432;</button>
                                         {/if}
@@ -1710,7 +2140,7 @@
                                              (but still draw the column outline through it when selected). -->
                                         <td style="background: oklch(var(--b2)); box-shadow: {colOutline(isSel)};"></td>
                                     {:else}
-                                        {@const feas = feasibilityFor(paperName, val)}
+                                        {@const feas = feasibilityFor(paperName, val, { aliases: reagentAliases })}
                                         {@const style = feasibilityCellStyle(feas)}
                                         {@const ratioInferred = bm.ratioInferred?.includes(paperName)}
                                         {@const baseTooltip = feas.status === 'missing'
@@ -1778,7 +2208,7 @@
                         {@render railCell()}
                         {#if showComparison}
                             {#if comparisonBm}
-                                {@const compWaterUl = waterFillNlForFormulation(comparisonBm) / 1000}
+                                {@const compWaterUl = waterFillNlForFormulation(comparisonBm, { aliases: reagentAliases }) / 1000}
                                 {@const compWaterPct = pctDiff(compWaterUl, customWaterUl)}
                                 <td class="bench-custcol text-center px-1 py-1 font-mono leading-tight" style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));">
                                     <div class="opacity-80 leading-tight">{compWaterUl.toFixed(2)}</div>
@@ -1789,7 +2219,7 @@
                             {/if}
                         {/if}
                         {#if showClosestMatch}
-                            {@const closestWaterUl = closestMatch ? waterFillNlForFormulation(applyAll(closestMatch.bm)) / 1000 : null}
+                            {@const closestWaterUl = closestMatch ? waterFillNlForFormulation(applyAll(closestMatch.bm), { aliases: reagentAliases }) / 1000 : null}
                             <td class="bench-custcol text-center px-1 py-1 font-mono leading-tight" style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));">
                                 {#if closestWaterUl != null}
                                     {@const closestWaterPct = pctDiff(closestWaterUl, customWaterUl)}
@@ -1799,7 +2229,7 @@
                             </td>
                         {/if}
                         {#each displayFormulations as bm}
-                            {@const waterNl = waterFillNlForFormulation(applyAll(bm))}
+                            {@const waterNl = waterFillNlForFormulation(applyAll(bm), { aliases: reagentAliases })}
                             {@const waterUl = waterNl / 1000}
                             {@const wstyle = waterCellStyle(waterNl)}
                             {@const tooltip = waterNl > 0
@@ -1822,53 +2252,55 @@
         </div><!-- /.cf-designer-main -->
     </div><!-- /.cf-designer-row -->
 
-    <div class="flex flex-col items-center gap-2 px-3 pt-3 pb-1">
-        <div class="flex items-center gap-1.5 flex-wrap justify-center">
-            <button
-                class="btn-bp bench-toggle"
-                aria-pressed={showReferencePlates}
-                onclick={() => showReferencePlates = !showReferencePlates}
-            >Reference Plates</button>
-            <button
-                class="btn-bp bench-toggle"
-                aria-pressed={showGinkgo}
-                onclick={() => showGinkgo = !showGinkgo}
-                title="Show Ginkgo's autonomous (GPT-5 / Smith et al.) reactions"
-            >Ginkgo</button>
-            <button
-                class="btn-bp bench-toggle"
-                aria-pressed={showLiterature}
-                onclick={() => showLiterature = !showLiterature}
-            >Literature</button>
-            <button
-                class="btn-bp bench-toggle"
-                aria-pressed={showClosestMatch}
-                onclick={() => showClosestMatch = !showClosestMatch}
-                title="Show the known reaction the active mix most resembles"
-            >Closest Match</button>
-            <button
-                class="btn-bp bench-toggle"
-                aria-pressed={showSupplementNl}
-                onclick={toggleSupplementMode}
-                title="Show per-reagent supplement volumes (nL) and the $/g cost row"
-            >Details</button>
-            <button
-                class="btn-bp bench-toggle"
-                aria-pressed={saltOptima !== 'default'}
-                onclick={cycleSaltOptima}
-                title="Click to cycle: override K(Glu) and Mg(Glu)2 across all formulations to a target's salt optimum"
-            >Salt Optima: {saltOptimaLabel}</button>
-            <button
-                class="btn-bp"
-                onclick={downloadCSV}
-                title="Download concentrations as CSV"
-            >↓ CSV</button>
-            <button
-                class="btn-bp"
-                onclick={downloadTableImage}
-                disabled={isDownloading}
-                title="Download table as PNG"
-            >{isDownloading ? 'Saving…' : '↓ PNG'}</button>
+    <div class="bench-toolbar flex flex-col items-center gap-2 px-3 pt-3 pb-1">
+        <!-- Table settings: conventional on/off switches grouped by what they affect,
+             a segmented picker for the salt preset, and the exports. -->
+        {#snippet settingSwitch(label, on, toggle, title)}
+            <button type="button" role="switch" aria-checked={on} class="bench-switch" onclick={toggle} {title}>
+                <span class="bench-switch__track" aria-hidden="true"><span class="bench-switch__thumb"></span></span>
+                {label}
+            </button>
+        {/snippet}
+        <div class="bench-settings" role="group" aria-label="Table settings">
+            <span class="bench-settings__lbl">Columns</span>
+            <div class="bench-settings__items">
+                {@render settingSwitch('Reference plates', showReferencePlates, () => (showReferencePlates = !showReferencePlates), "Show Ginkgo's reference-plate formulations")}
+                {@render settingSwitch('Ginkgo', showGinkgo, () => (showGinkgo = !showGinkgo), "Show Ginkgo's autonomous (GPT-5 / Smith et al.) reactions")}
+                {@render settingSwitch('Literature', showLiterature, () => (showLiterature = !showLiterature), 'Show published literature formulations')}
+                {@render settingSwitch('Closest match', showClosestMatch, () => (showClosestMatch = !showClosestMatch), 'Show the known reaction the active mix most resembles')}
+            </div>
+            <span class="bench-settings__lbl">View</span>
+            <div class="bench-settings__items">
+                {@render settingSwitch('Details', showSupplementNl, toggleSupplementMode, 'Show per-reagent supplement volumes (nL) and the $/g cost row')}
+                <span class="bench-settings__sub" id="bench-salt-lbl">Salt optima</span>
+                <div
+                    class="bench-seg"
+                    role="radiogroup"
+                    aria-labelledby="bench-salt-lbl"
+                    title="Override K(Glu) and Mg(Glu)2 across all formulations to a target's salt optimum"
+                >
+                    {#each Object.entries(SALT_OPTIMA) as [key, opt]}
+                        <button
+                            type="button"
+                            role="radio"
+                            aria-checked={saltOptima === key}
+                            class:is-on={saltOptima === key}
+                            onclick={() => (saltOptima = key)}
+                        >{opt.label}</button>
+                    {/each}
+                </div>
+            </div>
+            <div class="bench-settings__export">
+                <span class="bench-settings__lbl">Export</span>
+                <button type="button" class="bench-settings__act" onclick={downloadCSV} title="Download concentrations as CSV">↓ CSV</button>
+                <button
+                    type="button"
+                    class="bench-settings__act"
+                    onclick={downloadTableImage}
+                    disabled={isDownloading}
+                    title="Download table as PNG"
+                >{isDownloading ? 'Saving…' : '↓ PNG'}</button>
+            </div>
         </div>
         {#if submitRow}
             <div class="flex items-center flex-wrap justify-center">
@@ -1878,6 +2310,8 @@
     </div>
 
     <!-- ── Design notices (live) + export panels ─────────────────────────── -->
+    <!-- Hidden in fullscreen focus mode, which is just the designs + toggle bar. -->
+    {#if !focusMode}
     <div class="px-3 pt-4 pb-4 space-y-2">
         {#if theoretical && theoretical.items?.length}
             <div class="rounded-lg border p-3 text-[11px]" style="background: rgba(111,75,208,0.07); border-color: rgba(111,75,208,0.35);">
@@ -1930,14 +2364,61 @@
             </div>
         {/if}
     </div>
+    {/if}
 
 </section>
 
-<svelte:window onkeydown={handleSynopsisKeydown} />
+<svelte:window onkeydown={handleSynopsisKeydown} onscroll={hideSynopsisHover} onresize={hideSynopsisHover} />
+<svelte:document onfullscreenchange={onFullscreenChange} />
+
+<!-- Reagent summary body, shared by the click modal and the hover popover.
+     `compact` shrinks the structure image for the popover. -->
+{#snippet synopsisBody(name, synopsis, compact)}
+    {#if isNewReagent(synopsis)}
+        <p class="bench-info-note">
+            {synopsis.addedOn
+                ? `New — added to the designer on ${fmtAddedOn(synopsis.addedOn)}.`
+                : 'New — auto-added from the live reagent catalog; not yet given a curated row.'}
+        </p>
+    {/if}
+    {#if synopsis.mol}
+        <div class="flex justify-center rounded-md bg-white border border-base-300/70 p-2">
+            <img
+                src={molImageUrl(synopsis.mol)}
+                alt={`2D structure of ${name}`}
+                loading="lazy"
+                class="{compact ? 'h-[110px]' : 'h-[180px]'} w-auto object-contain"
+                onerror={(e) => { e.currentTarget.parentElement.style.display = 'none'; }}
+            />
+        </div>
+    {/if}
+    <p>{synopsis.role}</p>
+    {#if synopsis.proteins}
+        <div class="space-y-2 pt-1 border-t border-base-300/50">
+            {#each Object.entries(synopsis.proteins) as [protein, note]}
+                <div>
+                    <span class="text-xs font-semibold uppercase tracking-wide text-base-content/40">{protein === 'sfgfp' ? 'sfGFP' : protein === 'petase' ? 'PETase' : protein === 'reteplase' ? 'Reteplase' : protein}</span>
+                    <p class="text-xs text-base-content/65 mt-0.5">{note}</p>
+                </div>
+            {/each}
+        </div>
+    {/if}
+    {#if synopsis.mol || synopsis.wiki}
+        <div class="pt-1 border-t border-base-300/50">
+            <a
+                href={pubchemUrl(synopsis.mol ?? synopsis.wiki)}
+                target="_blank"
+                rel="noopener"
+                class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+            >Look up on PubChem →</a>
+        </div>
+    {/if}
+{/snippet}
 
 {#if activeSynopsis}
+    <!-- z-[200]: same layer as the page's other modals, above the fullscreen designer. -->
     <div
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        class="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4"
         onclick={() => activeSynopsis = null}
         role="presentation"
     >
@@ -1952,39 +2433,37 @@
                 <button type="button" class="text-base-content/50 hover:text-base-content text-lg leading-none" onclick={() => activeSynopsis = null} aria-label="Close">✕</button>
             </div>
             <div class="px-5 py-4 space-y-3 text-sm text-base-content/80 leading-relaxed">
-                {#if activeSynopsis.synopsis.mol}
-                    <div class="flex justify-center rounded-md bg-white border border-base-300/70 p-2">
-                        <img
-                            src={molImageUrl(activeSynopsis.synopsis.mol)}
-                            alt={`2D structure of ${activeSynopsis.name}`}
-                            loading="lazy"
-                            class="h-[180px] w-auto object-contain"
-                            onerror={(e) => { e.currentTarget.parentElement.style.display = 'none'; }}
-                        />
-                    </div>
-                {/if}
-                <p>{activeSynopsis.synopsis.role}</p>
-                {#if activeSynopsis.synopsis.proteins}
-                    <div class="space-y-2 pt-1 border-t border-base-300/50">
-                        {#each Object.entries(activeSynopsis.synopsis.proteins) as [protein, note]}
-                            <div>
-                                <span class="text-xs font-semibold uppercase tracking-wide text-base-content/40">{protein === 'sfgfp' ? 'sfGFP' : protein === 'petase' ? 'PETase' : protein === 'reteplase' ? 'Reteplase' : protein}</span>
-                                <p class="text-xs text-base-content/65 mt-0.5">{note}</p>
-                            </div>
-                        {/each}
-                    </div>
-                {/if}
-                {#if activeSynopsis.synopsis.mol || activeSynopsis.synopsis.wiki}
-                    <div class="pt-1 border-t border-base-300/50">
-                        <a
-                            href={pubchemUrl(activeSynopsis.synopsis.mol ?? activeSynopsis.synopsis.wiki)}
-                            target="_blank"
-                            rel="noopener"
-                            class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                        >Look up on PubChem →</a>
-                    </div>
-                {/if}
+                {@render synopsisBody(activeSynopsis.name, activeSynopsis.synopsis, false)}
             </div>
+        </div>
+    </div>
+{/if}
+
+{#if hoverStars}
+    <div
+        class="cf-star-who"
+        style="left: {hoverStars.left}px; {hoverStars.top != null ? `top: ${hoverStars.top}px` : `bottom: ${hoverStars.bottom}px`};"
+        role="tooltip"
+    >
+        <div class="cf-star-who__hd">Starred by {hoverStars.names.length}</div>
+        <ul>{#each hoverStars.names as n}<li>{n}</li>{/each}</ul>
+    </div>
+{/if}
+
+{#if hoverSynopsis && !activeSynopsis}
+    <div
+        class="fixed z-[210] overflow-auto rounded-lg shadow-xl border border-base-300 bg-base-100"
+        style="left: {hoverSynopsis.left}px; {hoverSynopsis.top != null ? `top: ${hoverSynopsis.top}px` : `bottom: ${hoverSynopsis.bottom}px`}; width: {SYN_POP_W}px; max-height: {hoverSynopsis.maxH}px;"
+        onpointerenter={() => clearTimeout(synHideTimer)}
+        onpointerleave={leaveSynopsisHover}
+        role="tooltip"
+    >
+        <div class="px-3.5 py-2 border-b border-base-300 bg-base-200/60 flex items-baseline justify-between gap-3">
+            <h3 class="text-[13px] font-semibold text-base-content/80">{hoverSynopsis.name}</h3>
+            <span class="text-[9px] uppercase tracking-wider text-base-content/40 whitespace-nowrap">click ⓘ to expand</span>
+        </div>
+        <div class="px-3.5 py-3 space-y-2.5 text-[12.5px] text-base-content/80 leading-relaxed">
+            {@render synopsisBody(hoverSynopsis.name, hoverSynopsis.synopsis, true)}
         </div>
     </div>
 {/if}
@@ -2063,7 +2542,7 @@
     .cf-comm-card.is-active { border-color: var(--teal); background: var(--teal-wash); }
     .cf-comm-card__top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
     .cf-comm-card__name {
-        min-width: 0; flex: 1 1 auto;
+        min-width: 0; flex: 0 1 auto;
         font: 600 11.5px/1.2 var(--sans); color: var(--ink);
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
@@ -2094,6 +2573,126 @@
         border: 1px solid var(--teal); border-radius: var(--r-sm); padding: 2px 5px;
     }
     .cf-comm-card__tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    /* The star sits right after the name; the target badge / batch count pins right. */
+    .cf-comm-card__top > .cf-comm-card__badge,
+    .cf-comm-card__top > .cf-comm-card__count { margin-left: auto; }
+    .cf-comm-card:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+    .cf-star {
+        flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px;
+        padding: 2px 4px; margin: -2px 0; border: 1px solid transparent; border-radius: var(--r-sm);
+        background: none; color: var(--faint); cursor: pointer;
+        font: 600 9.5px/1 var(--mono);
+        transition: color .12s, background .12s, border-color .12s;
+    }
+    .cf-star:hover { color: #c98a00; background: #fff8e6; border-color: #f0d590; }
+    .cf-star.is-on { color: #d99a00; }
+    .cf-star__n { color: var(--muted); }
+    .cf-star.is-on .cf-star__n { color: #a87600; }
+    .cf-star-who {
+        position: fixed; z-index: 215; width: max-content; max-width: 220px; max-height: 240px; overflow: auto;
+        padding: 6px 9px; border: 1px solid var(--hair); border-radius: var(--r-sm);
+        background: #fff; box-shadow: 0 6px 18px rgba(27, 31, 37, .18);
+        font: 11px/1.45 var(--mono); color: var(--ink-2); pointer-events: none;
+    }
+    .cf-star-who__hd {
+        font: 500 9px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+        margin-bottom: 3px;
+    }
+    .cf-star-who ul { margin: 0; padding: 0; list-style: none; }
+    /* All / Starred tabs in the contributions header. */
+    .cf-comm-rail__hd { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+    .cf-comm-tabs { display: inline-flex; border: 1px solid var(--groove); border-radius: var(--r-sm); overflow: hidden; }
+    .cf-comm-tabs button {
+        font: 500 9.5px/1 var(--mono); padding: 4px 7px; cursor: pointer;
+        color: var(--ink-2); background: var(--surface-2); border: 0;
+    }
+    .cf-comm-tabs button + button { border-left: 1px solid var(--groove); }
+    .cf-comm-tabs button:hover { color: var(--ink); background: #fff; }
+    .cf-comm-tabs button[aria-selected="true"] { color: #fff; background: var(--teal); }
+    .cf-comm-tabs__n { opacity: .65; margin-left: 2px; }
+    /* Comment threads on contribution cards (mirrors the community-reagent threads). */
+    .cf-cbtn {
+        flex: 0 0 auto; white-space: nowrap; font: 9.5px/1 var(--mono); color: var(--muted);
+        background: transparent; border: 1px solid var(--hair); border-radius: var(--r-sm);
+        padding: 2px 6px; cursor: pointer;
+    }
+    .cf-cbtn:hover { color: var(--ink-2); border-color: var(--faint); }
+    .cf-cbtn.is-on { color: var(--teal-ink); border-color: var(--teal); background: var(--teal-wash); }
+    .cf-thread {
+        display: flex; flex-direction: column; gap: 7px; cursor: default;
+        margin-top: 2px; padding-top: 7px; border-top: 1px dashed var(--hair);
+    }
+    .cf-thread__empty { margin: 0; font: 10px var(--mono); color: var(--faint); }
+    .cf-thread__err { margin: 0; font: 10px/1.35 var(--mono); color: #b42318; }
+    .cf-comment { display: flex; flex-direction: column; gap: 2px; }
+    .cf-comment__meta { display: flex; align-items: center; gap: 5px; }
+    .cf-comment__who { font: 600 10px var(--mono); color: var(--ink-2); }
+    .cf-comment__when { font: 9px var(--mono); color: var(--faint); }
+    .cf-comment__del { margin-left: auto; font-size: 10px; line-height: 1; color: var(--faint); background: transparent; border: none; cursor: pointer; padding: 0 2px; }
+    .cf-comment__del:hover { color: var(--err); }
+    .cf-comment__body { margin: 0; font: 10.5px/1.45 var(--mono); color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .cf-comm-rail--wide .cf-comment__body { font: 12px/1.55 var(--sans); }
+    .cf-compose { position: relative; display: flex; flex-direction: column; gap: 5px; }
+    .cf-compose__in {
+        width: 100%; box-sizing: border-box; min-height: 40px; resize: vertical;
+        padding: 15px 7px 5px; font: 11px/1.4 var(--mono); color: var(--ink);
+        background: #fff; border: 1px solid var(--hair); border-radius: var(--r-sm); outline: none;
+    }
+    .cf-compose__in:focus { border-color: var(--teal); }
+    .cf-compose__count { position: absolute; right: 7px; top: 4px; font: 9px var(--mono); color: var(--faint); pointer-events: none; }
+    .cf-compose__count.is-over { color: var(--err); }
+    .cf-compose__btn {
+        align-self: flex-end; font: 500 10px/1 var(--mono); padding: 4px 9px; cursor: pointer;
+        color: var(--teal-ink); background: var(--surface-2); border: 1px solid var(--teal); border-radius: var(--r-sm);
+    }
+    .cf-compose__btn:disabled { opacity: .45; cursor: default; }
+    .cf-comm-err { padding: 5px 9px; font: 10px/1.35 var(--mono); color: #b42318; background: #fef3f2; border-bottom: 1px solid #fecdca; }
+    .cf-comm-empty { margin: 8px 4px; font: 10.5px/1.5 var(--mono); color: var(--muted); }
+    /* Wide-pane-only extras: a batch member's own rationale, acknowledgements, AI model. */
+    .cf-comm-card__member { display: flex; flex-direction: column; gap: 4px; padding-left: 8px; border-left: 2px solid var(--hair); }
+    .cf-comm-card__ack { margin: 0; font: 10.5px/1.45 var(--sans); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .cf-comm-card__ai {
+        flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        color: var(--faint); padding: 1px 5px; border: 1px solid var(--hair); border-radius: var(--r-sm);
+    }
+
+    /* ── Fullscreen focus mode ─────────────────────────────────────────────── */
+    /* The section pins over the viewport as a column: slim header, the designer
+       row filling the middle (contributions | table, 50/50), toggle bar at the
+       bottom. z-index sits under the page modals (200) so they still open on top. */
+    .bench-focus {
+        position: fixed; inset: 0; z-index: 150;
+        margin: 0; padding: 10px 14px 4px;
+        display: flex; flex-direction: column; gap: 10px;
+        background: var(--paper-2);
+    }
+    .bench-focus__hd { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; }
+    .bench-focus__ttl { font: 600 14px/1.2 var(--sans); color: #fff; }
+    .bench-focus__sub { font: 500 9.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: rgba(255, 255, 255, .5); }
+    .bench-focus__hd .btn-bp { margin-left: auto; }
+    .bench-focus .cf-designer-row { flex: 1 1 auto; min-height: 0; }
+    .bench-focus .cf-designer-row.is-split {
+        display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px;
+    }
+    .bench-focus .cf-designer-main { min-height: 0; min-width: 0; }
+    .bench-focus .bench-scroll { max-height: none; border-radius: var(--r, 5px); }
+    .bench-focus .bench-toolbar { flex: 0 0 auto; padding-top: 0; }
+    @media (max-width: 900px) {
+        .bench-focus .cf-designer-row.is-split { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 2fr) minmax(0, 3fr); }
+    }
+    /* Wide contributions pane: full-height, roomier cards, and tall text boxes in a
+       readable proportional face that keep the author's line breaks. */
+    .cf-comm-rail--wide { max-height: none; margin-right: 0; border-radius: var(--r, 5px); }
+    .cf-comm-rail--wide .cf-comm-rail__list { padding: 10px; gap: 10px; }
+    .cf-comm-rail--wide .cf-comm-card { padding: 11px 13px; gap: 8px; }
+    .cf-comm-rail--wide .cf-comm-card__name { font-size: 13px; }
+    .cf-comm-rail--wide .cf-comm-card__badge { font-size: 9.5px; }
+    .cf-comm-rail--wide .cf-comm-card__desc {
+        max-height: 22em; padding: 9px 11px;
+        font: 12.5px/1.6 var(--sans); white-space: pre-wrap;
+    }
+    .cf-comm-rail--wide .cf-comm-card__member .cf-comm-card__desc { max-height: 12em; font-size: 12px; }
+    .cf-comm-rail--wide .cf-comm-card__foot { font-size: 10px; }
     /* The batch's one overarching hypothesis reuses .cf-comm-card__desc so it reads the
        same as a single card's description (no darker/offset treatment). */
     /* Category-group boundaries use the same quiet hairline as every other row
@@ -2401,16 +3000,81 @@
        stands clearly apart from the OFF state, which keeps the standard white .btn-bp
        look like the CSV/PNG buttons. Scoped with .btn-bp to outrank the global
        aria-pressed rule. */
-    .bench-toggle.btn-bp[aria-pressed="true"] {
-        color: #fff;
-        background: var(--teal);
-        border-color: var(--teal);
+    /* ── Table settings bar (below the table) ──────────────────────────────── */
+    /* Two rows (Columns / View) with their labels in a left column, and the
+       exports in a right column spanning both rows. */
+    .bench-settings {
+        display: grid; grid-template-columns: max-content max-content max-content;
+        align-items: center; gap: 6px 14px; padding: 8px 14px; max-width: 100%;
+        border: 1px solid var(--hair); border-radius: var(--r, 5px);
+        background: var(--surface-2); box-shadow: var(--shadow-1);
     }
-    .bench-toggle.btn-bp[aria-pressed="true"]:hover {
-        color: #fff;
-        background: var(--ink-2);
-        border-color: var(--ink-2);
+    .bench-settings__items { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+    .bench-settings__export {
+        grid-column: 3; grid-row: 1 / span 2; align-self: stretch;
+        display: flex; align-items: center; gap: 8px; padding-left: 14px; border-left: 1px solid var(--hair);
     }
+    @media (max-width: 760px) {
+        .bench-settings { grid-template-columns: max-content minmax(0, 1fr); }
+        .bench-settings__export { grid-column: 1 / -1; grid-row: auto; padding: 6px 0 0; border-left: 0; border-top: 1px solid var(--hair); }
+    }
+    .bench-settings__lbl {
+        font: 500 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+    }
+    .bench-settings__sub { font: 500 11.5px/1 var(--mono); color: var(--ink-2); margin-left: 2px; }
+    /* Switch: a small track + thumb, teal when on (role="switch" / aria-checked). */
+    .bench-switch {
+        display: inline-flex; align-items: center; gap: 6px; padding: 3px 0;
+        font: 500 11.5px/1 var(--mono); color: var(--ink-2);
+        background: none; border: 0; cursor: pointer;
+    }
+    .bench-switch:hover { color: var(--ink); }
+    .bench-switch:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: 3px; }
+    .bench-switch__track {
+        position: relative; flex: 0 0 auto; width: 24px; height: 14px; border-radius: 999px;
+        background: var(--recess); border: 1px solid var(--groove);
+        transition: background .15s ease, border-color .15s ease;
+    }
+    .bench-switch__thumb {
+        position: absolute; top: 1px; left: 1px; width: 10px; height: 10px; border-radius: 50%;
+        background: #fff; box-shadow: 0 1px 2px rgba(27, 31, 37, .3); transition: transform .15s ease;
+    }
+    .bench-switch[aria-checked="true"] .bench-switch__track { background: var(--teal); border-color: var(--teal); }
+    .bench-switch[aria-checked="true"] .bench-switch__thumb { transform: translateX(10px); }
+    /* Segmented picker (salt optima) and the plain export actions. */
+    .bench-seg { display: inline-flex; border: 1px solid var(--groove); border-radius: var(--r-sm); overflow: hidden; }
+    .bench-seg button {
+        font: 500 10.5px/1 var(--mono); padding: 4px 8px; cursor: pointer;
+        color: var(--ink-2); background: var(--surface-2); border: 0;
+    }
+    .bench-seg button + button { border-left: 1px solid var(--groove); }
+    .bench-seg button:hover { color: var(--ink); background: #fff; }
+    .bench-seg button.is-on { color: #fff; background: var(--teal); }
+    .bench-settings__act {
+        font: 500 11px/1 var(--mono); padding: 4px 8px; cursor: pointer;
+        color: var(--ink-2); background: var(--surface-2);
+        border: 1px solid var(--groove); border-radius: var(--r-sm);
+    }
+    .bench-settings__act:hover { color: var(--ink); border-color: var(--ink-2); }
+    .bench-settings__act:disabled { opacity: .5; cursor: default; }
+    /* Recently added reagents: light-blue ⓘ, and a matching note atop their popup. */
+    .bench-info--new { color: #3d9be9; }
+    .bench-info--new:hover { color: #1f7fd0; background: rgba(61, 155, 233, 0.12); }
+    .bench-info-note {
+        margin: 0; padding: 4px 8px; border-radius: 4px;
+        font: 600 11px/1.4 var(--mono); color: #1f6fb5;
+        background: #e8f3fd; border: 1px solid #b9dcf7;
+    }
+    /* Fullscreen toggle pinned in the table's top-left header corner. */
+    .bench-corner { vertical-align: top; text-align: left; }
+    .bench-fs-btn {
+        display: inline-grid; place-items: center; width: 22px; height: 22px; margin: 6px 0 0 6px;
+        color: var(--muted); background: var(--surface-2);
+        border: 1px solid var(--groove); border-radius: var(--r-sm); cursor: pointer;
+        transition: color .12s, border-color .12s, background .12s;
+    }
+    .bench-fs-btn:hover { color: var(--ink); border-color: var(--ink-2); background: #fff; }
+    .bench-fs-btn.is-on { color: #fff; background: var(--teal); border-color: var(--teal); }
 
     /* Delta direction coloring — blue-grey up, red down, muted at parity. */
     .delta-up {

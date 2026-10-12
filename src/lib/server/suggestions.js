@@ -235,6 +235,8 @@ function cleanDict(dict, kcUser) {
   // Reserved owner key — stripped from client output in normalizeSuggestion and used
   // by deleteSuggestion to authorise removal (no author_sub column needed).
   if (kcUser?.sub) clean._owner_sub = String(kcUser.sub).slice(0, 200);
+  // Reserved (stripped from client output like _owner_sub): 'user' or 'agent'.
+  clean._submitted_via = kcUser?.via === 'agent' ? 'agent' : 'user';
   return clean;
 }
 
@@ -245,7 +247,7 @@ const MAX_COMMENT_CHARS = 4000;
 // limit can't be dodged by omitting spaces. Mirrors wordCount() in
 // ReagentSuggestions.svelte — keep the two in sync.
 const CHARS_PER_WORD = 15;
-function clampComment(body) {
+export function clampComment(body) {
   const tokens = String(body ?? '').trim().split(/\s+/).filter(Boolean);
   const kept = [];
   let budget = MAX_COMMENT_WORDS;
@@ -342,6 +344,7 @@ export async function postComment(kcUser, suggestionId, body) {
   await pb.collection(SUGGESTION_COMMENTS).create({
     suggestion: suggestionId, author_sub: kcUser.sub,
     author_name: kcUser.name || 'anonymous', body: text,
+    submitted_via: kcUser?.via === 'agent' ? 'agent' : 'user',
   });
 }
 
@@ -402,4 +405,31 @@ export async function deleteSuggestion(kcUser, suggestionId) {
   } catch { /* ignore */ }
   await pb.collection(SUGGESTED).delete(suggestionId);
   return { ok: true };
+}
+
+// The ranked suggestions as plain text — for the "↓" button (opens in a new tab)
+// and for agents that would rather read prose than JSON. Known keys get their own
+// lines; any other attributes the proposer added are listed after them.
+export function suggestionsAsText(suggestions) {
+  const KNOWN = new Set(['name', 'concentration', 'category', 'ph', 'link', 'description', 'proposed_by']);
+  const lines = [
+    'Cell-Free Synthesis Coopetition — community reagent suggestions',
+    `Exported ${new Date().toISOString().slice(0, 10)} · ${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} · ranked by upvotes`,
+    ''
+  ];
+  suggestions.forEach((s, i) => {
+    const d = s.suggestion || {};
+    const spec = [d.concentration, d.category, d.ph ? `pH ${d.ph}` : ''].filter(Boolean).join(' · ');
+    lines.push(`${i + 1}. [▲ ${s.votes}] ${d.name || 'Unnamed reagent'}${spec ? ` — ${spec}` : ''}`);
+    if (d.description) lines.push(`   ${String(d.description).replace(/\s*\n\s*/g, ' ')}`);
+    for (const [k, v] of Object.entries(d)) if (!KNOWN.has(k)) lines.push(`   ${k}: ${v}`);
+    if (d.link) lines.push(`   ${d.link}`);
+    lines.push(`   Suggested by ${d.proposed_by || 'anonymous'}${s.created ? ` on ${String(s.created).slice(0, 10)}` : ''} · id ${s.id}`);
+    for (const c of s.comments || []) {
+      lines.push(`     - ${c.author}${c.created ? ` (${String(c.created).slice(0, 10)})` : ''}: ${String(c.body).replace(/\s*\n\s*/g, ' ')}`);
+    }
+    lines.push('');
+  });
+  if (!suggestions.length) lines.push('No suggestions yet.');
+  return lines.join('\n');
 }

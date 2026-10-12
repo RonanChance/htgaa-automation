@@ -101,12 +101,33 @@ export const REAGENT_ALIASES = {
     'Guanosine':       { ids: ['guanosine'],                      stockMm: 25,  unit: 'mM' },
     'Uridine':         { ids: ['uridine'],                        stockMm: 25,  unit: 'mM' },
     'Guanine':         { ids: ['guanine'],                        stockMm: 25,  unit: 'mM' },
+    // Approved + in-stock catalog reagents no published formulation uses, curated
+    // here (name, group, unit) so they get a proper row instead of an auto-added one.
+    // `addedOn` marks recently added rows: their ⓘ is light blue and the popup says
+    // when they were added. Drop the field once they no longer need flagging.
+    'Adenine':         { ids: ['adenine'],                        stockMm: 25,  unit: 'mM', addedOn: '2026-10-11' },
+    'Cytosine':        { ids: ['cytosine'],                       stockMm: 25,  unit: 'mM', addedOn: '2026-10-11' },
+    'Uracil':          { ids: ['uracil'],                         stockMm: 25,  unit: 'mM', addedOn: '2026-10-11' },
+    'Thymine':         { ids: ['thymine'],                        stockMm: 25,  unit: 'mM', addedOn: '2026-10-11' },
+    'Thymidine':       { ids: ['thymidine'],                      stockMm: 25,  unit: 'mM', addedOn: '2026-10-11' },
+    'Pyruvate oxidase': { ids: ['pyruvate_oxidase'],              stockMm: 10,  unit: 'mg/mL',
+                         notes: 'Stock 10 g/L (= 10 mg/mL, ~1.5 U/mg). Makes H2O2 — pair with catalase.', addedOn: '2026-10-11' },
+    'K₂HPO₄ (dibasic)': { ids: ['potassium_phosphate_dibasic'],   stockMm: 500, unit: 'mM',
+                         notes: 'Single potassium phosphate salt (0.5 M) — not the 1.6:1 "Phosphate (di:mono)" mix.', addedOn: '2026-10-11' },
+    'KH₂PO₄ (monobasic)': { ids: ['potassium_phosphate_monobasic'], stockMm: 500, unit: 'mM',
+                         notes: 'Single potassium phosphate salt (0.5 M) — not the 1.6:1 "Phosphate (mono:di)" mix.', addedOn: '2026-10-11' },
+    'Sodium hexametaphosphate': { ids: ['sodium_hexametaphosphate'], stockMm: 150, unit: 'mM', addedOn: '2026-10-11' },
+    'Potassium formate': { ids: ['potassium_formate'],            stockMm: 500, unit: 'mM', addedOn: '2026-10-11' },
+    'Brij-35':         { ids: ['brij_35'],                        stockMm: 10,  unit: '% v/v',
+                         notes: 'Non-ionic detergent; stock and targets are % v/v.', addedOn: '2026-10-11' },
+    'DMSO':            { ids: ['dmso'],                           stockMm: 60,  unit: '% v/v',
+                         notes: 'Dimethyl sulfoxide co-solvent; stock and targets are % v/v.', addedOn: '2026-10-11' },
     'Catalase':        { ids: ['catalase'],                       stockMm: 50000, unit: 'U/mL',
                          notes: 'Stock 50,000 U/mL — targets in the GPT-5 paper are U/mL.' },
     'DsbC':            { ids: ['dsbc_ecoli'],                    stockMm: 100, unit: 'µM',
                          notes: 'Disulfide bond isomerase for reteplase folding. Stock 100 µM (0.1 mM); paper targets in µM.' },
-    'Maltose':         { ids: ['maltose'],                        stockMm: 146.07, unit: 'mM',
-                         notes: 'Maltose stock 50 g/L (MW 342 → 146 mM).' },
+    'Maltose':         { ids: ['maltose'],                        stockMm: 138.77, unit: 'mM',
+                         notes: 'Maltose stock 50 g/L as the monohydrate (MW 360.31 → 138.77 mM), matching autonomous-cfps.' },
     'Succinic acid':   { ids: ['succinic_acid'],                  stockMm: 500, unit: 'mM' },
     'Nicotinamide':    { ids: ['nicotinamide'],                  stockMm: 100,  unit: 'mM' },
     'Ribose':          { ids: ['ribose'],                        stockMm: 666.09,  unit: 'mM' },
@@ -238,14 +259,15 @@ export const CUSTOM_REAGENT_IDS = new Set(CUSTOM_REAGENTS.map((r) => r.id));
 export const REAGENT_GROUPS = [
     { name: 'Salts', reagents: ['K(Glu)', 'Mg(Glu)2', 'NH4(Glu)', 'Ammonium acetate'] },
     { name: 'Amino acids', reagents: ['Amino acids', 'Tyrosine', 'Cysteine'] },
-    { name: 'Buffers', reagents: ['HEPES pH 7.5', 'Bis-Tris', 'Phosphate (di:mono)', 'Phosphate (mono:di)'] },
-    { name: 'Energy substrates', reagents: ['Glucose', 'Sodium pyruvate', 'Maltose', 'Maltodextrin', 'Ribose', 'PEP', '3-PGA', 'Dilithium acetyl phosphate'] },
+    { name: 'Buffers', reagents: ['HEPES pH 7.5', 'Bis-Tris', 'Phosphate (di:mono)', 'Phosphate (mono:di)', 'K₂HPO₄ (dibasic)', 'KH₂PO₄ (monobasic)'] },
+    { name: 'Energy substrates', reagents: ['Glucose', 'Sodium pyruvate', 'Maltose', 'Maltodextrin', 'Ribose', 'PEP', '3-PGA', 'Dilithium acetyl phosphate', 'Sodium hexametaphosphate', 'Potassium formate'] },
     { name: 'Cofactors', reagents: ['Folinic acid', 'tRNA', 'CoA', 'NAD', 'cAMP', 'Nicotinamide'] },
     { name: 'Polyamines / redox', reagents: ['Putrescine', 'Spermidine', 'Dithiothreitol', 'GSSG', 'GSH', 'Oxalic acid'] },
     { name: 'Crowd', reagents: ['PEG-8000'] },
+    { name: 'Additives', reagents: ['Brij-35', 'DMSO'] },
     { name: 'TCA', reagents: ['Oxaloacetic acid', 'Succinic acid'] },
-    { name: 'Nucleosides / bases', reagents: ['Adenosine', 'Cytidine', 'Guanosine', 'Uridine', 'Guanine'] },
-    { name: 'Enzymes', reagents: ['Catalase', 'DsbC'] },
+    { name: 'Nucleosides / bases', reagents: ['Adenosine', 'Cytidine', 'Guanosine', 'Uridine', 'Thymidine', 'Adenine', 'Guanine', 'Cytosine', 'Uracil', 'Thymine'] },
+    { name: 'Enzymes', reagents: ['Catalase', 'DsbC', 'Pyruvate oxidase'] },
     { name: 'NTPs', reagents: ['ATP', 'CTP', 'GTP', 'UTP'] },
     { name: 'NMPs', reagents: ['AMP', 'CMP', 'GMP', 'UMP'] }
 ];
@@ -309,7 +331,11 @@ export function snapNl(nl) {
 export function feasibilityFor(paperName, targetValue, opts = {}) {
     const rxnVol = opts.rxnVolUl ?? 20;
     const addBudget = opts.addBudgetUl ?? 9;
-    const alias = REAGENT_ALIASES[paperName];
+    // Callers that have merged in buildCatalogExtras' auto-discovered aliases
+    // (so a reagent that's in-stock but not part of any benchmark formulation
+    // still resolves) pass the merged map here; defaults to the literature-only set.
+    const aliases = opts.aliases ?? REAGENT_ALIASES;
+    const alias = aliases[paperName];
     if (!alias) return { status: 'missing', pctHeadroom: 0, baseContribution: 0, reason: 'unknown reagent' };
     if (!alias.ids) return { status: 'missing', pctHeadroom: 0, baseContribution: 0, reason: alias.notes || 'not in stock' };
     if (alias.unit === '% w/v' && !alias.stockMm) return { status: 'missing', pctHeadroom: 0, baseContribution: 0, reason: '% w/v stock concentration unknown' };
@@ -415,14 +441,18 @@ export function waterFillNlForFormulation(formulation, opts = {}) {
 // ─── Map a benchmark formulation into targetMm entries for the CFPS designer ──
 // Returns { targetMm: {reagent_id: mM}, targetGramsPerLiter: {reagent_id: g/L},
 //           skipped: [{paperName, reason}] }
-export function mapFormulationToTargets(formulation) {
+// `aliases` defaults to the literature-only REAGENT_ALIASES; pass the merged
+// map from buildCatalogExtras so a formulation/mix that uses an auto-discovered
+// reagent (e.g. Brij-35) resolves too.
+export function mapFormulationToTargets(formulation, aliases = REAGENT_ALIASES) {
     const targetMm = {};
     const targetGramsPerLiter = {};
     const targetUnitsPerMl = {};
     const targetNgPerUl = {};
+    const targetVolumePercent = {};
     const skipped = [];
     for (const [paperName, value] of Object.entries(formulation.components)) {
-        const alias = REAGENT_ALIASES[paperName];
+        const alias = aliases[paperName];
         if (!alias || !alias.ids) {
             skipped.push({ paperName, value, reason: alias?.notes || 'not in stock' });
             continue;
@@ -439,8 +469,10 @@ export function mapFormulationToTargets(formulation) {
             // Sub-mM enzymes (e.g. DsbC) — spec'd in µM for readability, but
             // the designer stores everything as mM. Convert here.
             for (const id of alias.ids) targetMm[id] = value / 1000;
-        } else if (alias.unit === 'mg/mL') {
-            // g/L == mg/mL, so pass through
+        } else if (alias.unit === 'mg/mL' || alias.unit === 'g/L') {
+            // g/L == mg/mL, so pass through. 'g/L' comes from buildCatalogExtras
+            // (catalog strings like "10g/L"); without it those reagents were
+            // silently skipped when a composition containing them was loaded.
             for (const id of alias.ids) targetGramsPerLiter[id] = value;
         } else if (alias.unit === 'U/mL') {
             // Enzymes (catalase, pyruvate oxidase) — designer parses "U/ml" stock
@@ -450,15 +482,99 @@ export function mapFormulationToTargets(formulation) {
             // DNA templates (helper plasmids like dsbc_pdam_let) — same
             // volume-ratio math as U/mL; unit cancels.
             for (const id of alias.ids) targetNgPerUl[id] = value;
-        } else if (alias.unit === '% w/v') {
-            // Crowding agents (PEG-8000) — stored as % w/v; the designer uses
-            // targetVolumePercent and parseVolumePercent to compute Echo volumes.
+        } else if (alias.unit === '% w/v' || alias.unit === '% v/v' || alias.unit === '%') {
+            // Crowding / detergent / solvent agents (PEG-8000, Brij-35, DMSO) —
+            // stored as a volume or weight percent; the designer uses
+            // targetVolumePercent and parseVolumePercent (which accepts either
+            // v/v or w/v) to compute Echo volumes.
             for (const id of alias.ids) targetVolumePercent[id] = value;
         } else {
             skipped.push({ paperName, value, reason: `unit ${alias.unit} not supported by designer` });
         }
     }
-    return { targetMm, targetGramsPerLiter, targetUnitsPerMl, targetNgPerUl, skipped };
+    return { targetMm, targetGramsPerLiter, targetUnitsPerMl, targetNgPerUl, targetVolumePercent, skipped };
+}
+
+// ─── Auto-discovered "extra" reagents ───────────────────────────────────────
+// Every reagent the live PocketBase catalog (cfps_reagent_groups) marks
+// approved + in-stock should get a row in the comparison table and a slot in
+// the Custom Mix / mix-column steppers — even when no published benchmark
+// formulation mentions it, so it has no hand-written REAGENT_ALIASES entry
+// above. buildCatalogExtras derives a synthetic "paper name" + alias straight
+// from the live catalog entry for any such reagent, under one short "New in
+// catalog" group, so a newly stocked reagent still shows up (and can be dosed)
+// the next time the page loads. It's a safety net: give a new reagent a curated
+// alias + group above to file it properly. Today every approved reagent is
+// curated, so this returns nothing.
+const CATALOG_EXTRA_BACKBONE_IDS = new Set(['cell_lysate', 'dna_template', 'base_buffer', 'nuclease_free_water']);
+
+// Parse a live catalog stock-concentration string ("0.875M", "10% v/v",
+// "50000U/ml", "10g/L", ...) into the { stockMm, unit } shape REAGENT_ALIASES
+// entries use above. Molar units are all normalized to mM (the convention
+// every hand-written alias already uses). Returns null for strings we can't
+// interpret as a usable supplement unit ("N/A", fixed-volume backbone rows).
+function inferAliasFromConcentration(concentration) {
+    const s = String(concentration || '').trim();
+    let m;
+    if ((m = s.match(/^([0-9]*\.?[0-9]+)\s*M$/i))) return { stockMm: Number(m[1]) * 1000, unit: 'mM' };
+    if ((m = s.match(/^([0-9]*\.?[0-9]+)\s*mM$/i))) return { stockMm: Number(m[1]), unit: 'mM' };
+    if ((m = s.match(/^([0-9]*\.?[0-9]+)\s*(?:u|µ)M$/i))) return { stockMm: Number(m[1]) / 1000, unit: 'mM' };
+    if ((m = s.match(/^([0-9]*\.?[0-9]+)\s*nM$/i))) return { stockMm: Number(m[1]) / 1e6, unit: 'mM' };
+    if ((m = s.match(/^>?([0-9]*\.?[0-9]+)\s*U\/mL$/i))) return { stockMm: Number(m[1]), unit: 'U/mL' };
+    if ((m = s.match(/^([0-9]*\.?[0-9]+)\s*g\/L$/i))) return { stockMm: Number(m[1]), unit: 'g/L' };
+    if ((m = s.match(/^([0-9]*\.?[0-9]+)\s*%\s*(v\/v|w\/v)?$/i))) {
+        return { stockMm: Number(m[1]), unit: `% ${(m[2] || 'w/v').toLowerCase()}` };
+    }
+    return null;
+}
+
+// `allReagents` = the live, approved + in-stock catalog (the flattened
+// PocketBase reagent groups the designer already loads). Returns
+// { aliases, groups } covering only reagents NOT already referenced by
+// `baseAliases` — merge these onto REAGENT_ALIASES / REAGENT_GROUPS to get the
+// full, always-current reagent list:
+//   const aliases = { ...REAGENT_ALIASES, ...extras.aliases };
+//   const groups  = [...REAGENT_GROUPS, ...extras.groups];
+export function buildCatalogExtras(allReagents, baseAliases = REAGENT_ALIASES) {
+    const coveredIds = new Set();
+    for (const alias of Object.values(baseAliases)) {
+        for (const id of alias?.ids || []) coveredIds.add(id);
+    }
+    const usedNames = new Set(Object.keys(baseAliases));
+    const aliases = {};
+    const byCategory = new Map();
+
+    for (const reagent of allReagents || []) {
+        if (!reagent?.id) continue;
+        if (CATALOG_EXTRA_BACKBONE_IDS.has(reagent.id)) continue;
+        if (reagent.fixedNl != null) continue; // fixed backbone volume, not a supplement
+        if (coveredIds.has(reagent.id)) continue;
+
+        const parsed = inferAliasFromConcentration(reagent.concentration);
+        if (!parsed) continue; // can't express a feasibility target for this stock format
+
+        let paperName = reagent.name || reagent.id;
+        if (usedNames.has(paperName)) paperName = `${paperName} (${reagent.id})`;
+        usedNames.add(paperName);
+
+        aliases[paperName] = {
+            ids: [reagent.id],
+            stockMm: parsed.stockMm,
+            unit: parsed.unit,
+            notes: 'Auto-added from the live reagent catalog — not part of a published benchmark formulation.',
+            autoAdded: true // flagged like `addedOn`: light-blue ⓘ, "auto-added" note
+        };
+
+        // One short group for anything new. PocketBase category names are long
+        // (they stretch the rotated group label) and don't line up with the
+        // curated groups above, which split related reagents across two groups.
+        const categoryName = 'New in catalog';
+        if (!byCategory.has(categoryName)) byCategory.set(categoryName, []);
+        byCategory.get(categoryName).push(paperName);
+    }
+
+    const groups = Array.from(byCategory.entries()).map(([name, reagents]) => ({ name, reagents }));
+    return { aliases, groups };
 }
 
 export const CITATION = {

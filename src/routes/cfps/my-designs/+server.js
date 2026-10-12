@@ -1,12 +1,10 @@
 import { pbAdmin } from '$lib/server/pb.js';
 import { json } from '@sveltejs/kit';
-import { readSession, KC_COOKIE } from '$lib/server/session.js';
+import { requestUser } from '$lib/server/auth.js';
 import { dev } from '$app/environment';
-import {
-  PROTEIN_TEMPLATE_FIELD,
-  TEMPLATE_FIELDS,
-  validateReagentList
-} from '$lib/cfpsReagentContract.js';
+import { loadMyDesigns } from '$lib/server/loadCommunityDesigns.js';
+import { loadCfpsReagentGroups } from '$lib/server/loadCfpsReagentGroups.js';
+import { validateSample, costForReagentList } from '$lib/server/designSubmission.js';
 
 // Manage the signed-in user's own CFPS compositions in the cfps_designs
 // collection — rename / edit metadata (op: "update") or remove (op: "delete").
@@ -24,9 +22,28 @@ function round2(value) {
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
 }
 
-export const POST = async ({ request, cookies }) => {
+// sample_id (stored as `title`) must stay unique: renaming onto another record's id
+// is refused. Returns the clashing title, or null.
+async function titleClash(pb, title, selfId) {
+  const rows = await pb.collection(COLLECTION).getFullList({
+    filter: pb.filter('title = {:t} && id != {:id}', { t: title, id: selfId }),
+    fields: 'id'
+  });
+  return rows.length ? title : null;
+}
+
+// GET → { compositions: [...] } the caller's own compositions (newest group first),
+// with ids, metadata, batch keys and reagent_list — what an agent needs to edit them.
+export const GET = async (event) => {
+  const kcUser = await requestUser(event);
+  if (!kcUser) return json({ success: false, error: 'Sign in to list your compositions.' }, { status: 401 });
+  return json({ compositions: await loadMyDesigns(kcUser) });
+};
+
+export const POST = async (event) => {
+  const { request } = event;
   try {
-    const kcUser = readSession(cookies.get(KC_COOKIE));
+    const kcUser = await requestUser(event);
     if (!kcUser) {
       return json({ success: false, error: 'Sign in to manage your compositions.' }, { status: 401 });
     }
@@ -81,6 +98,22 @@ export const POST = async ({ request, cookies }) => {
       return json({ success: false, error: 'Missing composition id.' }, { status: 400 });
     }
 
+    // Full-composition updates get the same rules (and field-level messages) as a
+    // new submission — checked up front so bad payloads fail fast. sample_id may be
+    // omitted: the record keeps its current one.
+    if (op === 'update' && body?.sample && typeof body.sample === 'object' && !Array.isArray(body.sample)) {
+      const sample = body.sample;
+      const { errors } = validateSample({ ...sample, sample_id: sample.sample_id || 'existing-id' });
+      if (errors.length) {
+        return json({
+          success: false,
+          error: `${errors.length} problem${errors.length === 1 ? '' : 's'} found — ${errors.map((e) => e.message).join(' ')}`,
+          errors,
+          help: 'GET /cfps/submit-design returns the full contract.'
+        }, { status: 400 });
+      }
+    }
+
     // On localhost there's no PocketBase to talk to (the community/my-design
     // loaders return a dummy store), so treat mutations as a no-op success.
     if (dev) {
@@ -119,47 +152,29 @@ export const POST = async ({ request, cookies }) => {
     const sample = body?.sample;
     if (sample && typeof sample === 'object' && !Array.isArray(sample)) {
       const reagentList = sample.reagent_list;
-      if (!reagentList || typeof reagentList !== 'object' || Array.isArray(reagentList)) {
-        return json({ success: false, error: 'reagent_list is required.' }, { status: 400 });
-      }
-      const listCheck = validateReagentList(reagentList);
-      if (!listCheck.valid) {
-        return json(
-          { success: false, error: `Invalid reagent_list: ${listCheck.errors.join(' ')}` },
-          { status: 400 }
-        );
-      }
-      const md = (sample.metadata && typeof sample.metadata === 'object') ? sample.metadata : {};
-      const target = String(md.protein_target || '').trim();
-      const expectedTemplate = PROTEIN_TEMPLATE_FIELD[target];
-      if (!expectedTemplate) {
-        return json(
-          { success: false, error: 'metadata.protein_target must be one of: sfGFP, PETase, Reteplase.' },
-          { status: 400 }
-        );
-      }
-      const templatesPresent = TEMPLATE_FIELDS.filter((t) => (Number(reagentList[t]) || 0) > 0);
-      if (templatesPresent.length !== 1 || templatesPresent[0] !== expectedTemplate) {
-        return json(
-          {
-            success: false,
-            error: `reagent_list must contain exactly ${expectedTemplate} (the template for ${target}) and no other DNA template.`
-          },
-          { status: 400 }
-        );
-      }
+      const md = sample.metadata;
       // Keep the record's existing sample_id (title) unless the client sent one; the
       // title is unique in the collection, so updating in place must not rename it to
       // something that collides with another record.
       const sampleId = String(sample.sample_id || rec.title || '').trim() || rec.title;
+      if (sampleId !== rec.title && await titleClash(pb, sampleId, id)) {
+        return json({ success: false, error: `A composition with sample_id "${sampleId}" already exists — pick another id.` }, { status: 409 });
+      }
       const totalNl = Object.values(reagentList).reduce((s, v) => s + (Number(v) || 0), 0);
+      // The designer sends its own cost figures; agents get priced server-side.
+      let totalCost = Number(body.totalCostUsd);
+      let perMl = Number(body.costPerMlReaction);
+      if (body.totalCostUsd == null || !Number.isFinite(totalCost)) {
+        totalCost = costForReagentList(reagentList, (await loadCfpsReagentGroups(null)).reagentGroups);
+        perMl = totalCost * 50;
+      }
       const updated = await pb.collection(COLLECTION).update(id, {
         title: sampleId,
         rationale: String(md.comments || '').trim() || null,
         design_json: { ...sample, sample_id: sampleId },
         total_volume_nl: totalNl,
-        total_cost_usd: round2(body.totalCostUsd),
-        cost_per_ml_reaction: round2(body.costPerMlReaction)
+        total_cost_usd: round2(totalCost),
+        cost_per_ml_reaction: round2(perMl)
       });
       return json({ success: true, id: updated.id });
     }
@@ -167,6 +182,9 @@ export const POST = async ({ request, cookies }) => {
     const name = String(body?.name || '').trim();
     if (!name) {
       return json({ success: false, error: 'Name is required.' }, { status: 400 });
+    }
+    if (name !== rec.title && await titleClash(pb, name, id)) {
+      return json({ success: false, error: `A composition named "${name}" already exists — pick another name.` }, { status: 409 });
     }
     const proteinTarget = PROTEIN_TARGETS.includes(body?.proteinTarget) ? body.proteinTarget : null;
     const aiModel = String(body?.aiModel || '').trim();

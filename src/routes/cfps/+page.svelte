@@ -4,6 +4,9 @@
   import { page } from '$app/state';
   import { invalidateAll } from '$app/navigation';
   import BenchmarksTable from './BenchmarksTable.svelte';
+  import LiteratureList from './LiteratureList.svelte';
+  import CfpsPrimer from './CfpsPrimer.svelte';
+  import { PUBLIC_ORIGIN, CFPS_BASE } from '$lib/site.js';
   import ProteinViewer from './ProteinViewer.svelte';
   import FoldingSimulation from './FoldingSimulation.svelte';
   import PlateAnalysis from './PlateAnalysis.svelte';
@@ -17,6 +20,8 @@
   import {
     mapFormulationToTargets,
     REAGENT_ALIASES,
+    REAGENT_GROUPS,
+    buildCatalogExtras,
     BASE_BUFFER_1X_CONTRIBUTION_MM_BY_ID,
     STANDARD_BASE_BUFFER_NL
   } from '$lib/cfps-benchmarks.js';
@@ -28,8 +33,13 @@
   import {
     PYDANTIC_REAGENT_FIELDS,
     TEMPLATE_FIELDS,
+    BASE_BUFFER_NL,
+    LYSATE_NL,
+    TEMPLATE_VOLUME_NL,
+    PROTEIN_TEMPLATE_FIELD,
     templateFieldForTarget,
-    validateReagentList
+    validateReagentList,
+    reagentListKey
   } from '$lib/cfpsReagentContract.js';
   import { REAGENT_ID_TO_PYDANTIC, PYDANTIC_TO_REAGENT_ID } from '$lib/cfpsReagentIdMap.js';
 
@@ -82,7 +92,7 @@
   // Look up the unit (mM / g/L / U/mL) for a paper reagent name so the
   // theoretical-reagents banner can render "12 mM" instead of just "12".
   function unitForPaperName(name) {
-    return REAGENT_ALIASES[name]?.unit ?? '';
+    return EXTENDED_REAGENT_ALIASES[name]?.unit ?? '';
   }
 
   // High-level automation flow per target protein. All three share the same
@@ -316,11 +326,16 @@
     return ASSAY_SVG_H - ASSAY_PAD - ((Math.log(v + 0.05) - Math.log(0.05)) / (Math.log(max + 0.05) - Math.log(0.05))) * (ASSAY_SVG_H - ASSAY_PAD * 2);
   }
   function assayPoints(stds, max) { return stds.map((v,i) => `${assayX(i,stds.length)},${assayY(v,max)}`).join(' '); }
+  // Only reagents that are in stock AND approved by the autonomous-cfps model (a
+  // CFPSReagentList field, after the app-id → field remap) ever reach the designer,
+  // the reagent lists, or the agent palette — a stale catalog entry can't leak in.
+  const isApprovedReagent = (reagent) =>
+    PYDANTIC_REAGENT_FIELDS.has(REAGENT_ID_TO_PYDANTIC[reagent?.id] || reagent?.id);
   const reagentGroups = (Array.isArray(data?.reagentGroups) ? data.reagentGroups : [])
     .map((group) => ({
       ...group,
       reagents: (Array.isArray(group?.reagents) ? group.reagents : []).filter(
-        (reagent) => reagent?.in_stock !== false
+        (reagent) => reagent?.in_stock !== false && isApprovedReagent(reagent)
       )
     }))
     .filter((group) => group.reagents.length > 0);
@@ -341,6 +356,25 @@
     }))
     .filter((group) => group.reagents.length > 0);
   const visibleReagents = allReagents.filter((reagent) => !reagent.hidden);
+
+  // REAGENT_ALIASES / REAGENT_GROUPS in cfps-benchmarks.js only cover reagents
+  // a published benchmark formulation mentions. Extend them with every other
+  // approved + in-stock reagent straight from the live PocketBase catalog
+  // (see buildCatalogExtras) so the comparison table and Custom Mix steppers
+  // always list every reagent the submit endpoint will accept — including one
+  // added to PocketBase after this file was last written.
+  const catalogExtras = buildCatalogExtras(allReagents);
+  const EXTENDED_REAGENT_ALIASES = { ...REAGENT_ALIASES, ...catalogExtras.aliases };
+  const EXTENDED_REAGENT_GROUPS = [...REAGENT_GROUPS, ...catalogExtras.groups];
+
+  // Approved + in-stock reagents by contract field name → display name. Feeds the
+  // "Where to start" primer's reagent lists, so it can't mention a reagent that
+  // isn't usable right now.
+  const approvedReagentNames = Object.fromEntries(
+    visibleReagents
+      .filter((r) => r.id !== WATER_ID && r.id !== 'dna_template')
+      .map((r) => [REAGENT_ID_TO_PYDANTIC[r.id] || r.id, r.name])
+  );
 
   const baselineTargetMm_1777863 = {
     potassium_glutamate: 312.5625,
@@ -384,14 +418,14 @@
   // profile→volume machinery. Missing reagents are surfaced via
   // theoreticalBanner so the user knows what would need to be purchased.
   function loadBenchmarkFormulation(benchmark) {
-    const { targetMm, targetGramsPerLiter, targetUnitsPerMl, targetNgPerUl, skipped } = mapFormulationToTargets(benchmark);
+    const { targetMm, targetGramsPerLiter, targetUnitsPerMl, targetNgPerUl, targetVolumePercent, skipped } = mapFormulationToTargets(benchmark, EXTENDED_REAGENT_ALIASES);
     const profile = defaultTargetProfiles[selectedProfileKey];
     if (!profile) return;
     profile.targetMm = targetMm;
     profile.targetGramsPerLiter = targetGramsPerLiter;
     profile.targetUnitsPerMl = targetUnitsPerMl || {};
     profile.targetNgPerUl = targetNgPerUl || {};
-    profile.targetVolumePercent = {};
+    profile.targetVolumePercent = targetVolumePercent || {};
     profile.label = benchmark.year ? `${benchmark.name} (${benchmark.year})` : benchmark.name;
     // computeDefaultVolumes credits base buffer + water-fills to MAX_TOTAL_NL,
     // so the total pipetted volume lands at 20 µL regardless of formulation.
@@ -412,15 +446,15 @@
   function volumesForFormulation(bm) {
     if (!bm?.components) return null;
     try {
-      const { targetMm, targetGramsPerLiter, targetUnitsPerMl, targetNgPerUl } =
-        mapFormulationToTargets(bm);
+      const { targetMm, targetGramsPerLiter, targetUnitsPerMl, targetNgPerUl, targetVolumePercent } =
+        mapFormulationToTargets(bm, EXTENDED_REAGENT_ALIASES);
       return computeVolumesForProfile({
         label: bm.name,
         targetMm,
         targetGramsPerLiter,
         targetUnitsPerMl: targetUnitsPerMl || {},
         targetNgPerUl: targetNgPerUl || {},
-        targetVolumePercent: {}
+        targetVolumePercent: targetVolumePercent || {}
       });
     } catch {
       return null;
@@ -449,23 +483,6 @@
   }
 
 
-  const HTGAA_NODE_OPTIONS = [
-    'MIT / Harvard (Cambridge, USA)',
-    'BioClub Tokyo (Tokyo, Japan)',
-    'Biopunk Lab (San Francisco, USA)',
-    'Designer Cells at Yonsei University (Incheon, South Korea)',
-    'Genspace (New York, USA):',
-    'Lifefabs Institute (London, UK)',
-    'Ottawa Bio Science (ON, Canada)',
-    'USFQ (Quito, Ecuador)',
-    'Victoria Makerspace (BC, Canada)',
-    'Baltimore Underground Science Space (Baltimore, MD, USA)',
-    'Duke (Durham, NC, USA)',
-    'Iowa State (Ames, IA, USA)',
-    'William & Mary (Williamsburg, VA, USA)',
-    'Chitown Bio (Chicago, IL, USA)',
-    'Hartnell College (Salinas, CA, USA)'
-  ];
 
   const fixedVolumeSummaryIds = new Set(['cell_lysate', 'dna_template']);
   const excludedFromExportIds = new Set(['cell_lysate', 'base_buffer', 'dna_template']);
@@ -540,13 +557,7 @@
     }
   }
 
-  let designTitle = $state('');
-  let author = $state('');
-  let rationale = $state('');
-  let selectedNodeDisplay = $state('');
-  let publishFormError = $state('');
   let selectedProfileKey = $state(DEFAULT_PROFILE_KEY);
-  let uploadModal;
   let draggingReagent = null;
   let dragLeft = 0;
   let dragWidth = 1;
@@ -613,9 +624,6 @@
   // reagent_list must carry EXACTLY the template matching protein_target — the
   // mapping + helper (TEMPLATE_FIELDS / templateFieldForTarget) are imported from
   // $lib/cfpsReagentContract.js, shared with the server.
-  let isPublishing = $state(false);
-  let publishMessage = $state('');
-  let publishError = $state('');
 
   let totalVolumeNl = $derived(
     allReagents.reduce((sum, reagent) => sum + (Number(volumesNl[reagent.id]) || 0), 0)
@@ -639,7 +647,7 @@
   let customMixByPaper = $derived.by(() => {
     volumesNl; // establish reactive dependency on the live design
     const out = {};
-    for (const [paperName, alias] of Object.entries(REAGENT_ALIASES)) {
+    for (const [paperName, alias] of Object.entries(EXTENDED_REAGENT_ALIASES)) {
       const id = alias?.ids?.[0];
       if (!id) continue;
       const reagent = allReagents.find((r) => r.id === id);
@@ -1278,7 +1286,7 @@
   // the same components shape the static BENCHMARK_FORMULATIONS use.
   function componentsForVolumes(volumes) {
     const out = {};
-    for (const [paperName, alias] of Object.entries(REAGENT_ALIASES)) {
+    for (const [paperName, alias] of Object.entries(EXTENDED_REAGENT_ALIASES)) {
       const id = alias?.ids?.[0];
       if (!id) continue;
       const reagent = allReagents.find((r) => r.id === id);
@@ -1298,7 +1306,7 @@
     const out = {};
     const vols = volumes || {};
     const waterNl = Number(vols[WATER_ID]) || 0;
-    for (const [paperName, alias] of Object.entries(REAGENT_ALIASES)) {
+    for (const [paperName, alias] of Object.entries(EXTENDED_REAGENT_ALIASES)) {
       const id = alias?.ids?.[0];
       if (!id) continue;
       const reagent = allReagents.find((r) => r.id === id);
@@ -1361,7 +1369,13 @@
       // one card and loads them all together.
       batchId: d.batchId || null,
       batchSize: d.batchSize || null,
-      batchIndex: d.batchIndex || null
+      batchIndex: d.batchIndex || null,
+      // Stars: count, starrers' display names, and whether the viewer starred it.
+      starCount: Number(d.starCount) || 0,
+      starredBy: Array.isArray(d.starredBy) ? d.starredBy : [],
+      starredByMe: !!d.starredByMe,
+      // Comment thread (oldest first), from cfps_design_comments.
+      comments: data?.designComments?.[d.id] ?? []
     }));
   });
 
@@ -2166,67 +2180,6 @@
     return { valid: errors.length === 0, errors };
   }
 
-  // ── reagent prompt (task hand-off for an LLM) ───────────────────────────
-  // A ready-to-paste prompt: the full reagent palette with stock concentrations,
-  // the 20 µL / 25 nL rules, and the exact JSON format that must be returned.
-  const reagentPromptExampleJson = JSON.stringify(
-    {
-      sample_id: '',
-      sample_type: 'experimental',
-      reagent_list: {
-        base_buffer: 2000,
-        lysate: 5000,
-        template_sfgfp: 2000,
-        potassium_glutamate: 1200,
-        magnesium_glutamate: 300,
-        hepes_koh: 1000,
-        nuclease_free_water: 8500
-      }
-    },
-    null,
-    2
-  );
-
-  function reagentPromptText() {
-    const lines = [
-      'You are designing a cell-free protein synthesis (CFPS) reagent reaction composition for one of three proteins: sfGFP, PETase, or Reteplase',
-      '',
-      'Constraints:',
-      '- The reaction is a single 20 µL (20,000 nL) well.',
-      '- Every reagent volume is in nL and MUST be a whole multiple of 25 nL.',
-      '- base_buffer must be 2000 nL; lysate must be 5000 nL.',
-      '- Include exactly one DNA template at 2000 nL (template_sfgfp, template_petase, or template_reteplase).',
-      '- Balance the remaining volume up to 20,000 nL with nuclease_free_water.',
-      '- sample_type must be "experimental".',
-      '',
-      'Available reagents (name — stock concentration):'
-    ];
-    for (const r of visibleReagents) {
-      if (r.id === WATER_ID) continue;
-      lines.push(`- ${r.name} — ${r.concentration}`);
-    }
-    lines.push('');
-    lines.push('Return ONLY a JSON object in EXACTLY this format — this is the required response format:');
-    lines.push(reagentPromptExampleJson);
-    return lines.join('\n');
-  }
-
-  // Dedicated feedback for the reagent-prompt panel so the "Copied…" confirmation
-  // shows under the prompt itself — not under the supplement-JSON box (which read
-  // as if the JSON had been copied).
-  let promptCopyMessage = $state('');
-  let promptCopyError = $state('');
-  async function copyReagentPrompt() {
-    promptCopyMessage = '';
-    promptCopyError = '';
-    try {
-      // Always copy the FULL prompt, even if the typewriter reveal is still running.
-      await navigator.clipboard.writeText(resolvedReagentPrompt());
-      promptCopyMessage = 'Copied reagent prompt to clipboard.';
-    } catch {
-      promptCopyError = 'Failed to copy reagent prompt.';
-    }
-  }
 
   // ── submit composition to PocketBase (cfps_designs) ─────────────────────
   // "Submit composition" opens a confirm modal so the author can review/change the
@@ -2288,6 +2241,8 @@
     try { parsed = JSON.parse(supplementText); } catch { parsed = null; }
     submitSampleId = String((parsed && !Array.isArray(parsed) && parsed.sample_id) || computeSampleId() || '').trim();
     submitMode = 'create';
+    dupAcknowledged = false;
+    serverDupMatches = [];
     showSubmitModal = true;
   }
 
@@ -2325,6 +2280,7 @@
     const single = batchMixCount === 1;
     const explicitId = submitSampleId.trim();
     if (single && !explicitId) { submitError = 'sample_id is required.'; return; }
+    if (single && singleDupBlocked) return; // the modal is asking: star it instead, or submit anyway
 
     commitSelectedMix(); // flush the live buffer into the selected mix before reading
     const mixesToSubmit = [...mixes]
@@ -2393,10 +2349,21 @@
               sample,
               author: data?.kcUser?.name || '',
               totalCostUsd: costUsdForVolumes(mix.volumes),
-              costPerMlReaction: costUsdForVolumes(mix.volumes) * 50
+              costPerMlReaction: costUsdForVolumes(mix.volumes) * 50,
+              // Batch members are notify-only; a lone composition only after "Submit anyway".
+              allow_duplicate: single ? dupAcknowledged : true
             })
           });
           const result = await res.json();
+          if (res.status === 409 && Array.isArray(result.duplicate_of)) {
+            // Someone submitted this exact reaction after the page loaded: surface it
+            // in the modal's duplicate notice rather than as a raw error.
+            serverDupMatches = result.duplicate_of.map((m) => ({
+              id: String(m.id), name: m.sample_id, author: m.author, starCount: 0, starredByMe: false, mine: !!m.mine
+            }));
+            dupAcknowledged = false;
+            throw new Error('This exact reaction was just submitted by someone else — see the note above.');
+          }
           if (!res.ok || !result.success) throw new Error(result.error || 'rejected');
           ok += 1;
         } catch (e) {
@@ -2443,6 +2410,85 @@
   // mix "belongs to" the user when its startKey is `community-<id>` and <id> is one
   // of their own records (data.myDesigns, server-filtered by Keycloak author_sub).
   let myDesignIdSet = $derived(new Set((data?.myDesigns ?? []).map((d) => String(d.id))));
+
+  // ── duplicate-reaction check (submit modal) ────────────────────────────────
+  // Every composition we know about (the community list includes your own), keyed
+  // by the same reagent_list fingerprint the server uses. Before submitting, each
+  // mix is fingerprinted too, so an identical reaction is flagged up front: a single
+  // composition is held back with "star it instead" / "submit anyway"; a batch only
+  // gets a notice and submits as normal. The server re-checks (it may know about
+  // submissions newer than this page) — its 409 feeds `serverDupMatches`.
+  let existingByKey = $derived.by(() => {
+    const map = new Map();
+    for (const d of data?.communityDesigns ?? []) {
+      const key = reagentListKey(d.reagentList);
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push({
+        id: String(d.id), name: d.name, author: d.author || null,
+        starCount: Number(d.starCount) || 0, starredByMe: !!d.starredByMe,
+        mine: myDesignIdSet.has(String(d.id))
+      });
+    }
+    return map;
+  });
+  // One entry per mix that isn't new: matches against existing compositions and/or
+  // an earlier mix in the same batch with the identical recipe.
+  let submitDuplicates = $derived.by(() => {
+    if (!showSubmitModal || submitMode !== 'create') return [];
+    const firstByKey = new Map();
+    return [...resolvedMixes]
+      .sort((a, b) => a.n - b.n)
+      .map((m) => {
+        const target = PROTEIN_TARGETS.includes(m.proteinTarget) ? m.proteinTarget : proteinTarget;
+        const key = reagentListKey(buildReagentListFromVolumes(m.volumes, target));
+        const twin = firstByKey.get(key) ?? null;
+        if (twin == null) firstByKey.set(key, m.n);
+        return { mix: m, matches: existingByKey.get(key) ?? [], sameAsMix: twin };
+      })
+      .filter((d) => d.matches.length || d.sameAsMix != null);
+  });
+  let serverDupMatches = $state([]);
+  let dupAcknowledged = $state(false); // "Submit anyway" pressed for a single duplicate
+  let dupStarBusy = $state(false);
+  let singleDupMatches = $derived.by(() => {
+    if (submitMode !== 'create' || batchMixCount !== 1) return [];
+    const seen = new Set();
+    return [...(submitDuplicates[0]?.matches ?? []), ...serverDupMatches].filter((m) => !seen.has(m.id) && seen.add(m.id));
+  });
+  let singleDupBlocked = $derived(singleDupMatches.length > 0 && !dupAcknowledged);
+
+  // Star the existing identical composition(s) instead of submitting a copy.
+  async function starInsteadOfSubmitting() {
+    const others = singleDupMatches.filter((m) => !m.mine);
+    const toStar = others.filter((m) => !m.starredByMe);
+    submitError = '';
+    if (toStar.length) {
+      dupStarBusy = true;
+      try {
+        const res = await fetch('/cfps/stars', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'star', ids: toStar.map((m) => m.id) })
+        });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(out?.error || `Star failed (${res.status}).`);
+      } catch (e) {
+        submitError = e?.message || 'Could not star it.';
+        dupStarBusy = false;
+        return;
+      }
+      dupStarBusy = false;
+    }
+    showSubmitModal = false;
+    submitMessage = `${toStar.length ? 'Starred' : 'You’ve already starred'} ${others.map((m) => `"${m.name}"`).join(', ')} instead of submitting a duplicate.`;
+    await invalidateAll(); // refresh star counts in the contributions list
+  }
+
+  async function submitAnyway() {
+    dupAcknowledged = true;
+    await confirmSubmitDesign();
+  }
   let myDesignsById = $derived(
     new Map((data?.myDesigns ?? []).map((d) => [String(d.id), d]))
   );
@@ -3288,42 +3334,325 @@
     try { localStorage.setItem(DESIGNER_STATE_KEY, JSON.stringify(snapshot)); } catch { /* ignore */ }
   });
 
-  // The reagent prompt is authored in PocketBase (static_values) so it can be edited
-  // on the fly without a redeploy; `data.reagentPrompt` is that text. If the DB read
-  // failed (null), fall back to the client-generated prompt so the panel is never empty.
-  function resolvedReagentPrompt() {
-    const fromDb = data?.reagentPrompt;
-    return (typeof fromDb === 'string' && fromDb.trim()) ? fromDb : reagentPromptText();
+  // ── agent access (second tab of the reagent prompt panel) ───────────────
+  // Instructions an AI agent can follow to act for the signed-in user: how to
+  // authenticate (an agent token minted here, or a Keycloak access token — see
+  // $lib/server/auth.js) and the JSON endpoints for upvoting reagent suggestions,
+  // starring compositions and submitting designs. Once the user mints a token it
+  // is written into the instructions, so one copy hands the agent everything.
+  // Human / Agent switch for the Participate section, remembered per browser.
+  const MODE_KEY = 'cfps:participation-mode';
+  let participationMode = $state('human'); // 'human' | 'agent'
+  function setParticipationMode(mode) {
+    participationMode = mode;
+    try { localStorage.setItem(MODE_KEY, mode); } catch { /* storage unavailable */ }
+  }
+  onMount(() => {
+    try { if (localStorage.getItem(MODE_KEY) === 'agent') participationMode = 'agent'; } catch { /* ignore */ }
+  });
+  let agentToken = $state(null); // { token, expiresAt } | null
+  let agentTokenBusy = $state(false);
+  let agentTokenError = $state('');
+  let agentCopyMessage = $state('');
+
+  async function createAgentToken() {
+    agentTokenBusy = true;
+    agentTokenError = '';
+    agentCopyMessage = '';
+    try {
+      const res = await fetch('/cfps/agent-token', { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.token) throw new Error(body?.error || `Could not create a token (${res.status}).`);
+      agentToken = { token: body.token, expiresAt: body.expiresAt };
+    } catch (e) {
+      agentTokenError = e?.message || 'Could not create a token.';
+    } finally {
+      agentTokenBusy = false;
+    }
   }
 
-  // Typewriter reveal: the first time the prompt scrolls into view it types itself
-  // out over ~1.8 s with a blinking caret (an "AI is writing" beat). Purely visual —
-  // `promptShown` is only what's painted; the Copy button uses resolvedReagentPrompt().
-  let promptFullText = $derived(resolvedReagentPrompt());
-  let promptTypedLen = $state(0);
-  let promptTypingDone = $state(false);
-  let promptViewEl = $state(null);
-  let promptShown = $derived(promptTypingDone ? promptFullText : promptFullText.slice(0, promptTypedLen));
+  // Official coopetition brief (rules, timeline, plate layout, scoring). The /export
+  // form is the same document as plain text, which agents can read directly.
+  const COOPETITION_DOC_ID = '1E9RKXezEU5pMO5A10kkUHjHrfL5f8segL0QeNHXAs_E';
+  const COOPETITION_DOC_URL = `https://docs.google.com/document/d/${COOPETITION_DOC_ID}`;
 
-  $effect(() => {
-    if (typeof window === 'undefined' || !promptViewEl) return;
-    if (promptTypingDone) return; // already revealed — later prompt changes just show in full
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { promptTypingDone = true; return; }
-    let raf = 0, startedAt = 0, started = false;
-    const DURATION = 1800; // ~1.8 s regardless of length
-    const tick = (now) => {
-      if (!startedAt) startedAt = now;
-      const p = Math.min(1, (now - startedAt) / DURATION);
-      promptTypedLen = Math.floor(p * promptFullText.length);
-      if (p >= 1) { promptTypingDone = true; return; }
-      raf = requestAnimationFrame(tick);
-    };
-    const io = new IntersectionObserver(([e]) => {
-      if (e.isIntersecting && !started) { started = true; io.disconnect(); raf = requestAnimationFrame(tick); }
-    }, { threshold: 0.25 });
-    io.observe(promptViewEl);
-    return () => { io.disconnect(); if (raf) cancelAnimationFrame(raf); };
-  });
+  // A reaction known to work, for the agent instructions: the sfGFP PEP-only control
+  // from Ginkgo's reference plates. Built from the benchmark formulation loaded from
+  // PocketBase (not a hard-coded recipe), converted with the same pipeline the
+  // designer uses, and only shown if it passes the reagent_list contract.
+  function knownGoodExample() {
+    const bm = findFormulation('ginkgo-target-sfgfp-pep');
+    const vols = bm ? volumesForFormulation(bm) : null;
+    if (!vols) return null;
+    const reagent_list = buildReagentListFromVolumes(vols, 'sfGFP');
+    if (!validateReagentList(reagent_list).valid) return null;
+    return { name: bm.name, yieldGl: Number(bm.yield_g_l) || null, reagent_list };
+  }
+
+  function agentInstructionsText(token) {
+    const base = CFPS_BASE; // always the public site, wherever this page is served from
+    const targets = Object.entries(PROTEIN_TEMPLATE_FIELD).map(([t, f]) => `${t} → ${f}`).join(', ');
+    return `# Cell-Free Synthesis Coopetition — agent instructions
+
+You are an AI agent acting for a signed-in participant of the Cell-Free Synthesis
+Coopetition (${base}). With these instructions you can do everything a
+participant can: design and submit cell-free reaction compositions, edit or
+delete your user's own compositions, star and comment on other teams'
+compositions, suggest / upvote / comment on community reagents, and add, edit
+and upvote papers in the shared literature list.
+
+Official coopetition details — goals, rules, timeline, plate layout, target
+proteins and how results are scored — are in the coopetition document:
+  ${COOPETITION_DOC_URL}
+  plain text: ${COOPETITION_DOC_URL}/export?format=txt
+Read it before designing. It is the authority on the competition itself; these
+instructions are the authority on how to use this site's API.
+
+## 0. Ground rules
+- Act only on what your user asks. Confirm with them before anything that writes
+  (submitting, editing, deleting, voting, starring, commenting, suggesting).
+- Validate compositions with "dry_run": true before submitting them for real.
+- Never reveal the token, and send it only to ${base}.
+- Data here may be used only on behalf of an HTGAA/HTBAA researcher
+  (terms: ${base}/legal#terms).
+
+## 1. Authenticate
+Send the user's identity on every request:
+
+  Authorization: Bearer $CFPS_TOKEN
+  Content-Type: application/json        (on every POST)
+
+CFPS_TOKEN=${token || '<ask your user for an agent token — see below>'}
+
+What the token authorizes: your user creates it from their own signed-in
+account specifically so an agent can take part for them. It works only on
+${base}, only for the actions in these instructions, and only as that user —
+it can't edit or delete anyone else's compositions, papers, comments or
+suggestions (the server checks ownership), and it expires after 7 days. Every
+write made with it is recorded as agent-made ("submitted_via": "agent"), so
+your user's own and your contributions stay distinguishable.
+
+Getting a token: the user signs in with Keycloak at ${base}, switches the
+"Participate" section to Agent, clicks "Create agent token" and copies these
+instructions (the token is written in above). Tokens last 7 days. If you can
+already obtain a Keycloak access token for this user from the coopetition realm,
+you may send that instead.
+
+Check it works: GET ${base}/suggestions → "signedIn": true
+
+## 2. Quick reference
+  GET  /cfps/submit-design             submission contract: reagent fields, rules, examples
+  POST /cfps/submit-design             submit one composition or a batch (supports dry_run)
+  GET  /cfps/my-designs                your user's own compositions (ids, metadata, reagent_list)
+  POST /cfps/my-designs                edit / delete / reorder your user's compositions
+  GET  /cfps/stars                     every community composition + star counts
+  POST /cfps/stars                     star / unstar compositions (the "upvote" for compositions)
+  GET  /cfps/design-comments[?id=]     comment threads on compositions
+  POST /cfps/design-comments           comment / delete your comment
+  GET  /cfps/suggestions[?format=txt]  community reagent suggestions, ranked
+  POST /cfps/suggestions               suggest / vote / unvote / comment / delete
+  GET  /cfps/literature[?format=txt]   literature list, ranked by upvotes
+  POST /cfps/literature                add / update / lookup / vote / unvote / delete
+  (paths are relative to ${PUBLIC_ORIGIN})
+
+## 3. Read the state of play first
+- GET ${base}/stars — all community compositions: { compositions: [{ id, name,
+  author, proteinTarget, comments (the hypothesis), experimentHypothesis,
+  batchId, created, starCount, starredBy, starredByMe }] }
+- GET ${base}/suggestions?format=txt and GET ${base}/literature?format=txt —
+  the community reagent ideas and reading list as plain text (drop ?format=txt
+  for JSON with ids).
+- GET ${base}/my-designs — what your user has already submitted.
+
+## 4. Star and comment on community compositions
+POST ${base}/stars
+     { "action": "star",   "ids": ["<composition id>", ...] }
+     { "action": "unstar", "ids": ["<composition id>", ...] }
+     → { stars: { "<id>": { starCount, starredBy, starredByMe } } }
+     One star per user per composition. To star a whole batch, send every id
+     that shares its batchId.
+
+GET  ${base}/design-comments?id=<composition id>  → { id, comments: [{ id, author, body, created, mine }] }
+POST ${base}/design-comments
+     { "action": "comment",   "id": "<composition id>", "body": "..." }   (≤ 500 words)
+     { "action": "uncomment", "id": "<comment id>" }                      your user's own only
+     → { id, comments: [...] }. A batch's thread lives on its first member.
+
+## 5. Submit compositions
+Read the contract first — it lists every valid reagent field and example payloads:
+GET  ${base}/submit-design
+
+One composition:
+POST ${base}/submit-design
+     { "sample": {
+         "sample_id": "<unique id, e.g. ada_lovelace_2026-10-11_a1>",
+         "sample_type": "experimental",
+         "reagent_list": { "<field>": <nL>, ... },
+         "metadata": { "protein_target": "sfGFP" | "PETase" | "Reteplase",
+                       "comments": "<the hypothesis this composition tests>",
+                       "ai_model": "<your model name>",
+                       "acknowledgements": "<people to credit, optional>" } } }
+     → { success: true, id }
+
+A batch (2–50 compositions tested together; all-or-nothing):
+POST ${base}/submit-design
+     { "experiment_hypothesis": "<what the batch as a whole tests>",
+       "batch_id": "<optional grouping key>",
+       "samples": [ <sample>, <sample>, ... ] }
+     → { success: true, ids: [...], batch_id }
+     Every sample is checked before anything is saved; batch_id / batch_size /
+     batch_index are stamped for you.
+
+Add "dry_run": true to either form to validate without saving.
+
+Identical reactions: if a composition's reagent_list exactly matches one that's
+already been submitted, a single submission is rejected with HTTP 409 and
+"duplicate_of" (the matching ids). Tell your user, and star that composition
+instead (section 4); if they still want their own copy, resend with
+"allow_duplicate": true. In a batch, duplicates are allowed — they're reported
+in "duplicates" and "warnings" (including two identical samples in one batch).
+Dry runs report duplicates too, so check before submitting.
+
+${(() => {
+  const ex = knownGoodExample();
+  if (!ex) return '';
+  const payload = JSON.stringify({ sample: { sample_id: '<unique id>', sample_type: 'experimental', reagent_list: ex.reagent_list, metadata: { protein_target: 'sfGFP', comments: '<the hypothesis this composition tests>', ai_model: '<your model name>', acknowledgements: '' } } }, null, 2);
+  return `Example — a reaction known to work: ${ex.name}, the sfGFP PEP-only control
+from Ginkgo's reference plates${ex.yieldGl ? ` (observed ≈ ${ex.yieldGl.toFixed(2)} g/L sfGFP)` : ''}. It is a
+complete, valid submission body; use it to check your request format, or as a
+baseline to change. The control is already measured, so submitting it unchanged
+adds no new information.
+${payload}
+
+`;
+})()}Rules every sample must meet:
+  • sample_id unique across all submissions (≤ 300 chars); sample_type "experimental"
+  • reagent_list uses only contract field names, every volume in nL on a
+    ${STEP_NL} nL grid; base_buffer = ${BASE_BUFFER_NL}; lysate = ${LYSATE_NL}
+  • exactly one DNA template at ${TEMPLATE_VOLUME_NL} nL, matching the target
+    (${targets})
+  • volumes total exactly ${MAX_TOTAL_NL} nL — nuclease_free_water fills the rest
+  • metadata.protein_target is one of the three targets
+  • metadata.comments (the hypothesis) is required, ≤ 1500 chars
+
+Rejections come back as HTTP 400 (409 if a sample_id is taken):
+     { success: false, error: "<summary>",
+       errors: [{ sample_index, sample_id, field, message }], help: "..." }
+Each message names the field and how to fix it (including "did you mean" for a
+misspelled reagent field). Fix every listed error, dry-run again, then submit.
+
+## 6. Edit or delete your user's compositions
+GET  ${base}/my-designs
+     → { compositions: [{ id, name, proteinTarget, aiModel, acknowledgements,
+         comments, experimentHypothesis, batchId, batchSize, batchIndex, rank,
+         created, reagentList }] }
+POST ${base}/my-designs   (only compositions your user submitted)
+     Rename / edit metadata (leaves the reagent_list untouched):
+     { "op": "update", "id": "<id>", "name": "<sample_id>", "proteinTarget": "sfGFP",
+       "comments": "...", "aiModel": "...", "acknowledgements": "..." }
+     Replace the whole composition (same rules and error format as section 5):
+     { "op": "update", "id": "<id>", "sample": { "sample_type": "experimental",
+       "reagent_list": {...}, "metadata": {...} } }
+       metadata is replaced wholesale — to keep a composition in its batch,
+       include its batch_id / batch_size / batch_index from GET /cfps/my-designs.
+     Delete:   { "op": "delete", "id": "<id>" }
+     Reorder priority within a target: { "op": "reorder", "order": [{ "id": "<id>", "rank": 1 }, ...] }
+
+## 7. Community reagents (suggest, upvote, comment)
+GET  ${base}/suggestions
+     → { suggestions: [{ id, votes, mine, suggestion: { name, concentration,
+         category, ph, link, description, proposed_by }, comments: [...] }],
+         votedSuggestionIds: [...] }
+POST ${base}/suggestions
+     { "action": "suggest",   "suggestion": { "name": "...", "concentration": "e.g. 100 mM",
+                              "category": "...", "ph": "7.4", "link": "https://...",
+                              "description": "why it should be tested" } }
+     { "action": "vote",      "id": "<suggestion id>" }   one upvote per user
+     { "action": "unvote",    "id": "<suggestion id>" }
+     { "action": "comment",   "id": "<suggestion id>", "body": "..." }
+     { "action": "uncomment", "id": "<comment id>" }
+     { "action": "delete",    "id": "<suggestion id>" }   your user's own only
+     Each returns the refreshed ranking.
+
+## 8. Literature research list (add, edit, upvote papers)
+GET  ${base}/literature
+     → { items: [{ id, title, authors, published, venue, url, doi, summary, tags,
+         votes, voted, mine, addedBy, created }], votedIds: [...] }
+POST ${base}/literature
+     { "action": "add", "paper": { "doi": "10.xxxx/...", "summary": "why it matters",
+                                   "tags": ["energy"] } }
+          A DOI (or a url containing one) fills title / authors / published /
+          venue automatically. Without one, send "title" and "url" yourself.
+          published accepts YYYY, YYYY-MM or YYYY-MM-DD.
+          409 = already listed: upvote the returned "existing" id instead.
+     { "action": "update", "id": "<paper id>", "paper": { <only the fields to change> } }
+     { "action": "lookup", "doi": "10.xxxx/..." }   preview metadata, stores nothing
+     { "action": "vote" | "unvote", "id": "<paper id>" }
+     { "action": "delete", "id": "<paper id>" }     update/delete: your user's papers only
+     Search the list first so you don't add duplicates.
+
+## 9. Errors (all endpoints)
+401 → token missing or expired: ask your user for a new agent token.
+400 → bad payload (the error says why). 403 → not your user's. 404 → id not found.
+409 → duplicate (sample_id taken, paper already listed).
+
+## Appendix — approved reagent palette
+Every reagent you may use as of this page load: in stock and approved by the
+autonomous-cfps model. Put the field name on the left in reagent_list; volumes
+are nL of the listed stock. GET ${base}/submit-design is authoritative.
+
+${approvedPaletteText()}
+`;
+  }
+  let agentInstructions = $derived(agentInstructionsText(agentToken?.token));
+
+  // Open the instructions (token included, if minted) as plain text in a new tab.
+  function openAgentText() {
+    const url = URL.createObjectURL(new Blob([agentInstructions], { type: 'text/plain;charset=utf-8' }));
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+
+  async function copyAgentText(text, what) {
+    agentCopyMessage = '';
+    agentTokenError = '';
+    try {
+      await navigator.clipboard.writeText(text);
+      agentCopyMessage = `Copied ${what} to clipboard.`;
+    } catch {
+      agentTokenError = `Failed to copy ${what}.`;
+    }
+  }
+
+  // Approved reagent palette for the agent instructions, generated from the live
+  // catalog — already filtered to in-stock, model-approved reagents — so it always
+  // matches what the submit endpoint accepts. The contract field name comes first:
+  // that's the reagent_list key.
+  function approvedPaletteText() {
+    const lines = [];
+    for (const g of visibleReagentGroups) {
+      const rows = [];
+      for (const r of g.reagents) {
+        if (r.id === WATER_ID) continue;
+        if (r.id === 'dna_template') {
+          rows.push(`  ${TEMPLATE_FIELDS.join(' | ')}  DNA template — ${r.concentration} (exactly one, ${TEMPLATE_VOLUME_NL} nL, matching protein_target)`);
+          continue;
+        }
+        const field = REAGENT_ID_TO_PYDANTIC[r.id] || r.id;
+        const fixed = field === 'base_buffer' ? ` (fixed at ${BASE_BUFFER_NL} nL)` : field === 'lysate' ? ` (fixed at ${LYSATE_NL} nL)` : '';
+        rows.push(`  ${field.padEnd(44)} ${r.name} — ${r.concentration}${fixed}`);
+      }
+      if (rows.length) lines.push(`${g.name}:`, ...rows, '');
+    }
+    // Fixed / balancing fields that aren't designer rows (base_buffer is hidden in
+    // the catalog) but every reagent_list must carry.
+    lines.push('Always present:');
+    if (!lines.some((l) => l.trimStart().startsWith('base_buffer '))) {
+      lines.push(`  ${'base_buffer'.padEnd(44)} Base buffer (fixed at ${BASE_BUFFER_NL} nL)`);
+    }
+    lines.push(`  ${WATER_ID.padEnd(44)} fills the reaction to exactly ${MAX_TOTAL_NL} nL`);
+    return lines.join('\n');
+  }
 
   function buildCostRankEntries() {
     return visibleReagents
@@ -3449,91 +3778,7 @@
     return null;
   }
 
-  function nodeShortName(displayLabel) {
-    return String(displayLabel || '')
-      .split('(')[0]
-      .replace(/:\s*$/, '')
-      .trim();
-  }
 
-  async function publishDesign() {
-    isPublishing = true;
-    publishFormError = '';
-    publishMessage = '';
-    publishError = '';
-    const humanAuthor = author?.trim() || '';
-    const aiAuthor = 'manual_ui';
-
-    if (!selectedNodeDisplay) {
-      publishFormError = 'Please select an HTGAA Node.';
-      isPublishing = false;
-      return;
-    }
-
-    if (!humanAuthor) {
-      publishFormError = 'Please enter your HTGAA username.';
-      isPublishing = false;
-      return;
-    }
-
-    if (totalVolumeNl > MAX_TOTAL_NL) {
-      publishError = 'Total reaction volume must be <= 20 uL.';
-      isPublishing = false;
-      return;
-    }
-
-    const payload = {
-      title: designTitle?.trim() || `CFPS-${new Date().toISOString()}`,
-      author: humanAuthor,
-      human_author: humanAuthor,
-      ai_author: aiAuthor,
-      rationale: rationale?.trim() || null,
-      htgaaNode: nodeShortName(selectedNodeDisplay),
-      design: {
-        maxTotalNl: MAX_TOTAL_NL,
-        stepNl: STEP_NL,
-        totalVolumeNl,
-        totalVolumeUl: totalVolumeNl / 1000,
-        remainingNl,
-        totalCostUsd,
-        costPerMlReaction,
-        reagents: allReagents.map((reagent) => ({
-          ...identityForReagent(reagent.id),
-          id: reagent.id,
-          group: reagent.group,
-          name: reagent.name,
-          concentration: reagent.concentration,
-          costPerMl: reagent.costPerMl,
-          volumeNl: Number(volumesNl[reagent.id]) || 0,
-          fixed: reagent.fixedNl != null
-        }))
-      }
-    };
-
-    try {
-      const response = await fetch('/save-cfps', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const result = await response.json();
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || 'Failed to publish CFPS design.');
-      }
-
-      if (result.duplicate) {
-        publishMessage = 'Duplicate design detected. Not published.';
-      } else {
-        publishMessage = `Published design ${result.id}.`;
-      }
-      uploadModal?.close();
-    } catch (error) {
-      publishError = error?.message || 'Failed to publish CFPS design.';
-    } finally {
-      isPublishing = false;
-    }
-  }
 
   // ── Fun: "decoding" glyph-scramble on section headers ──────────────────────
   // Hovering a monospace `.label` header sometimes plays a brief decode
@@ -3715,6 +3960,8 @@
     </div>
     <div class="cf-block-sub">Reagent concentrations in <b style="color:#fff;">mM</b> (proteins in mg/mL, enzymes in U/mL, DNA in ng/µL).</div>
     <BenchmarksTable
+      reagentGroups={EXTENDED_REAGENT_GROUPS}
+      reagentAliases={EXTENDED_REAGENT_ALIASES}
       benchmarkFormulations={benchmarkFormulations}
       fingerprintFor={formulationFingerprint}
       onLoad={loadBenchmarkFormulation}
@@ -3732,6 +3979,7 @@
       customCostPerMl={costPerMlReaction}
       customCostUsd={totalCostUsd}
       communityFormulations={communityFormulations}
+      viewerName={data?.kcUser?.name ?? ''}
       externalComparison={platedComparison}
       onClearExternalComparison={() => (platedComparison = null)}
       mixColumns={mixColumns}
@@ -4097,29 +4345,99 @@
     </div>
   {/if}
 
-  <!-- ===== community reagents (full width) over the reagent prompt (LLM hand-off) ===== -->
-  <div class="cf-reagent-stack">
-    <!-- community reagents span the full width -->
-    <ReagentSuggestions
-      suggestions={data.suggestions ?? []}
-      votedSuggestionIds={data.votedSuggestionIds ?? []}
-      kcUser={data.kcUser ?? null}
-      kcConfigured={data.kcConfigured ?? false}
-      devMode={data.devMode ?? false}
-    />
-    <!-- terminal-styled prompt underneath -->
-    <div class="panel panel--term cf-fill" style="position:relative;">
-      <div class="panel__hd"><span class="label">reagent prompt</span><span class="spacer"></span><button class="icon" onclick={copyReagentPrompt} title="Copy prompt">⧉</button></div>
+  <!-- ===== participate: as a human (community reagents + literature) or via an AI agent ===== -->
+  <!-- Human shows the community sections as-is; Agent swaps them for one copyable
+       block with everything an agent needs to take part on the user's behalf. -->
+  <!-- Three-column header: title left, the Human / Agent switch centred, an empty
+       balancing column right (so the switch sits on the page's centre line). -->
+  <div class="cf-mode-hd">
+    <div class="cf-block-hd" style="margin:0;">Participate</div>
+    <div class="cf-mode-seg" role="radiogroup" aria-label="Participate as">
+      <button type="button" role="radio" aria-checked={participationMode === 'human'} onclick={() => setParticipationMode('human')}>
+        <!-- person: head + shoulders -->
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+          <circle cx="8" cy="5" r="2.75" />
+          <path d="M2.75 14.25c0-2.9 2.35-4.75 5.25-4.75s5.25 1.85 5.25 4.75" />
+        </svg>
+        Human
+      </button>
+      <button type="button" role="radio" aria-checked={participationMode === 'agent'} onclick={() => setParticipationMode('agent')}>
+        <!-- robot: antenna, rounded head, two eyes, mouth -->
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 1.75v2.25" />
+          <circle cx="8" cy="1.5" r="0.6" fill="currentColor" stroke="none" />
+          <rect x="2.5" y="4" width="11" height="9" rx="2.25" />
+          <circle cx="5.75" cy="8" r="0.9" fill="currentColor" stroke="none" />
+          <circle cx="10.25" cy="8" r="0.9" fill="currentColor" stroke="none" />
+          <path d="M6.25 10.75h3.5" />
+          <path d="M1 7.5v2M15 7.5v2" />
+        </svg>
+        Agent
+      </button>
+    </div>
+    <span aria-hidden="true"></span>
+  </div>
+  <div class="cf-block-sub cf-mode-sub">
+    {participationMode === 'human'
+      ? 'Vote on and suggest reagents, and grow the shared reading list.'
+      : 'Everything your AI agent needs to take part for you — copy the whole block into the agent of your choice.'}
+  </div>
+  {#if participationMode === 'human'}
+    <div class="cf-participate">
+      <ReagentSuggestions
+        suggestions={data.suggestions ?? []}
+        votedSuggestionIds={data.votedSuggestionIds ?? []}
+        kcUser={data.kcUser ?? null}
+        kcConfigured={data.kcConfigured ?? false}
+        devMode={data.devMode ?? false}
+      />
+      <LiteratureList
+        items={data.literature?.items ?? []}
+        votedIds={data.literature?.votedIds ?? []}
+        kcUser={data.kcUser ?? null}
+        kcConfigured={data.kcConfigured ?? false}
+        devMode={data.devMode ?? false}
+      />
+    </div>
+  {:else}
+    <div class="panel panel--term cf-agent-block">
+      <div class="panel__hd">
+        <span class="label">agent instructions</span>
+        <span class="spacer"></span>
+        <button class="icon" onclick={openAgentText} title="Open as plain text" aria-label="Open the agent instructions as plain text">↓</button>
+        <button class="icon" onclick={() => copyAgentText(agentInstructions, 'agent instructions')} title="Copy all instructions" aria-label="Copy all agent instructions">⧉</button>
+      </div>
       <div class="panel__bd">
-        <pre class="cfps-json cfps-prompt" bind:this={promptViewEl}>{promptShown}<span class="cfps-caret" class:cfps-caret--done={promptTypingDone}></span></pre>
-        {#if promptCopyError}
-          <p style="margin:6px 0 0;font-size:11px;color:var(--err);">{promptCopyError}</p>
-        {:else if promptCopyMessage}
-          <p style="margin:6px 0 0;font-size:11px;color:#fff;">{promptCopyMessage}</p>
+        <!-- Agent token: minted from the signed-in session and written into the
+             instructions, so one copy hands the agent everything it needs. -->
+        <div class="cf-agent-token">
+          {#if data?.kcUser}
+            {#if agentToken}
+              <input class="cf-agent-token__val" readonly value={agentToken.token} aria-label="Agent token" onfocus={(e) => e.currentTarget.select()} />
+              <span class="cf-agent-token__note">acts as {data.kcUser.name} · expires {new Date(agentToken.expiresAt).toLocaleDateString()} · already in the instructions below</span>
+            {:else}
+              <button type="button" class="btn-bp" onclick={createAgentToken} disabled={agentTokenBusy}>{agentTokenBusy ? 'Creating…' : 'Create agent token'}</button>
+              <span class="cf-agent-token__note">Lets your agent act as {data.kcUser.name} for 7 days — it's added to the instructions below. Treat it like a password.</span>
+            {/if}
+          {:else}
+            <span class="cf-agent-token__note">Sign in first, then create an agent token so your agent can act for you.</span>
+          {/if}
+          <button type="button" class="btn-bp cf-agent-copy" onclick={() => copyAgentText(agentInstructions, 'agent instructions')}>⧉ Copy all instructions</button>
+        </div>
+        <pre class="cfps-json cfps-prompt cf-agent-pre">{agentInstructions}</pre>
+        {#if agentTokenError}
+          <p style="margin:6px 0 0;font-size:11px;color:var(--err);">{agentTokenError}</p>
+        {:else if agentCopyMessage}
+          <p style="margin:6px 0 0;font-size:11px;color:#fff;">{agentCopyMessage}</p>
         {/if}
       </div>
     </div>
-  </div>
+  {/if}
+
+  <!-- ===== where to start: the levers of cell-free synthesis, layer by layer ===== -->
+  <div class="cf-block-hd">Where to Start</div>
+  <div class="cf-block-sub">The main considerations in cell-free protein synthesis — good starting points for your first hypothesis.</div>
+  <CfpsPrimer approvedNames={approvedReagentNames} />
 
   <!-- ===== throughput funnel: 384-well → 96-well → 2 mL tubes, ideas flowing ===== -->
   <ReactionFlow />
@@ -4587,6 +4905,43 @@
               {/each}
             </div>
           {/if}
+          {#if submitMode === 'create' && singleDupBlocked}
+            {@const others = singleDupMatches.filter((m) => !m.mine)}
+            <div class="cf-dup cf-dup--warn" role="alert">
+              <b class="cf-dup__ttl">This exact reaction has already been submitted</b>
+              <ul class="cf-dup__list">
+                {#each singleDupMatches as m (m.id)}
+                  <li>{m.mine ? 'Your earlier composition' : (m.author || 'Another participant')} · <span class="cf-dup__id">{m.name}</span>{#if !m.mine} · ★ {m.starCount}{/if}</li>
+                {/each}
+              </ul>
+              <p class="cf-dup__msg">
+                {others.length
+                  ? 'Rather than using another well on the same reaction, star it to show your support — or change something to test a new idea.'
+                  : 'You’ve already submitted this reaction. Change something to test a new idea, or submit a repeat anyway.'}
+              </p>
+              <div class="cf-dup__actions">
+                <button type="button" class="btn-bp" onclick={submitAnyway} disabled={submitBusy || dupStarBusy || submitHypothesisMissing} title={submitHypothesisMissing ? 'Add the hypothesis being tested first' : 'Submit your own copy of this reaction'}>Submit anyway</button>
+                {#if others.length}
+                  <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={starInsteadOfSubmitting} disabled={submitBusy || dupStarBusy}>
+                    {dupStarBusy ? 'Starring…' : others.every((m) => m.starredByMe) ? '★ Already starred — don’t submit' : '★ Star it instead'}
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {:else if submitMode === 'create' && batchMixCount > 1 && submitDuplicates.length}
+            <div class="cf-dup" role="status">
+              <b class="cf-dup__ttl">Heads up — some reactions in this batch aren’t new</b>
+              <ul class="cf-dup__list">
+                {#each submitDuplicates as d (d.mix.id)}
+                  <li>
+                    {mixLabel(d.mix.n)}:
+                    {#if d.matches.length}identical to {#each d.matches as m, j (m.id)}{j ? ', ' : ''}{m.mine ? 'your earlier' : (m.author || 'another participant') + '’s'} <span class="cf-dup__id">{m.name}</span>{/each}{/if}{#if d.sameAsMix != null}{d.matches.length ? '; ' : ''}same recipe as {mixLabel(d.sameAsMix)} in this batch{/if}
+                  </li>
+                {/each}
+              </ul>
+              <p class="cf-dup__msg">You can still submit the batch — consider starring the existing compositions in the contributions list too.</p>
+            </div>
+          {/if}
           {#if submitError}
             <p style="margin:0;font-size:11px;color:var(--err);">{submitError}</p>
           {/if}
@@ -4598,7 +4953,7 @@
               {#if submitBusy}Saving…{:else}{updateButtonLabel} ▸{/if}
             </button>
           {:else}
-            <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={confirmSubmitDesign} disabled={submitBusy || submitHypothesisMissing} title={submitHypothesisMissing ? 'Add the hypothesis being tested before submitting' : ''}>
+            <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={confirmSubmitDesign} disabled={submitBusy || submitHypothesisMissing || singleDupBlocked} title={singleDupBlocked ? 'This reaction already exists — star it instead, or choose Submit anyway' : submitHypothesisMissing ? 'Add the hypothesis being tested before submitting' : ''}>
               {#if submitBusy}Submitting…{:else if batchMixCount > 1}Submit {batchMixCount} ▸{:else}Submit ▸{/if}
             </button>
           {/if}
@@ -4608,39 +4963,6 @@
   </div>
 {/if}
 
-<dialog id="upload_modal" class="cfps-dialog" bind:this={uploadModal} onclick={(e) => { if (e.target === uploadModal) uploadModal.close(); }}>
-  <div style="padding:16px;">
-    <div style="font:500 16px/1.15 var(--sans);color:var(--ink);">Ready to publish?</div>
-    <p style="margin:8px 0 0;font-size:12px;color:var(--muted);">Select HTGAA Node and add your HTGAA username / rationale for this CFPS design.</p>
-
-    <div class="cf-form" style="margin-top:14px;">
-      <label>HTGAA Node (required)
-        <select class="cf-in" bind:value={selectedNodeDisplay}>
-          <option value="" disabled>Select a node</option>
-          {#each HTGAA_NODE_OPTIONS as nodeOption}
-            <option value={nodeOption}>{nodeOption}</option>
-          {/each}
-        </select>
-      </label>
-      <label>HTGAA Username
-        <input type="text" class="cf-in no-autofill" placeholder="username" autocomplete="off" maxlength="100" bind:value={author} />
-      </label>
-      <label>Rationale
-        <textarea class="cf-in" placeholder="Why this formulation?" maxlength="1000" bind:value={rationale}></textarea>
-      </label>
-      {#if publishFormError}
-        <p style="margin:0;font-size:11px;color:var(--err);">{publishFormError}</p>
-      {/if}
-    </div>
-
-    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px;">
-      <form method="dialog" style="margin:0;"><button type="submit" class="btn-bp">Cancel</button></form>
-      <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={publishDesign} disabled={isPublishing}>
-        {#if !isPublishing}Publish ▸{:else}Publishing…{/if}
-      </button>
-    </div>
-  </div>
-</dialog>
 
 {#if plateReaderOpen && data.plateReader?.targets?.length}
   <PlateReaderModal
@@ -4666,21 +4988,6 @@
     z-index: 0;
     /* contain the full-bleed hero's 100vw so it can't add a horizontal scrollbar */
     overflow-x: clip;
-  }
-  /* Blinking terminal caret trailing the reagent-prompt typewriter reveal. */
-  .cfps-caret {
-    display: inline-block;
-    width: 0.5em;
-    height: 1em;
-    vertical-align: text-bottom;
-    margin-left: 1px;
-    background: var(--phosphor, #4be08f);
-    animation: cfps-caret-blink 1s steps(1, end) infinite;
-  }
-  .cfps-caret--done { opacity: 0.55; } /* keep a gentle idle cursor after typing */
-  @keyframes cfps-caret-blink { 50% { opacity: 0; } }
-  @media (prefers-reduced-motion: reduce) {
-    .cfps-caret { animation: none; opacity: 0.55; }
   }
   /* full-screen welcome hero: a framed black box that fills the viewport, with
      the same grey --pad frame on all four sides (page padding top/sides, the
@@ -4728,25 +5035,6 @@
     font-size: clamp(12px, 1.5vw, 18px);  /* a touch smaller than the component default */
   }
 
-  /* community reagents (full width) stacked over the reagent prompt. The prompt
-     keeps a definite height so its <pre> scrolls internally. */
-  .cf-reagent-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin: 28px auto 0;
-  }
-  .cf-reagent-stack .cf-fill { height: clamp(360px, 46vh, 520px); }
-  /* the prompt card fills its height; the prompt <pre> scrolls inside it */
-  .cf-fill { display: flex; flex-direction: column; min-height: 0; margin: 0; }
-  .cf-fill .panel__bd {
-    flex: 1 1 auto;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .cf-fill .cfps-prompt { flex: 1 1 auto; min-height: 0; max-height: none; margin: 0; }
 
   /* terminal aesthetic for the reagent prompt — dark ground, white text + outline,
      to match the rest of the page rather than the light data cards.
@@ -4761,7 +5049,6 @@
     border-color: rgba(255, 255, 255, 0.28);
   }
   .panel--term .panel__hd { border-bottom-color: rgba(255, 255, 255, 0.2); }
-  .panel--term .panel__hd .label { color: #ffffff; }
   .panel--term .panel__hd .icon {
     color: rgba(255, 255, 255, 0.75);
     border-color: rgba(255, 255, 255, 0.25);
@@ -4774,7 +5061,53 @@
     color: #ffffff;
   }
   .panel--term .cfps-prompt::selection { background: rgba(255, 255, 255, 0.28); }
-  .panel--term .cfps-caret { background: #ffffff; }
+  /* Duplicate-reaction notice in the submit modal (amber = warning, grey = FYI). */
+  .cf-dup {
+    display: flex; flex-direction: column; gap: 6px; padding: 9px 11px;
+    border: 1px solid var(--hair); border-radius: var(--r-sm); background: var(--surface);
+    font: 11px/1.5 var(--mono); color: var(--ink-2);
+  }
+  .cf-dup--warn { background: #fff8e6; border-color: #f0d590; }
+  .cf-dup__ttl { font: 600 11.5px/1.35 var(--sans); color: var(--ink); }
+  .cf-dup__list { margin: 0; padding-left: 16px; list-style: disc; }
+  .cf-dup__id { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+  .cf-dup__msg { margin: 0; }
+  .cf-dup__actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+
+  /* Participate section: Human / Agent switch + the community stack under it. */
+  .cf-mode-hd {
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px;
+    margin: 40px 0 10px;
+  }
+  .cf-block-sub.cf-mode-sub { margin-bottom: 18px; } /* (0,3,0) beats the global .cfps-page .cf-block-sub */
+  .cf-mode-seg { display: inline-flex; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: var(--r-sm); overflow: hidden; }
+  .cf-mode-seg button {
+    display: inline-flex; align-items: center; gap: 7px;
+    font: 500 11.5px/1 var(--mono); letter-spacing: .04em; padding: 7px 16px; cursor: pointer;
+    color: rgba(255, 255, 255, 0.7); background: transparent; border: 0;
+  }
+  /* Narrow screens: stack the title over a centred switch. */
+  @media (max-width: 560px) {
+    .cf-mode-hd { grid-template-columns: 1fr; justify-items: center; }
+    .cf-mode-hd > :first-child { justify-self: start; }
+    .cf-mode-hd > :last-child { display: none; }
+  }
+  .cf-mode-seg button + button { border-left: 1px solid rgba(255, 255, 255, 0.35); }
+  .cf-mode-seg button:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+  .cf-mode-seg button[aria-checked="true"] { color: #000; background: #fff; }
+  .cf-participate { display: flex; flex-direction: column; gap: 12px; }
+  /* Agent block: one terminal panel, the whole instruction set in a tall scroller. */
+  .panel--term .panel__hd .label { color: #ffffff; }
+  .cf-agent-pre { max-height: min(70vh, 760px); margin: 0; }
+  .cf-agent-copy { margin-left: auto; }
+  /* agent token row above the agent instructions */
+  .cf-agent-token { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; flex: 0 0 auto; }
+  .cf-agent-token__val {
+    flex: 1 1 260px; min-width: 0; padding: 5px 8px; border-radius: var(--r-sm);
+    font: 11px/1.2 var(--mono); color: #fff; background: rgba(0, 0, 0, 0.34);
+    border: 1px solid rgba(255, 255, 255, 0.22); outline: none;
+  }
+  .cf-agent-token__note { font: 10.5px/1.4 var(--mono); color: rgba(255, 255, 255, 0.6); }
   /* core content (tagline · proteins · logos) — sized to content so it doesn't
      grow and shove the CTA to the bottom of the viewport */
   .brand-hero__main {

@@ -1,5 +1,6 @@
 import { pbAdmin } from '$lib/server/pb.js';
 import { dev } from '$app/environment';
+import { parseStarredBy, starSummary, devStarredBy } from '$lib/server/stars.js';
 
 // Community-submitted CFPS compositions, read from the same cfps_designs
 // collection the Submit-composition flow writes to (see submit-design/+server.js).
@@ -155,8 +156,9 @@ function readBatch(md) {
 }
 
 // A cfps_designs record → the minimal shape the client needs, or null when the
-// stored design_json has no usable reagent_list.
-function normalizeDesign(rec) {
+// stored design_json has no usable reagent_list. `mySub` (the viewer) only decides
+// starredByMe — other starrers are surfaced by display name alone.
+function normalizeDesign(rec, mySub) {
   let dj = rec?.design_json;
   if (typeof dj === 'string') {
     try { dj = JSON.parse(dj); } catch { dj = null; }
@@ -184,7 +186,9 @@ function normalizeDesign(rec) {
     experimentHypothesis:
       typeof metadata.experiment_hypothesis === 'string' ? metadata.experiment_hypothesis : '',
     created: rec.created || null,
+    submittedVia: rec.submitted_via || null, // 'user' | 'agent' | null (before tracking)
     ...readBatch(metadata),
+    ...starSummary(parseStarredBy(rec.starred_by), mySub),
     reagentList
   };
 }
@@ -197,11 +201,11 @@ function normalizeDesign(rec) {
 export async function loadCommunityDesigns(kcUser) {
   const mySub = kcUser?.sub ? String(kcUser.sub).trim() : '';
   if (!mySub) return [];
-  if (dev) return DEV_DESIGNS;
+  if (dev) return DEV_DESIGNS.map((d) => ({ ...d, ...starSummary(devStarredBy(d.id), mySub) }));
   try {
     const pb = await pbAdmin();
     const rows = await pb.collection(DESIGNS).getFullList({ sort: '-created' });
-    return rows.map(normalizeDesign).filter(Boolean);
+    return rows.map((rec) => normalizeDesign(rec, mySub)).filter(Boolean);
   } catch {
     return [];
   }
