@@ -524,6 +524,8 @@
         </div>
       {:else}
         <div class="cr-foot">
+          <!-- Plain-text copy of the ranked list (with comments) in a new tab. -->
+          <a class="btn-bp" href="/cfps/suggestions?format=txt" target="_blank" rel="noopener" title="Open the list as plain text" aria-label="Open the reagent suggestions as plain text" style="text-decoration:none;">↓</a>
           <button type="button" class="btn-bp" onclick={() => (showSuggestForm = true)}>+ Suggest a reagent</button>
         </div>
       {/if}
@@ -643,7 +645,7 @@
   .cr-compose__btn { flex: 0 0 auto; }
 
   /* ── suggest-a-reagent footer (bottom-right) ──────────────────────────────── */
-  .cr-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+  .cr-foot { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
 
   /* ── members-only teaser (logged out) ─────────────────────────────────────── */
   .cr-teaser {

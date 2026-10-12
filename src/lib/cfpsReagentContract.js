@@ -100,3 +100,16 @@ export function validateReagentList(rl) {
   }
   return { valid: errors.length === 0, errors };
 }
+
+// Canonical fingerprint of a reagent_list: every non-zero field with its volume,
+// sorted. Two compositions with the same key are the same reaction (the template
+// field pins the protein target), however their JSON happened to be ordered. Used
+// by the designer and the submit endpoint to flag duplicate submissions.
+export function reagentListKey(rl) {
+  if (!rl || typeof rl !== 'object') return '';
+  return Object.keys(rl)
+    .filter((k) => (Number(rl[k]) || 0) > 0)
+    .sort()
+    .map((k) => `${k}=${Number(rl[k])}`)
+    .join('|');
+}

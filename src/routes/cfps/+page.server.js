@@ -1,31 +1,14 @@
 import { loadCfpsReagentGroups } from '$lib/server/loadCfpsReagentGroups.js';
 import { loadPlateAnalysis, loadPlateReader } from '$lib/server/plateStore.js';
-import { pbAdmin } from '$lib/server/pb.js';
 import { readSession, KC_COOKIE } from '$lib/server/session.js';
 import { isConfigured as kcIsConfigured } from '$lib/server/keycloak.js';
 import { loadSuggestions } from '$lib/server/suggestions.js';
 import { loadCommunityDesigns, loadMyDesigns } from '$lib/server/loadCommunityDesigns.js';
 import { loadBenchmarkFormulations } from '$lib/server/loadBenchmarkFormulations.js';
+import { loadDesignComments } from '$lib/server/designComments.js';
+import { getLiterature } from '$lib/server/literature.js';
 import { redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
-
-// Editable reagent-prompt copy lives in the static_values collection so it can be
-// changed on the fly (in PocketBase) without a redeploy. viewRule is null on that
-// collection, so the read must go through the superuser-authed admin client.
-const STATIC_VALUES = 'static_values';
-const REAGENT_PROMPT_RECORD_ID = 'pbni942iw4vbq09';
-
-async function loadReagentPrompt() {
-  try {
-    const pb = await pbAdmin();
-    const rec = await pb.collection(STATIC_VALUES).getOne(REAGENT_PROMPT_RECORD_ID);
-    const text = typeof rec?.text === 'string' ? rec.text : '';
-    return text.trim() ? text : null;
-  } catch {
-    // Non-critical — fall back to the client-generated prompt if the read fails.
-    return null;
-  }
-}
 
 export async function load({ url, cookies }) {
   const data = await loadCfpsReagentGroups(url);
@@ -36,12 +19,15 @@ export async function load({ url, cookies }) {
   const { suggestions, votedSuggestionIds } = kcUser
     ? await loadSuggestions(kcUser)
     : { suggestions: [], votedSuggestionIds: [] };
-  const reagentPrompt = await loadReagentPrompt();
   // Community + personal compositions are only ever loaded for a signed-in user,
   // so an anonymous visitor's page data (SSR and __data.json) never carries them —
   // only the reference/literature benchmarks below remain public.
   const communityDesigns = kcUser ? await loadCommunityDesigns(kcUser) : [];
   const myDesigns = kcUser ? await loadMyDesigns(kcUser) : [];
+  // Comment threads on those compositions ({ [designId]: [...] }) and the shared
+  // literature list — both login-gated the same way.
+  const designComments = kcUser ? await loadDesignComments(kcUser) : {};
+  const literature = kcUser ? await getLiterature(kcUser) : { items: [], votedIds: [] };
   const benchmarkFormulations = await loadBenchmarkFormulations();
 
   return {
@@ -53,9 +39,10 @@ export async function load({ url, cookies }) {
     kcUser: kcUser ? { name: kcUser.name } : null,
     suggestions,
     votedSuggestionIds,
-    reagentPrompt,
     communityDesigns,
     myDesigns,
+    designComments,
+    literature,
     benchmarkFormulations,
   };
 }

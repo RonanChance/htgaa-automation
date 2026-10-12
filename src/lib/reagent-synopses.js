@@ -85,6 +85,43 @@ export const REAGENT_SYNOPSES = {
     wiki: 'Bis-tris methane'
   },
 
+  // ── Added 2026-10-11 (rows for approved reagents no benchmark uses) ──────────
+  'K₂HPO₄ (dibasic)': {
+    role: 'Dipotassium hydrogen phosphate — the basic form of potassium phosphate. On its own it supplies phosphate and K⁺ and pushes pH up; combined with the monobasic salt it buffers near neutral pH. Phosphate binds Mg²⁺, so magnesium may need rebalancing. This is the single salt, not the pre-mixed 1.6:1 "Phosphate (di:mono)" buffer.',
+    mol: 'Dipotassium phosphate',
+    wiki: 'Dipotassium phosphate'
+  },
+
+  'KH₂PO₄ (monobasic)': {
+    role: 'Potassium dihydrogen phosphate — the acidic form of potassium phosphate. On its own it supplies phosphate and K⁺ and pulls pH down; combined with the dibasic salt it buffers near neutral pH. Phosphate binds Mg²⁺, so magnesium may need rebalancing. This is the single salt, not the pre-mixed 1.6:1 "Phosphate (mono:di)" buffer.',
+    mol: 'Monopotassium phosphate',
+    wiki: 'Monopotassium phosphate'
+  },
+
+  'Thymine': {
+    role: 'A pyrimidine base found in DNA rather than RNA. Cell-free transcription makes uracil-containing mRNA, so thymine is not a direct building block here — any effect would come indirectly through the lysate’s nucleotide metabolism.',
+    mol: 'Thymine',
+    wiki: 'Thymine'
+  },
+
+  'Pyruvate oxidase': {
+    role: 'An enzyme that converts pyruvate, phosphate and oxygen into acetyl phosphate, which the lysate uses to regenerate ATP — the idea behind pyruvate-based energy systems such as PANOx-SP. It releases hydrogen peroxide as a by-product, so it is usually paired with catalase. Stock is 10 mg/mL (about 1.5 U/mg).',
+    mol: null,
+    wiki: 'Pyruvate oxidase'
+  },
+
+  'Brij-35': {
+    role: 'A mild non-ionic detergent (a polyoxyethylene lauryl ether). At low levels it can help keep hydrophobic or aggregation-prone proteins in solution; at higher levels it can interfere with translation and with downstream assays.',
+    mol: null,
+    wiki: 'Brij 35'
+  },
+
+  'DMSO': {
+    role: 'Dimethyl sulfoxide, a polar co-solvent. Small amounts can help the folding or solubility of some proteins and are used to dissolve hydrophobic additives, but translation is inhibited as its level rises — keep it low.',
+    mol: 'Dimethyl sulfoxide',
+    wiki: 'Dimethyl sulfoxide'
+  },
+
   'Phosphate (di:mono)': {
     role: 'A pre-mixed potassium phosphate buffer (1.6:1 dibasic:monobasic). It acts as both a pH buffer and a phosphate source for ATP regeneration; phosphate can bind magnesium and reduce its availability, so Mg(Glu)2 is balanced accordingly. At cell-free ionic strength (apparent pKa2 ~6.8) this dibasic-rich mix buffers to ~pH 7.0, matching the literature reactions (Calhoun, Zawada, Cai, Warfel, RFopt) that report phosphate at pH ~7.0–7.2 without stating a ratio.',
     mol: 'Potassium phosphate',
