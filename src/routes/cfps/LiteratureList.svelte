@@ -5,6 +5,8 @@
   // authors, date and venue), upvote, and delete papers they added. Backed by the
   // /cfps/literature JSON endpoint, which AI agents can also call for a user.
   import { onDestroy, onMount, untrack } from 'svelte';
+  import JsonEditor from './JsonEditor.svelte';
+  import { serialize, parseEntries } from './jsonEdit.js';
 
   let {
     items: initialItems = [],
@@ -33,6 +35,10 @@
   let adding = $state(false);
   let formMsg = $state('');
   let formErrors = $state([]); // [{ field, message }]
+  // The add/edit form can also be filled in as JSON (one paper object, or — when
+  // adding — an array of them). The chosen mode sticks across opens.
+  let formMode = $state('form'); // 'form' | 'json'
+  let formJson = $state('');
 
   const SUMMARY_WORD_LIMIT = 500;
   const CHARS_PER_WORD = 15; // same anti-dodge rule as the comment boxes
@@ -119,6 +125,7 @@
     f = { ...EMPTY };
     formMsg = '';
     formErrors = [];
+    if (formMode === 'json') formJson = serialize(formToPaper());
     showForm = true;
   }
   // Edit one of your own papers: same form, prefilled, saved with action 'update'.
@@ -128,6 +135,7 @@
     formMsg = '';
     formErrors = [];
     confirmDeleteId = null;
+    if (formMode === 'json') formJson = serialize(formToPaper());
     showForm = true;
   }
   function closeForm() {
@@ -137,17 +145,98 @@
     formErrors = [];
   }
 
+  // The form's fields as a paper object (the shape the API and JSON mode use). A DOI
+  // or link typed only into the lookup box counts, the same as on submit.
+  function formToPaper() {
+    const doi = f.doi.trim() || (/10\.\d{4,9}\//.test(f.lookup) ? f.lookup.trim() : '');
+    const url = f.url.trim() || (!doi && /^https?:|\./.test(f.lookup) ? f.lookup.trim() : '');
+    const tags = f.tags.split(',').map((t) => t.trim()).filter(Boolean);
+    return { title: f.title, authors: f.authors, published: f.published, venue: f.venue, url, doi, summary: f.summary, tags };
+  }
+
+  // Switch the form between fields and JSON, carrying the values across. Going back
+  // to fields needs JSON that parses to a single paper.
+  function setFormMode(mode) {
+    if (mode === formMode) return;
+    formMsg = '';
+    formErrors = [];
+    if (mode === 'json') {
+      formJson = serialize(formToPaper());
+      formMode = 'json';
+      return;
+    }
+    const parsed = parseEntries(formJson);
+    if (!parsed.ok) { formMsg = `Fix the JSON first — ${parsed.error}`; return; }
+    if (parsed.entries.length > 1) { formMsg = 'The form holds one paper — submit several from JSON.'; return; }
+    const e = parsed.entries[0] ?? {};
+    const str = (v) => (v == null ? '' : String(v));
+    f = {
+      ...EMPTY,
+      ...Object.fromEntries(['title', 'authors', 'published', 'venue', 'url', 'doi', 'summary'].map((k) => [k, str(e[k])])),
+      tags: Array.isArray(e.tags) ? e.tags.join(', ') : str(e.tags)
+    };
+    formMode = 'form';
+  }
+
+  // Live check of the form's JSON: parse errors, and keys that aren't paper fields.
+  const formJsonPlan = $derived.by(() => {
+    const parsed = parseEntries(formJson);
+    if (!parsed.ok) return { ok: false, error: parsed.error, entries: [], ignored: [] };
+    const known = new Set([...EDITABLE, 'id', 'added_by', 'votes']);
+    const ignored = [...new Set(parsed.entries.flatMap((e) => Object.keys(e).filter((k) => !known.has(k))))];
+    const entries = parsed.entries.filter((e) => EDITABLE.some((k) => comparable(e)[k].length));
+    return { ok: true, entries, ignored };
+  });
+
+  // Submit from JSON mode: one update when editing, otherwise add every entry.
+  // Entries that fail stay in the editor with the reasons listed above it.
+  async function saveJsonForm() {
+    const plan = formJsonPlan;
+    formMsg = '';
+    formErrors = [];
+    if (!plan.ok) { formMsg = plan.error; return; }
+    if (!plan.entries.length) { formMsg = 'Nothing to save — add a title and a link or DOI.'; return; }
+    if (editingId && plan.entries.length > 1) { formMsg = 'Editing one paper — the JSON should be a single object.'; return; }
+    adding = true;
+    const failed = [];
+    const errors = [];
+    let lastAdded = null;
+    try {
+      for (const e of plan.entries) {
+        const { ok, status, data } = await post(editingId
+          ? { action: 'update', id: editingId, paper: pickEditable(e) }
+          : { action: 'add', paper: pickEditable(e) });
+        if (ok) { applyData(data); lastAdded = data?.added?.id ?? lastAdded; continue; }
+        failed.push(e);
+        errors.push(`${e.title || e.doi || e.url || 'Entry'}: ${data?.error || 'could not save.'}`);
+        if (status === 409 && data?.existing?.id) highlightId = data.existing.id;
+      }
+    } catch {
+      formMsg = 'Network error — please try again.';
+      adding = false;
+      return;
+    }
+    adding = false;
+    if (!failed.length) {
+      highlightId = lastAdded;
+      f = { ...EMPTY };
+      closeForm();
+      return;
+    }
+    formMsg = errors.join(' · ');
+    formJson = serialize(failed.length === 1 ? failed[0] : failed);
+  }
+
   async function savePaper() {
+    if (formMode === 'json') return saveJsonForm();
     adding = true;
     formMsg = '';
     formErrors = [];
     try {
-      const doi = f.doi.trim() || (/10\.\d{4,9}\//.test(f.lookup) ? f.lookup.trim() : '');
-      const url = f.url.trim() || (!doi && /^https?:|\./.test(f.lookup) ? f.lookup.trim() : '');
       const { ok, status, data } = await post({
         action: editingId ? 'update' : 'add',
         ...(editingId ? { id: editingId } : {}),
-        paper: { title: f.title, authors: f.authors, published: f.published, venue: f.venue, url, doi, summary: f.summary, tags: f.tags }
+        paper: formToPaper()
       });
       if (!ok) {
         formMsg = data?.error || (editingId ? 'Could not save your changes.' : 'Could not add that paper.');
@@ -166,6 +255,134 @@
     }
   }
   const fieldError = (field) => formErrors.find((e) => e.field === field)?.message;
+
+  // ── JSON view ───────────────────────────────────────────────────────────
+  // The whole list as editable JSON, for contributing from a code-style UI (or
+  // pasting what an agent drafted). Objects with an `id` are existing papers —
+  // edits are saved only for papers you added; objects without one are added.
+  // `added_by` / `votes` are read-only context. Removing an object here does NOT
+  // delete the paper (use 🗑 in the list), so a stray cut can't wipe entries.
+  const EDITABLE = ['title', 'authors', 'published', 'venue', 'url', 'doi', 'summary', 'tags'];
+  const TEMPLATE = { title: '', authors: '', published: '', venue: '', url: '', doi: '', summary: '', tags: [] };
+  let view = $state('list'); // 'list' | 'json'
+  let jsonText = $state('');
+  let jsonBusy = $state(false);
+  let jsonResults = $state([]); // [{ ok, message }]
+
+  const ranked = (list) => [...list].sort((a, b) => (b.votes - a.votes) || String(b.created || '').localeCompare(String(a.created || '')));
+  function toJsonEntry(p) {
+    const out = { id: p.id };
+    for (const k of EDITABLE) out[k] = k === 'tags' ? [...(p.tags || [])] : (p[k] ?? '');
+    return { ...out, added_by: p.mine ? `${p.addedBy} (you)` : p.addedBy, votes: p.votes };
+  }
+
+  function openJson() {
+    jsonText = serialize(ranked(items).map(toJsonEntry));
+    jsonResults = [];
+    closeForm();
+    view = 'json';
+  }
+  // Append a blank paper (to the list JSON, or the add form's JSON) and jump the
+  // editor to its title so it's visible and ready to type into.
+  let listEditor = $state(null);
+  let formEditor = $state(null);
+  function appendTemplate() {
+    const parsed = parseEntries(jsonText);
+    if (!parsed.ok) return; // don't clobber text that doesn't parse
+    jsonText = serialize([...parsed.entries, { ...TEMPLATE }]);
+    listEditor?.revealLast('"title": "');
+  }
+  function appendFormTemplate() {
+    const parsed = parseEntries(formJson);
+    if (!parsed.ok) return;
+    formJson = serialize([...parsed.entries, { ...TEMPLATE }]);
+    formEditor?.revealLast('"title": "');
+  }
+
+  // Comparable form of an entry's editable fields (tags may arrive as "a, b").
+  function comparable(e) {
+    const out = {};
+    for (const k of EDITABLE) {
+      out[k] = k === 'tags'
+        ? (Array.isArray(e.tags) ? e.tags : String(e.tags ?? '').split(',')).map((t) => String(t ?? '').trim().toLowerCase()).filter(Boolean)
+        : String(e[k] ?? '').trim();
+    }
+    return out;
+  }
+  function pickEditable(e) {
+    const out = {};
+    for (const k of EDITABLE) if (k in e) out[k] = e[k];
+    return out;
+  }
+
+  // What Apply would do: new papers to add, your edited papers to update, and
+  // problems (edits to someone else's paper, unknown ids) — shown live under the editor.
+  const jsonPlan = $derived.by(() => {
+    const parsed = parseEntries(jsonText);
+    if (!parsed.ok) return { ok: false, error: parsed.error, adds: [], updates: [], problems: [] };
+    const byId = new Map(items.map((p) => [p.id, p]));
+    const adds = [];
+    const updates = [];
+    const problems = [];
+    parsed.entries.forEach((e, i) => {
+      const label = `#${i + 1}${e.title ? ` "${String(e.title).slice(0, 60)}"` : ''}`;
+      if (!e.id) {
+        if (EDITABLE.some((k) => comparable(e)[k].length)) adds.push({ entry: e, label });
+        return;
+      }
+      const orig = byId.get(e.id);
+      if (!orig) { problems.push(`${label}: no paper with id ${e.id} — drop the id to add it as new.`); return; }
+      const a = comparable(e);
+      const b = comparable(orig);
+      const changed = EDITABLE.filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
+      if (!changed.length) return;
+      if (!orig.mine) { problems.push(`${label}: added by ${orig.addedBy} — only papers you added can be edited.`); return; }
+      const patch = {};
+      for (const k of changed) patch[k] = e[k] ?? '';
+      updates.push({ entry: e, id: e.id, patch, label });
+    });
+    return { ok: true, adds, updates, problems };
+  });
+
+  async function applyJson() {
+    const plan = jsonPlan;
+    if (!plan.ok || plan.problems.length || jsonBusy) return;
+    jsonBusy = true;
+    jsonResults = [];
+    const failed = []; // entries to keep in the editor so they can be fixed
+    const results = [];
+    try {
+      for (const u of plan.updates) {
+        const { ok, data } = await post({ action: 'update', id: u.id, paper: u.patch });
+        if (ok) { applyData(data); results.push({ ok: true, message: `Updated ${u.label}` }); }
+        else { failed.push(u.entry); results.push({ ok: false, message: `${u.label}: ${data?.error || 'could not save.'}` }); }
+      }
+      for (const a of plan.adds) {
+        const { ok, data } = await post({ action: 'add', paper: pickEditable(a.entry) });
+        if (ok) { applyData(data); results.push({ ok: true, message: `Added ${data?.added?.title ? `"${data.added.title.slice(0, 60)}"` : a.label}` }); }
+        else { failed.push(a.entry); results.push({ ok: false, message: `${a.label}: ${data?.error || 'could not add.'}` }); }
+      }
+    } catch {
+      results.push({ ok: false, message: 'Network error — please try again.' });
+    } finally {
+      // Rebuild from the fresh list so new papers show their ids, keeping any
+      // entries that failed (edited ones in place, new ones at the end) to fix.
+      const keepEdits = new Map(failed.filter((e) => e.id).map((e) => [e.id, e]));
+      const fresh = ranked(items).map((p) => keepEdits.get(p.id) ?? toJsonEntry(p));
+      jsonText = serialize([...fresh, ...failed.filter((e) => !e.id)]);
+      jsonResults = results.length ? results : [{ ok: true, message: 'Nothing to save — no changes.' }];
+      jsonBusy = false;
+    }
+  }
+
+  let copied = $state(false);
+  async function copyJson() {
+    try {
+      await navigator.clipboard.writeText(jsonText);
+      copied = true;
+      setTimeout(() => (copied = false), 1500);
+    } catch { /* clipboard blocked — the text is selectable anyway */ }
+  }
 
   // Briefly ring a paper (the one just added, or the duplicate you tried to add).
   let highlightId = $state(null);
@@ -215,16 +432,22 @@
     <span class="label">literature research · {items.length} paper{items.length === 1 ? '' : 's'}</span>
     <span class="spacer"></span>
     {#if kcUser}
-      <input class="cf-in lit-search" type="search" placeholder="Search title, author, tag…" bind:value={query} aria-label="Search literature" />
-      <div class="lit-seg" role="radiogroup" aria-label="Sort literature">
-        <button type="button" role="radio" aria-checked={sortBy === 'top'} onclick={() => (sortBy = 'top')}>Top</button>
-        <button type="button" role="radio" aria-checked={sortBy === 'new'} onclick={() => (sortBy = 'new')}>Newest</button>
+      {#if view === 'list'}
+        <input class="cf-in search-in lit-search" type="search" placeholder="Search title, author, tag…" bind:value={query} aria-label="Search literature" />
+        <div class="seg" role="radiogroup" aria-label="Sort literature">
+          <button type="button" role="radio" aria-checked={sortBy === 'top'} onclick={() => (sortBy = 'top')}>Top</button>
+          <button type="button" role="radio" aria-checked={sortBy === 'new'} onclick={() => (sortBy = 'new')}>Newest</button>
+        </div>
+      {/if}
+      <div class="seg" role="radiogroup" aria-label="Literature view">
+        <button type="button" role="radio" aria-checked={view === 'list'} onclick={() => (view = 'list')}>List</button>
+        <button type="button" role="radio" aria-checked={view === 'json'} onclick={() => view !== 'json' && openJson()} title="Edit the list as JSON">{'{ }'} JSON</button>
       </div>
     {/if}
   </div>
 
   <div class="panel__bd">
-    <p class="lit-blurb">Papers and articles worth knowing for cell-free protein synthesis — add what you're reading and upvote what helped, so everyone stays current.</p>
+    <p class="lit-blurb">Papers and articles worth knowing for cell-free protein synthesis.</p>
 
     {#if !kcUser}
       <div class="lit-locked">
@@ -237,12 +460,63 @@
     {:else}
       {#if errorMsg}<p class="lit-msg">{errorMsg}</p>{/if}
 
-      {#if showForm}
+      {#if view === 'json'}
+        <div class="lit-json">
+          <p class="lit-hint lit-json__hint">
+            Edit papers you added (keep their <code>id</code>) or append objects without an <code>id</code> to add them —
+            a <code>doi</code> alone fills in the rest. Fields: {EDITABLE.join(', ')}. <code>added_by</code> / <code>votes</code> are read-only;
+            removing an object here doesn't delete it.
+          </p>
+          <JsonEditor bind:this={listEditor} bind:value={jsonText} invalid={!jsonPlan.ok || jsonPlan.problems.length > 0} height={460} label="Literature list as JSON" />
+          <div class="lit-json__status" role="status">
+            {#if !jsonPlan.ok}
+              <span class="lit-json__bad">✗ {jsonPlan.error}</span>
+            {:else}
+              <span class="lit-json__good">✓ valid JSON</span>
+              <span>· {jsonPlan.adds.length} to add · {jsonPlan.updates.length} to update</span>
+            {/if}
+          </div>
+          {#each jsonPlan.problems as msg}<p class="lit-msg lit-json__line">{msg}</p>{/each}
+          {#each jsonResults as r}<p class="lit-msg lit-json__line" class:lit-msg--ok={r.ok}>{r.ok ? '✓' : '✗'} {r.message}</p>{/each}
+          <div class="lit-actions">
+            <button type="button" class="btn-bp" onclick={openJson} disabled={jsonBusy} title="Discard edits and reload the current list">Reset</button>
+            <button type="button" class="btn-bp" onclick={copyJson}>{copied ? 'Copied ✓' : 'Copy'}</button>
+            <button type="button" class="btn-bp" onclick={appendTemplate} disabled={jsonBusy || !jsonPlan.ok} title={jsonPlan.ok ? 'Append a blank paper to fill in' : 'Fix the JSON first'}>+ New paper</button>
+            <button
+              type="button"
+              class="btn-bp"
+              onclick={applyJson}
+              disabled={jsonBusy || !jsonPlan.ok || jsonPlan.problems.length > 0 || !(jsonPlan.adds.length + jsonPlan.updates.length)}
+              style="color:var(--teal-ink);border-color:var(--teal);"
+            >{jsonBusy ? 'Saving…' : 'Apply changes ▸'}</button>
+          </div>
+        </div>
+      {:else if showForm}
         <div class="inset lit-form">
           <div class="lit-form__hd">
             <button type="button" class="btn-bp" onclick={closeForm}>‹ List</button>
             <span class="label">{editingId ? 'edit your paper' : 'add a paper'}</span>
+            <div class="seg" role="radiogroup" aria-label="Form input mode">
+              <button type="button" role="radio" aria-checked={formMode === 'form'} onclick={() => setFormMode('form')}>Form</button>
+              <button type="button" role="radio" aria-checked={formMode === 'json'} onclick={() => setFormMode('json')}>{'{ }'} JSON</button>
+            </div>
           </div>
+          {#if formMode === 'json'}
+            <p class="lit-hint lit-json__hint">
+              {editingId ? 'Edit this paper as JSON.' : 'One paper object — or an array of them to add several at once.'}
+              Fields: {EDITABLE.join(', ')}. A <code>doi</code> alone fills in title, authors, date and venue.
+            </p>
+            <JsonEditor bind:this={formEditor} bind:value={formJson} invalid={!formJsonPlan.ok} height={260} label="Paper as JSON" />
+            <div class="lit-json__status" role="status">
+              {#if !formJsonPlan.ok}
+                <span class="lit-json__bad">✗ {formJsonPlan.error}</span>
+              {:else}
+                <span class="lit-json__good">✓ valid JSON</span>
+                <span>· {formJsonPlan.entries.length} paper{formJsonPlan.entries.length === 1 ? '' : 's'}</span>
+                {#if formJsonPlan.ignored.length}<span>· ignored: {formJsonPlan.ignored.join(', ')}</span>{/if}
+              {/if}
+            </div>
+          {:else}
           <div class="lit-form__lookup">
             <input
               class="cf-in"
@@ -268,10 +542,20 @@
             <span class="label">why it's relevant <span class="lit-count" class:lit-count--over={summaryWords > SUMMARY_WORD_LIMIT}>{SUMMARY_WORD_LIMIT - summaryWords}</span></span>
             <textarea class="cf-in" rows="3" bind:value={f.summary} placeholder="Key finding, and how it could help our reactions"></textarea>
           </label>
+          {/if}
           {#if formMsg}<p class="lit-msg" class:lit-msg--ok={!formErrors.length && !/fail|error|not|already/i.test(formMsg)}>{formMsg}</p>{/if}
           <div class="lit-form__foot">
             <span class="lit-hint">* a title and a link (or DOI) are required</span>
-            <button type="button" class="btn-bp" disabled={adding || summaryWords > SUMMARY_WORD_LIMIT} onclick={savePaper} style="color:var(--teal-ink);border-color:var(--teal);">{adding ? 'Saving…' : editingId ? 'Save changes ▸' : 'Add paper ▸'}</button>
+            {#if formMode === 'json' && !editingId}
+              <button type="button" class="btn-bp lit-form__more" onclick={appendFormTemplate} disabled={adding || !formJsonPlan.ok} title={formJsonPlan.ok ? 'Add another blank paper to this submission' : 'Fix the JSON first'}>+ Another paper</button>
+            {/if}
+            <button
+              type="button"
+              class="btn-bp"
+              disabled={adding || (formMode === 'json' ? !formJsonPlan.ok || !formJsonPlan.entries.length : summaryWords > SUMMARY_WORD_LIMIT)}
+              onclick={savePaper}
+              style="color:var(--teal-ink);border-color:var(--teal);"
+            >{adding ? 'Saving…' : editingId ? 'Save changes ▸' : formMode === 'json' && formJsonPlan.entries.length > 1 ? `Add ${formJsonPlan.entries.length} papers ▸` : 'Add paper ▸'}</button>
           </div>
         </div>
       {:else}
@@ -345,11 +629,7 @@
   .lit-msg { font: 11px/1.45 var(--mono); color: var(--err); margin: 0 0 10px; }
   .lit-msg--ok { color: var(--teal-ink); }
   .lit-empty { font: 12px var(--mono); color: var(--faint); text-align: center; padding: 18px 0; }
-  .panel__hd .lit-search { flex: 0 1 220px; width: 220px; max-width: 40vw; padding: 4px 8px; font-size: 11px; }
-  .lit-seg { display: inline-flex; border: 1px solid var(--groove); border-radius: var(--r-sm); overflow: hidden; margin-left: 6px; }
-  .lit-seg button { font: 500 10px/1 var(--mono); padding: 5px 8px; border: 0; cursor: pointer; color: var(--ink-2); background: var(--surface-2); }
-  .lit-seg button + button { border-left: 1px solid var(--groove); }
-  .lit-seg button[aria-checked="true"] { color: #fff; background: var(--teal); }
+  .panel__hd .lit-search { flex: 0 1 220px; width: 220px; max-width: 40vw; }
   .lit-locked { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font: 11px var(--mono); color: var(--muted); padding: 6px 0 4px; }
 
   /* Ranked list: capped height, scrolls in place. Own flex column (NOT DaisyUI's
@@ -405,4 +685,14 @@
   .lit-count--over { color: var(--err); }
   .lit-form__foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .lit-hint { font: 9.5px var(--mono); color: var(--faint); }
+  .lit-form__more { margin-left: auto; }
+
+  /* JSON view */
+  .lit-json { display: flex; flex-direction: column; gap: 6px; }
+  .lit-json__hint { margin: 0; line-height: 1.5; color: var(--muted); }
+  .lit-json__hint code { font: inherit; color: var(--ink-2); }
+  .lit-json__status { display: flex; flex-wrap: wrap; gap: 6px; font: 10px var(--mono); color: var(--muted); }
+  .lit-json__good { color: var(--teal-ink); }
+  .lit-json__bad { color: var(--err); }
+  .lit-json__line { margin: 0; }
 </style>

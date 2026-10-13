@@ -946,6 +946,14 @@
         return items;
     });
 
+    // Headline numbers for the toggle tab and the list header. Counts are always in
+    // compositions (a batch card counts as all of its members — see countIn) so the
+    // tab and the opened list agree; contributors are distinct submitters by contributorKey.
+    const communityContributorCount = $derived(
+        new Set(communityFormulations.map((c) => c.contributorKey || c.author).filter(Boolean)).size
+    );
+    const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
     // ─── Stars on community compositions ─────────────────────────────────────
     // Server truth arrives on each formulation (starCount / starredBy / starredByMe).
     // A click applies optimistically into `starOverrides` (record id → same shape),
@@ -1063,11 +1071,53 @@
         return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
     }
 
-    // All / Starred tabs on the contributions list (shared by the rail and the
-    // fullscreen pane). "Starred" = the viewer's own stars.
-    let commTab = $state('all'); // 'all' | 'starred'
-    const starredRailItems = $derived(communityRailItems.filter((i) => itemStars(i).starredByMe));
-    const visibleRailItems = $derived(commTab === 'starred' ? starredRailItems : communityRailItems);
+    // Filter tabs on the contributions list (shared by the rail and the fullscreen
+    // pane): All, one per protein target, or Starred (= the viewer's own stars).
+    // The search box narrows every tab; tab counts reflect the search.
+    let commTab = $state('all'); // 'all' | 'starred' | a protein target
+    let commQuery = $state('');
+
+    // Search text for a composition: its sample_id (the card name), its rationale
+    // (the description), and the batch-level hypothesis.
+    const searchText = (c) => [c.name, c.rationale, c.experimentHypothesis].join(' ').toLowerCase();
+    function matchesQuery(item, q) {
+        if (!q) return true;
+        if (item.kind === 'single') return searchText(item.card).includes(q);
+        return [item.batchId, item.experimentHypothesis].join(' ').toLowerCase().includes(q)
+            || item.members.some((m) => searchText(m).includes(q));
+    }
+    const hasTarget = (item, t) =>
+        item.kind === 'batch' ? item.targets.includes(t) : item.card.proteinTarget === t;
+    function inTab(item, tab) {
+        if (tab === 'all') return true;
+        if (tab === 'starred') return itemStars(item).starredByMe;
+        return hasTarget(item, tab);
+    }
+    // Compositions an item contributes to a tab's count — under a protein tab, only
+    // a batch's members for that protein.
+    function countIn(item, tab) {
+        if (item.kind !== 'batch') return 1;
+        if (tab === 'all' || tab === 'starred') return item.count;
+        return item.members.filter((m) => m.proteinTarget === tab).length;
+    }
+    const searchedRailItems = $derived.by(() => {
+        const q = commQuery.trim().toLowerCase();
+        return communityRailItems.filter((i) => matchesQuery(i, q));
+    });
+    const commTabs = $derived(['all', ...proteinTargets, 'starred']);
+    const commTabCounts = $derived(
+        Object.fromEntries(commTabs.map((t) => [
+            t, searchedRailItems.reduce((n, i) => n + (inTab(i, t) ? countIn(i, t) : 0), 0)
+        ]))
+    );
+    const visibleRailItems = $derived(searchedRailItems.filter((i) => inTab(i, commTab)));
+    function commEmptyText() {
+        const q = commQuery.trim();
+        if (q) return `No contributions match “${q}”${commTab === 'all' ? '' : ' in this tab'}.`;
+        if (commTab === 'starred') return 'Nothing starred yet — click the ☆ on any composition to keep it here.';
+        if (commTab !== 'all') return `No ${commTab} contributions yet.`;
+        return 'No contributions yet.';
+    }
 
     // Hover list of who starred a card — fixed-position, so the rail's scroll
     // container can't clip it. Placed below the star, flipped above near the bottom.
@@ -1270,7 +1320,7 @@
         {@const open = openThreads.has(item.key)}
         <button
             type="button"
-            class="cf-cbtn"
+            class="cbtn"
             class:is-on={open}
             aria-expanded={open}
             title={open ? 'Hide comments' : 'Show comments'}
@@ -1384,13 +1434,30 @@
     {#snippet commList(wide)}
         <div class="cf-comm-rail__hd">
             <span class="label">HTBAA Contributions</span>
-            <div class="cf-comm-tabs" role="tablist" aria-label="Filter contributions">
-                <button type="button" role="tab" aria-selected={commTab === 'all'} onclick={() => (commTab = 'all')}>
-                    All <span class="cf-comm-tabs__n">{communityRailItems.length}</span>
-                </button>
-                <button type="button" role="tab" aria-selected={commTab === 'starred'} onclick={() => (commTab = 'starred')}>
-                    ★ Starred <span class="cf-comm-tabs__n">{starredRailItems.length}</span>
-                </button>
+            <div class="seg seg--fill" role="tablist" aria-label="Filter contributions">
+                {#each commTabs as t (t)}
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={commTab === t}
+                        onclick={() => (commTab = t)}
+                        title={t === 'all' ? 'All contributions' : t === 'starred' ? 'Compositions you starred' : `${t} compositions`}
+                    >
+                        <span class="cf-comm-tabs__t"
+                            >{t === 'all' ? 'All' : t === 'starred' ? (wide ? '★ Starred' : '★') : t}</span>
+                        <span class="cf-comm-tabs__n">{commTabCounts[t]}</span>
+                    </button>
+                {/each}
+            </div>
+            <input
+                class="cf-in search-in cf-comm-search"
+                type="search"
+                placeholder="Search sample_id, hypothesis…"
+                bind:value={commQuery}
+                aria-label="Search contributions"
+            />
+            <div class="cf-comm-rail__meta">
+                {plural(communityFormulations.length, 'composition')} by {plural(communityContributorCount, 'user')}
             </div>
         </div>
         {#if starError}<div class="cf-comm-err" role="alert">{starError}</div>{/if}
@@ -1398,7 +1465,7 @@
             {#each visibleRailItems as item (item.key)}{@render commCard(item, wide)}{/each}
             {#if !visibleRailItems.length}
                 <p class="cf-comm-empty">
-                    {commTab === 'starred' ? 'Nothing starred yet — click the ☆ on any composition to keep it here.' : 'No contributions yet.'}
+                    {commEmptyText()}
                 </p>
             {/if}
         </div>
@@ -1733,7 +1800,9 @@
                 aria-label={showCommunityRail ? 'Hide community compositions' : 'Show community compositions'}
             >
                 <span class="cf-comm-toggle-rail__label"
-                    >{showCommunityRail ? 'Hide' : `Community · ${communityByRecent.length}`}</span>
+                    >{showCommunityRail
+                        ? 'Hide'
+                        : `Community · ${communityByRecent.length} by ${plural(communityContributorCount, 'user')}`}</span>
             </button>
         {/if}
 
@@ -2599,25 +2668,12 @@
         margin-bottom: 3px;
     }
     .cf-star-who ul { margin: 0; padding: 0; list-style: none; }
-    /* All / Starred tabs in the contributions header. */
+    /* Contributions header: label, search, filter tabs, totals. */
     .cf-comm-rail__hd { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
-    .cf-comm-tabs { display: inline-flex; border: 1px solid var(--groove); border-radius: var(--r-sm); overflow: hidden; }
-    .cf-comm-tabs button {
-        font: 500 9.5px/1 var(--mono); padding: 4px 7px; cursor: pointer;
-        color: var(--ink-2); background: var(--surface-2); border: 0;
-    }
-    .cf-comm-tabs button + button { border-left: 1px solid var(--groove); }
-    .cf-comm-tabs button:hover { color: var(--ink); background: #fff; }
-    .cf-comm-tabs button[aria-selected="true"] { color: #fff; background: var(--teal); }
-    .cf-comm-tabs__n { opacity: .65; margin-left: 2px; }
+    .cf-comm-tabs__n { opacity: .65; font-size: .9em; }
+    .cf-comm-search { flex: 1 0 100%; min-width: 0; }
+    .cf-comm-rail__meta { flex: 1 0 100%; font: 9.5px/1.35 var(--mono); color: var(--muted); }
     /* Comment threads on contribution cards (mirrors the community-reagent threads). */
-    .cf-cbtn {
-        flex: 0 0 auto; white-space: nowrap; font: 9.5px/1 var(--mono); color: var(--muted);
-        background: transparent; border: 1px solid var(--hair); border-radius: var(--r-sm);
-        padding: 2px 6px; cursor: pointer;
-    }
-    .cf-cbtn:hover { color: var(--ink-2); border-color: var(--faint); }
-    .cf-cbtn.is-on { color: var(--teal-ink); border-color: var(--teal); background: var(--teal-wash); }
     .cf-thread {
         display: flex; flex-direction: column; gap: 7px; cursor: default;
         margin-top: 2px; padding-top: 7px; border-top: 1px dashed var(--hair);

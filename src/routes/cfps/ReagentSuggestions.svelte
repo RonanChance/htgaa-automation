@@ -1,6 +1,8 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
+  import JsonEditor from './JsonEditor.svelte';
+  import { serialize, parseEntries } from './jsonEdit.js';
 
   // Unified community reagent section: browse ideas ranked by upvotes, upvote the
   // ones you like, and suggest your own — all in one place. The suggestion payload
@@ -31,6 +33,12 @@
   let submitting = $state(false);
   let suggestMsg = $state('');
   let f = $state({ name: '', concentration: '', category: '', ph: '', link: '', description: '' });
+  // The suggest form can also be filled in as JSON (one reagent object, or an array
+  // to suggest several). JSON can carry keys the form has no field for; switching
+  // back to the form keeps them in `fExtra` so they're still submitted.
+  let suggestMode = $state('form'); // 'form' | 'json'
+  let suggestJson = $state('');
+  let fExtra = $state({});
 
   // Collapsible comment threads: which suggestion ids are expanded, per-row draft
   // text, and which rows have an in-flight comment write.
@@ -256,8 +264,221 @@
     }
   }
 
+  // ── JSON view + JSON suggest mode ────────────────────────────────────────
+  // Each suggestion is a flat dict of text values. In JSON, `id` marks an existing
+  // suggestion (edits are saved only for your own — the server replaces the whole
+  // dict, so a removed key is dropped); `proposed_by` / `votes` are read-only.
+  // Removing an object here does NOT delete it (use 🗑 in the list).
+  const READONLY = ['id', 'votes', 'proposed_by'];
+  const FORM_KEYS = ['name', 'concentration', 'category', 'ph', 'link', 'description'];
+  let view = $state('list'); // 'list' | 'json'
+  let jsonText = $state('');
+  let jsonBusy = $state(false);
+  let jsonResults = $state([]); // [{ ok, message }]
+
+  function toJsonEntry(s) {
+    const { proposed_by, ...fields } = s.suggestion || {};
+    const by = proposed_by || 'anonymous';
+    return { id: s.id, ...fields, proposed_by: s.mine ? `${by} (you)` : by, votes: s.votes ?? 0 };
+  }
+  function openJson() {
+    jsonText = serialize(items.map(toJsonEntry));
+    jsonResults = [];
+    showSuggestForm = false;
+    view = 'json';
+  }
+  // Append a blank reagent (to the list JSON, or the suggest form's JSON) and jump
+  // the editor to its name so it's visible and ready to type into.
+  let listEditor = $state(null);
+  let suggestEditor = $state(null);
+  const blankReagent = () => Object.fromEntries(FORM_KEYS.map((k) => [k, '']));
+  function appendTemplate() {
+    const parsed = parseEntries(jsonText);
+    if (!parsed.ok) return; // don't clobber text that doesn't parse
+    jsonText = serialize([...parsed.entries, blankReagent()]);
+    listEditor?.revealLast('"name": "');
+  }
+  function appendSuggestTemplate() {
+    const parsed = parseEntries(suggestJson);
+    if (!parsed.ok) return;
+    suggestJson = serialize([...parsed.entries, blankReagent()]);
+    suggestEditor?.revealLast('"name": "');
+  }
+
+  // An entry's submittable fields (read-only keys dropped), plus any value that
+  // isn't plain text/number/boolean — those can't be stored in a flat dict.
+  function dictOf(e) {
+    const dict = {};
+    const nested = [];
+    for (const [k, v] of Object.entries(e)) {
+      if (READONLY.includes(k)) continue;
+      if (v != null && typeof v === 'object') nested.push(k);
+      else dict[k] = v;
+    }
+    return { dict, nested };
+  }
+  // Order-independent form of a dict for change detection (blank values ignored).
+  function comparable(dict) {
+    const out = {};
+    for (const k of Object.keys(dict).sort()) {
+      if (k === 'proposed_by' || k.startsWith('_')) continue;
+      const v = String(dict[k] ?? '').trim();
+      if (v) out[k] = v;
+    }
+    return JSON.stringify(out);
+  }
+  const hasContent = (dict) => comparable(dict) !== '{}';
+  const labelFor = (e, i) => `#${i + 1}${e.name ? ` "${String(e.name).slice(0, 50)}"` : ''}`;
+
+  // What Apply would do — new suggestions, edits to your own, and problems.
+  const jsonPlan = $derived.by(() => {
+    const parsed = parseEntries(jsonText);
+    if (!parsed.ok) return { ok: false, error: parsed.error, adds: [], updates: [], problems: [] };
+    const byId = new Map(items.map((s) => [s.id, s]));
+    const adds = [];
+    const updates = [];
+    const problems = [];
+    parsed.entries.forEach((e, i) => {
+      const label = labelFor(e, i);
+      const { dict, nested } = dictOf(e);
+      if (!e.id && !hasContent(dict)) return; // untouched template
+      const orig = e.id ? byId.get(e.id) : null;
+      if (e.id && !orig) { problems.push(`${label}: no suggestion with id ${e.id} — drop the id to add it as new.`); return; }
+      if (orig && comparable(dict) === comparable(orig.suggestion || {})) return; // unchanged
+      if (orig && !orig.mine) { problems.push(`${label}: suggested by ${orig.suggestion?.proposed_by || 'someone else'} — only your own can be edited.`); return; }
+      if (nested.length) { problems.push(`${label}: ${nested.join(', ')} must be text or a number, not a list/object.`); return; }
+      if (!String(dict.name ?? '').trim()) { problems.push(`${label}: "name" is required.`); return; }
+      (orig ? updates : adds).push({ entry: e, id: e.id, dict, label });
+    });
+    return { ok: true, adds, updates, problems };
+  });
+
+  async function postSuggestions(payload) {
+    const res = await fetch('/cfps/suggestions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return { ok: res.ok, data: await res.json().catch(() => ({})) };
+  }
+
+  async function applyJson() {
+    const plan = jsonPlan;
+    if (!kcUser || !plan.ok || plan.problems.length || jsonBusy) return;
+    jsonBusy = true;
+    jsonResults = [];
+    const failed = [];
+    const results = [];
+    try {
+      for (const u of plan.updates) {
+        const { ok, data } = await postSuggestions({ action: 'update', id: u.id, suggestion: u.dict });
+        if (ok) { applyData(data); results.push({ ok: true, message: `Updated ${u.label}` }); }
+        else { failed.push(u.entry); results.push({ ok: false, message: `${u.label}: ${data?.error || 'could not save.'}` }); }
+      }
+      for (const a of plan.adds) {
+        const { ok, data } = await postSuggestions({ action: 'suggest', suggestion: a.dict });
+        if (ok) { applyData(data); results.push({ ok: true, message: `Suggested ${a.label}` }); }
+        else { failed.push(a.entry); results.push({ ok: false, message: `${a.label}: ${data?.error || 'could not add.'}` }); }
+      }
+    } catch {
+      results.push({ ok: false, message: 'Network error — please try again.' });
+    } finally {
+      // Rebuild from the fresh list (new suggestions show their ids), keeping any
+      // failed entries — edited ones in place, new ones at the end — to fix.
+      const keepEdits = new Map(failed.filter((e) => e.id).map((e) => [e.id, e]));
+      const fresh = items.map((s) => keepEdits.get(s.id) ?? toJsonEntry(s));
+      jsonText = serialize([...fresh, ...failed.filter((e) => !e.id)]);
+      jsonResults = results.length ? results : [{ ok: true, message: 'Nothing to save — no changes.' }];
+      jsonBusy = false;
+    }
+  }
+
+  let copied = $state(false);
+  async function copyJson() {
+    try {
+      await navigator.clipboard.writeText(jsonText);
+      copied = true;
+      setTimeout(() => (copied = false), 1500);
+    } catch { /* clipboard blocked — the text is selectable anyway */ }
+  }
+
+  const formToDict = () => ({ ...Object.fromEntries(FORM_KEYS.map((k) => [k, f[k]])), ...fExtra });
+
+  // Switch the suggest form between fields and JSON, carrying the values across.
+  function setSuggestMode(mode) {
+    if (mode === suggestMode) return;
+    suggestMsg = '';
+    if (mode === 'json') {
+      suggestJson = serialize(formToDict());
+      suggestMode = 'json';
+      return;
+    }
+    const parsed = parseEntries(suggestJson);
+    if (!parsed.ok) { suggestMsg = `Fix the JSON first — ${parsed.error}`; return; }
+    if (parsed.entries.length > 1) { suggestMsg = 'The form holds one reagent — suggest several from JSON.'; return; }
+    const { dict, nested } = dictOf(parsed.entries[0] ?? {});
+    if (nested.length) { suggestMsg = `${nested.join(', ')} must be text or a number.`; return; }
+    const str = (v) => (v == null ? '' : String(v));
+    f = Object.fromEntries(FORM_KEYS.map((k) => [k, str(dict[k])]));
+    fExtra = Object.fromEntries(Object.entries(dict).filter(([k, v]) => !FORM_KEYS.includes(k) && str(v).trim()));
+    suggestMode = 'form';
+  }
+
+  const suggestJsonPlan = $derived.by(() => {
+    const parsed = parseEntries(suggestJson);
+    if (!parsed.ok) return { ok: false, error: parsed.error, entries: [], problems: [] };
+    const entries = [];
+    const problems = [];
+    parsed.entries.forEach((e, i) => {
+      const { dict, nested } = dictOf(e);
+      if (!hasContent(dict)) return;
+      if (nested.length) problems.push(`${labelFor(e, i)}: ${nested.join(', ')} must be text or a number.`);
+      else if (!String(dict.name ?? '').trim()) problems.push(`${labelFor(e, i)}: "name" is required.`);
+      else entries.push({ entry: e, dict });
+    });
+    return { ok: true, entries, problems };
+  });
+
+  function resetSuggestForm() {
+    f = { name: '', concentration: '', category: '', ph: '', link: '', description: '' };
+    fExtra = {};
+    suggestJson = serialize(formToDict());
+  }
+  function openSuggestForm() {
+    suggestMsg = '';
+    if (suggestMode === 'json') suggestJson = serialize(formToDict());
+    showSuggestForm = true;
+  }
+
+  // Submit from JSON mode: suggest every entry; failures stay in the editor.
+  async function submitSuggestionJson() {
+    const plan = suggestJsonPlan;
+    if (!plan.ok) { suggestMsg = plan.error; return; }
+    if (plan.problems.length) { suggestMsg = plan.problems.join(' · '); return; }
+    if (!plan.entries.length) { suggestMsg = 'Nothing to submit — give the reagent a "name".'; return; }
+    submitting = true;
+    const failed = [];
+    const errors = [];
+    try {
+      for (const { entry, dict } of plan.entries) {
+        const { ok, data } = await postSuggestions({ action: 'suggest', suggestion: dict });
+        if (ok) applyData(data);
+        else { failed.push(entry); errors.push(`${dict.name}: ${data?.error || 'could not submit.'}`); }
+      }
+    } catch {
+      suggestMsg = 'Network error — please try again.';
+      submitting = false;
+      return;
+    }
+    submitting = false;
+    if (!failed.length) { resetSuggestForm(); showSuggestForm = false; return; }
+    suggestMsg = errors.join(' · ');
+    suggestJson = serialize(failed.length === 1 ? failed[0] : failed);
+  }
+
   async function submitSuggestion() {
     if (!kcUser || submitting) return;
+    if (suggestMode === 'json') return submitSuggestionJson();
     suggestMsg = '';
     if (!f.name.trim()) { suggestMsg = 'Reagent name is required.'; return; }
     submitting = true;
@@ -265,20 +486,14 @@
       const res = await fetch('/cfps/suggestions', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          action: 'suggest',
-          suggestion: {
-            name: f.name, concentration: f.concentration, category: f.category,
-            ph: f.ph, link: f.link, description: f.description,
-          },
-        }),
+        body: JSON.stringify({ action: 'suggest', suggestion: formToDict() }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         suggestMsg = data?.error || 'Could not submit your suggestion.';
       } else {
         applyData(data);
-        f = { name: '', concentration: '', category: '', ph: '', link: '', description: '' };
+        resetSuggestForm();
         showSuggestForm = false;
       }
     } catch {
@@ -303,6 +518,10 @@
     <span class="label">community reagents · vote &amp; suggest</span>
     <span class="spacer"></span>
     {#if kcUser}
+      <div class="seg" role="radiogroup" aria-label="Community reagents view">
+        <button type="button" role="radio" aria-checked={view === 'list'} onclick={() => (view = 'list')}>List</button>
+        <button type="button" role="radio" aria-checked={view === 'json'} onclick={() => view !== 'json' && openJson()} title="Edit the suggestions as JSON">{'{ }'} JSON</button>
+      </div>
       <span class="tag" style="text-transform:none;letter-spacing:0;">signed in · {kcUser.name}</span>
       <form method="POST" action="?/kcLogout" style="display:inline;">
         <button type="submit" class="icon" title="Sign out">⎋</button>
@@ -315,10 +534,6 @@
   </div>
 
   <div class="panel__bd">
-    <p class="cr-blurb">
-      Community-suggested reagents, ranked by upvotes.
-    </p>
-
     {#if kcNotice === 'error'}
       <div class="cfps-banner" style="margin-bottom:14px;">
         <span style="color:var(--err);">○</span>
@@ -354,6 +569,37 @@
           {:else}
             <span class="tag" style="color:var(--muted);">login not configured yet</span>
           {/if}
+        </div>
+      </div>
+    {:else if view === 'json'}
+      <div class="cr-json">
+        <p class="cr-json__hint">
+          Edit your own suggestions (keep their <code>id</code>) or append objects without an <code>id</code> to suggest them.
+          <code>name</code> is required; {FORM_KEYS.slice(1).join(', ')} are the usual fields, and any other key is shown as a tag.
+          <code>proposed_by</code> / <code>votes</code> are read-only; removing an object here doesn't delete it.
+        </p>
+        <JsonEditor bind:this={listEditor} bind:value={jsonText} invalid={!jsonPlan.ok || jsonPlan.problems.length > 0} height={embedded ? 300 : 460} label="Community reagent suggestions as JSON" />
+        <div class="cr-json__status" role="status">
+          {#if !jsonPlan.ok}
+            <span class="cr-json__bad">✗ {jsonPlan.error}</span>
+          {:else}
+            <span class="cr-json__good">✓ valid JSON</span>
+            <span>· {jsonPlan.adds.length} to add · {jsonPlan.updates.length} to update</span>
+          {/if}
+        </div>
+        {#each jsonPlan.problems as msg}<p class="cr-msg cr-json__line">{msg}</p>{/each}
+        {#each jsonResults as r}<p class="cr-msg cr-json__line" class:cr-msg--ok={r.ok}>{r.ok ? '✓' : '✗'} {r.message}</p>{/each}
+        <div class="cr-foot">
+          <button type="button" class="btn-bp" onclick={openJson} disabled={jsonBusy} title="Discard edits and reload the current list">Reset</button>
+          <button type="button" class="btn-bp" onclick={copyJson}>{copied ? 'Copied ✓' : 'Copy'}</button>
+          <button type="button" class="btn-bp" onclick={appendTemplate} disabled={jsonBusy || !jsonPlan.ok} title={jsonPlan.ok ? 'Append a blank reagent to fill in' : 'Fix the JSON first'}>+ New reagent</button>
+          <button
+            type="button"
+            class="btn-bp"
+            onclick={applyJson}
+            disabled={jsonBusy || !jsonPlan.ok || jsonPlan.problems.length > 0 || !(jsonPlan.adds.length + jsonPlan.updates.length)}
+            style="color:var(--teal-ink);border-color:var(--teal);"
+          >{jsonBusy ? 'Saving…' : 'Apply changes ▸'}</button>
         </div>
       </div>
     {:else}
@@ -404,8 +650,8 @@
 
                   <button
                     type="button"
-                    class="cr-cbtn"
-                    class:cr-cbtn--on={open}
+                    class="cbtn cr-cbtn"
+                    class:is-on={open}
                     onclick={() => toggleThread(s.id)}
                     title={open ? 'Hide comments' : 'Show comments'}
                     aria-expanded={open}
@@ -486,7 +732,27 @@
           <div class="cr-suggest__hd">
             <button type="button" class="btn-bp cr-suggest__back" onclick={() => (showSuggestForm = false)}>‹ Vote list</button>
             <span class="label">suggest a reagent</span>
+            <div class="seg" role="radiogroup" aria-label="Suggest input mode">
+              <button type="button" role="radio" aria-checked={suggestMode === 'form'} onclick={() => setSuggestMode('form')}>Form</button>
+              <button type="button" role="radio" aria-checked={suggestMode === 'json'} onclick={() => setSuggestMode('json')}>{'{ }'} JSON</button>
+            </div>
           </div>
+          {#if suggestMode === 'json'}
+            <p class="cr-json__hint">
+              One reagent object — or an array to suggest several. <code>name</code> is required; add any other keys
+              (e.g. <code>"supplier"</code>) and they're shown as tags.
+            </p>
+            <JsonEditor bind:this={suggestEditor} bind:value={suggestJson} invalid={!suggestJsonPlan.ok || suggestJsonPlan.problems.length > 0} height={200} label="Reagent suggestion as JSON" />
+            <div class="cr-json__status" role="status">
+              {#if !suggestJsonPlan.ok}
+                <span class="cr-json__bad">✗ {suggestJsonPlan.error}</span>
+              {:else}
+                <span class="cr-json__good">✓ valid JSON</span>
+                <span>· {suggestJsonPlan.entries.length} reagent{suggestJsonPlan.entries.length === 1 ? '' : 's'}</span>
+              {/if}
+            </div>
+            {#each suggestJsonPlan.problems as msg}<p class="cr-msg cr-json__line">{msg}</p>{/each}
+          {:else}
           <div class="cr-suggest__grid">
             <label>
               <span class="label">reagent name *</span>
@@ -516,9 +782,22 @@
             <span class="label">rationale</span>
             <textarea bind:value={f.description} class="cf-in" rows="2" placeholder="Why should this be tested?"></textarea>
           </label>
+          {#if Object.keys(fExtra).length}
+            <p class="cr-json__hint">Also submitting from JSON: {Object.keys(fExtra).join(', ')} <span class="cr-json__muted">(edit in JSON)</span></p>
+          {/if}
+          {/if}
           <div class="cr-suggest__foot">
-            <button type="button" class="btn-bp" disabled={submitting} onclick={submitSuggestion} style="color:var(--teal-ink);border-color:var(--teal);">
-              {submitting ? 'Submitting…' : 'Submit ▸'}
+            {#if suggestMode === 'json'}
+              <button type="button" class="btn-bp" onclick={appendSuggestTemplate} disabled={submitting || !suggestJsonPlan.ok} title={suggestJsonPlan.ok ? 'Add another blank reagent to this submission' : 'Fix the JSON first'}>+ Another reagent</button>
+            {/if}
+            <button
+              type="button"
+              class="btn-bp"
+              disabled={submitting || (suggestMode === 'json' && (!suggestJsonPlan.ok || suggestJsonPlan.problems.length > 0 || !suggestJsonPlan.entries.length))}
+              onclick={submitSuggestion}
+              style="color:var(--teal-ink);border-color:var(--teal);"
+            >
+              {submitting ? 'Submitting…' : suggestMode === 'json' && suggestJsonPlan.entries.length > 1 ? `Submit ${suggestJsonPlan.entries.length} ▸` : 'Submit ▸'}
             </button>
           </div>
         </div>
@@ -526,7 +805,7 @@
         <div class="cr-foot">
           <!-- Plain-text copy of the ranked list (with comments) in a new tab. -->
           <a class="btn-bp" href="/cfps/suggestions?format=txt" target="_blank" rel="noopener" title="Open the list as plain text" aria-label="Open the reagent suggestions as plain text" style="text-decoration:none;">↓</a>
-          <button type="button" class="btn-bp" onclick={() => (showSuggestForm = true)}>+ Suggest a reagent</button>
+          <button type="button" class="btn-bp" onclick={openSuggestForm}>+ Suggest a reagent</button>
         </div>
       {/if}
     {/if}
@@ -552,6 +831,17 @@
   .cr-suggest__hd { display: flex; align-items: center; gap: 8px; }
   .cr-suggest__back { padding: 3px 8px; }
   .cr-suggest__hd .label { margin-left: auto; }
+
+  /* JSON view */
+  .cr-json { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+  .cr-json__hint { margin: 0; font: 9.5px/1.5 var(--mono); color: var(--muted); }
+  .cr-json__hint code { font: inherit; color: var(--ink-2); }
+  .cr-json__muted { color: var(--faint); }
+  .cr-json__status { display: flex; flex-wrap: wrap; gap: 6px; font: 10px var(--mono); color: var(--muted); }
+  .cr-json__good { color: var(--teal-ink); }
+  .cr-json__bad { color: var(--err); }
+  .cr-json__line { margin: 0; }
+  .cr-msg--ok { color: var(--teal-ink); }
   .cr-suggest__grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
@@ -562,8 +852,7 @@
   .cr-suggest textarea:global(.cf-in) { resize: vertical; min-height: 40px; }
   .cr-suggest__foot { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 
-  /* ── section intro + messages ─────────────────────────────────────────────── */
-  .cr-blurb { font: 11px/1.5 var(--mono); color: var(--ink-2); margin: 0 0 12px; }
+  /* ── messages ─────────────────────────────────────────────────────────────── */
   .cr-msg { font: 11px var(--mono); color: var(--err); margin: 0 0 10px; }
   .cr-empty { font: 12px var(--mono); color: var(--faint); text-align: center; padding: 18px 0; }
 
@@ -584,14 +873,7 @@
   .cr-by { font: 9px var(--mono); color: var(--muted); margin: 2px 0 0; }
 
   /* ── collapsible comment thread ───────────────────────────────────────────── */
-  .cr-cbtn {
-    flex: 0 0 auto; align-self: flex-start; white-space: nowrap;
-    font: 10px var(--mono); color: var(--muted);
-    background: transparent; border: 1px solid var(--hair); border-radius: var(--r-sm);
-    padding: 3px 7px; cursor: pointer;
-  }
-  .cr-cbtn:hover { color: var(--ink-2); border-color: var(--faint); }
-  .cr-cbtn--on { color: var(--teal-ink); border-color: var(--teal); background: var(--teal-wash); }
+  .cr-cbtn { align-self: flex-start; }
   /* Delete-your-own-suggestion control (only shown on your own rows). */
   .cr-del {
     flex: 0 0 auto; align-self: flex-start; white-space: nowrap;

@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { pbAdmin } from '$lib/server/pb.js';
 import { dev } from '$app/environment';
 import { parseStarredBy, starSummary, devStarredBy } from '$lib/server/stars.js';
@@ -155,6 +156,16 @@ function readBatch(md) {
   };
 }
 
+// Opaque per-user key so the client can count distinct contributors without
+// receiving raw Keycloak subjects. Display names aren't unique, so the subject is
+// the identity; older records without one fall back to the display name.
+function contributorKey(rec) {
+  const sub = String(rec?.author_sub || '').trim();
+  if (sub) return createHash('sha256').update(sub).digest('hex').slice(0, 16);
+  const name = String(rec?.author || '').trim().toLowerCase();
+  return name ? `name:${name}` : null;
+}
+
 // A cfps_designs record → the minimal shape the client needs, or null when the
 // stored design_json has no usable reagent_list. `mySub` (the viewer) only decides
 // starredByMe — other starrers are surfaced by display name alone.
@@ -172,6 +183,7 @@ function normalizeDesign(rec, mySub) {
     id: rec.id,
     name: name || 'community design',
     author: String(rec.author || '').trim() || null,
+    contributorKey: contributorKey(rec),
     proteinTarget: metadata.protein_target || null,
     // Surfaced under the comparison table when a community column is loaded — the
     // same rationale/credits the author sees in "My Compositions". The write path

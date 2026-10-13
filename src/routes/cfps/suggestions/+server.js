@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { requestUser } from '$lib/server/auth.js';
-import { getRankedSuggestions, suggestionsAsText, submitSuggestion, upvote, downvote, postComment, deleteComment, deleteSuggestion } from '$lib/server/suggestions.js';
+import { getRankedSuggestions, suggestionsAsText, submitSuggestion, upvote, downvote, postComment, deleteComment, deleteSuggestion, updateSuggestion } from '$lib/server/suggestions.js';
 
 // Lightweight JSON API for the suggested-reagents upvote widget. Kept separate
 // from the page load so the ranking can be polled live (real-time ordering)
@@ -21,11 +21,12 @@ export async function GET(event) {
   return json({ ...data, signedIn: !!kcUser });
 }
 
-// POST → three actions, all Keycloak-gated, each returns the refreshed ranking:
+// POST actions, all Keycloak-gated, each returns the refreshed ranking:
 //   { action: 'vote' | 'unvote', id }          cast / remove one upvote
 //   { action: 'suggest', suggestion: {...} }    add a new community suggestion
 //   { action: 'comment', id, body }            add a comment to a suggestion
 //   { action: 'uncomment', id }                 delete one of your own comments
+//   { action: 'update', id, suggestion: {...} } replace one of your own suggestions
 //   { action: 'delete', id }                    delete one of your own suggestions
 export async function POST(event) {
   const { request } = event;
@@ -57,6 +58,19 @@ export async function POST(event) {
       const id = typeof body?.id === 'string' ? body.id : '';
       if (!id) return json({ error: 'Missing comment id.' }, { status: 400 });
       await deleteComment(kcUser, id);
+    } else if (action === 'update') {
+      const id = typeof body?.id === 'string' ? body.id : '';
+      const dict = body?.suggestion && typeof body.suggestion === 'object' && !Array.isArray(body.suggestion) ? body.suggestion : {};
+      if (!id) return json({ error: 'Missing suggestion id.' }, { status: 400 });
+      if (!String(dict.name ?? '').trim()) return json({ error: 'Reagent name is required.' }, { status: 400 });
+      const res = await updateSuggestion(kcUser, id, dict);
+      if (!res?.ok) {
+        const status = res?.reason === 'not_found' ? 404 : 403;
+        const msg = res?.reason === 'not_found'
+          ? 'That suggestion no longer exists.'
+          : 'You can only edit your own suggestions.';
+        return json({ error: msg }, { status });
+      }
     } else if (action === 'delete') {
       const id = typeof body?.id === 'string' ? body.id : '';
       if (!id) return json({ error: 'Missing suggestion id.' }, { status: 400 });

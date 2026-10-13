@@ -253,6 +253,37 @@
 }
 .cfps-page .icon:hover { color: var(--ink); border-color: var(--ink-2); background: var(--surface-2); }
 
+/* Segmented toggle — List / JSON, Top / Newest, Form / JSON, and the contribution
+   filter tabs all use this, so every switch on the page is the same size. Never
+   shrinks or wraps, so a crowded header can't squeeze it. `.seg--fill` stretches
+   it across its row with each option's count stacked under its label. */
+.cfps-page .seg { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--groove); border-radius: var(--r-sm); overflow: hidden; }
+.cfps-page .seg > button {
+  font: 500 10px/1 var(--mono); padding: 5px 8px; border: 0; cursor: pointer; white-space: nowrap;
+  color: var(--ink-2); background: var(--surface-2);
+}
+.cfps-page .seg > button + button { border-left: 1px solid var(--groove); }
+.cfps-page .seg > button:hover { color: var(--ink); background: #fff; }
+.cfps-page .seg > button[aria-checked="true"],
+.cfps-page .seg > button[aria-selected="true"] { color: #fff; background: var(--teal); }
+.cfps-page .seg.seg--fill { display: flex; flex: 1 0 100%; }
+.cfps-page .seg.seg--fill > button {
+  flex: 1 1 auto; min-width: 0; padding: 5px 3px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+
+/* Small search box (literature list, community contributions). */
+.cfps-page .cf-in.search-in { padding: 4px 8px; font-size: 11px; line-height: 1.2; }
+
+/* Comment-count toggle (💬 N) on reagent rows and contribution cards. */
+.cfps-page .cbtn {
+  flex: 0 0 auto; white-space: nowrap; font: 10px/1 var(--mono); color: var(--muted);
+  background: transparent; border: 1px solid var(--hair); border-radius: var(--r-sm);
+  padding: 3px 7px; cursor: pointer;
+}
+.cfps-page .cbtn:hover { color: var(--ink-2); border-color: var(--faint); }
+.cfps-page .cbtn.is-on { color: var(--teal-ink); border-color: var(--teal); background: var(--teal-wash); }
+
 /* ---- LED indicator ------------------------------------------------------ */
 .cfps-page .led {
   --c: var(--muted);

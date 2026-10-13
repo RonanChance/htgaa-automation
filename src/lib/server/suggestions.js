@@ -363,6 +363,39 @@ export async function deleteComment(kcUser, commentId) {
   }
 }
 
+// Replace a suggestion's fields — only its original author may (same owner check
+// as deleteSuggestion). The new dict replaces the old one wholesale, so a key left
+// out is removed; reserved keys (`_owner_sub`, `_submitted_via`) and the original
+// `proposed_by` are carried over from the stored record, never from the request.
+// Votes and comments are untouched. Returns { ok, reason? }.
+export async function updateSuggestion(kcUser, suggestionId, dict) {
+  const mySub = kcUser?.sub ? String(kcUser.sub) : '';
+  if (!mySub || !suggestionId) return { ok: false, reason: 'unauthorized' };
+  const merge = (stored) => {
+    const clean = cleanDict(dict, kcUser);
+    for (const [k, v] of Object.entries(stored || {})) {
+      if (k.startsWith('_') || k === 'proposed_by') clean[k] = v;
+    }
+    return clean;
+  };
+  if (dev) {
+    const rec = DEV_SUGGESTIONS.find((s) => s.id === suggestionId);
+    if (!rec) return { ok: false, reason: 'not_found' };
+    if (String(rec.suggestion?._owner_sub || '') !== mySub) return { ok: false, reason: 'forbidden' };
+    rec.suggestion = merge(rec.suggestion);
+    return { ok: true };
+  }
+  const pb = await pbAdmin();
+  const rec = await pb.collection(SUGGESTED).getOne(suggestionId).catch(() => null);
+  if (!rec) return { ok: false, reason: 'not_found' };
+  const owner = ownerSubOf(rec);
+  if (!owner || owner !== mySub) return { ok: false, reason: 'forbidden' };
+  let stored = rec.suggestion;
+  if (typeof stored === 'string') { try { stored = JSON.parse(stored); } catch { stored = {}; } }
+  await pb.collection(SUGGESTED).update(suggestionId, { suggestion: merge(stored) });
+  return { ok: true };
+}
+
 // Delete a suggestion — only its original author may remove it, matched against the
 // reserved owner subject stored inside the suggestion JSON (see cleanDict). Also
 // clears the suggestion's votes + comments so no orphan rows linger. Returns

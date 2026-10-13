@@ -28,7 +28,10 @@
   import {
     SFGFP_CODING_REGION,
     PETASE_CODING_REGION,
-    RETEPLASE_CODING_REGION
+    RETEPLASE_CODING_REGION,
+    SFGFP_DNA_PLASMID,
+    PETASE_DNA_PLASMID,
+    RETEPLASE_DNA_PLASMID
   } from '$lib/dna.js';
   import {
     PYDANTIC_REAGENT_FIELDS,
@@ -67,16 +70,61 @@
     }
     return aa;
   }
+  // Each target also carries the full circular plasmid actually used as the CFPS
+  // template — the sequences and Ginkgo IDs in the coopetition guidelines doc
+  // ("DNA Template" section). The DNA tab stays the coding region (ATG → stop);
+  // the plasmid tab is the whole construct the coding region sits inside.
   const PROTEIN_SEQ = {
-    sfgfp:     { aa: translateOrf(SFGFP_CODING_REGION),     dna: SFGFP_CODING_REGION.toUpperCase() },
-    petase:    { aa: translateOrf(PETASE_CODING_REGION),    dna: PETASE_CODING_REGION.toUpperCase() },
-    reteplase: { aa: translateOrf(RETEPLASE_CODING_REGION), dna: RETEPLASE_CODING_REGION.toUpperCase() }
+    sfgfp: {
+      aa: translateOrf(SFGFP_CODING_REGION),
+      dna: SFGFP_CODING_REGION.toUpperCase(),
+      plasmid: SFGFP_DNA_PLASMID.toUpperCase(),
+      plasmidId: 'm9134733'
+    },
+    petase: {
+      aa: translateOrf(PETASE_CODING_REGION),
+      dna: PETASE_CODING_REGION.toUpperCase(),
+      plasmid: PETASE_DNA_PLASMID.toUpperCase(),
+      plasmidId: 'm9307404'
+    },
+    reteplase: {
+      aa: translateOrf(RETEPLASE_CODING_REGION),
+      dna: RETEPLASE_CODING_REGION.toUpperCase(),
+      plasmid: RETEPLASE_DNA_PLASMID.toUpperCase(),
+      plasmidId: 'm9307400'
+    }
   };
+  // The plasmid is circular, so the coding region can start anywhere in it (and the
+  // doc's sequence may begin mid-backbone) — search the doubled sequence.
+  function cdsOffsetInPlasmid(key) {
+    const { dna, plasmid } = PROTEIN_SEQ[key];
+    const i = (plasmid + plasmid).indexOf(dna);
+    return i < 0 ? null : i + 1; // 1-based start
+  }
+  function plasmidTitle(key) {
+    const p = PROTEIN_SEQ[key];
+    const start = cdsOffsetInPlasmid(key);
+    return `Full circular plasmid ${p.plasmidId} — ${p.plasmid.length.toLocaleString()} bp`
+      + (start ? `, coding region starts at base ${start.toLocaleString()}` : '');
+  }
+  const SEQ_TABS = [
+    { id: 'aa', label: 'amino acid' },
+    { id: 'dna', label: 'DNA' },
+    { id: 'plasmid', label: 'plasmid' }
+  ];
+  // What the meta line reads for each tab: residues, coding-region length, or the
+  // plasmid's size plus the Ginkgo ID it's catalogued under.
+  function seqMeta(key) {
+    const p = PROTEIN_SEQ[key];
+    if (seqMode[key] === 'aa') return `${p.aa.length} aa`;
+    if (seqMode[key] === 'dna') return `${p.dna.length} nt`;
+    return `${p.plasmid.length.toLocaleString()} bp · ${p.plasmidId}`;
+  }
   let seqMode = $state({ sfgfp: 'aa', petase: 'aa', reteplase: 'aa' });
   let seqCopied = $state('');
   let seqCopyTimer;
   function seqText(key) {
-    return seqMode[key] === 'aa' ? PROTEIN_SEQ[key].aa : PROTEIN_SEQ[key].dna;
+    return PROTEIN_SEQ[key][seqMode[key]] ?? PROTEIN_SEQ[key].aa;
   }
   async function copySeq(key) {
     try {
@@ -1356,6 +1404,8 @@
       // Author's rationale + credits, carried through so BenchmarksTable can show
       // the same details as "My Compositions" when this column is loaded.
       author: d.author || null,
+      // Opaque per-user key (hashed Keycloak subject) for counting distinct contributors.
+      contributorKey: d.contributorKey || (d.author ? `name:${d.author.toLowerCase()}` : null),
       proteinTarget: d.proteinTarget || null,
       created: d.created || null,
       rationale: d.comments || '',
@@ -3571,7 +3621,10 @@ POST ${base}/suggestions
      { "action": "unvote",    "id": "<suggestion id>" }
      { "action": "comment",   "id": "<suggestion id>", "body": "..." }
      { "action": "uncomment", "id": "<comment id>" }
-     { "action": "delete",    "id": "<suggestion id>" }   your user's own only
+     { "action": "update",    "id": "<suggestion id>", "suggestion": { "name": "...", ... } }
+                              replaces the fields wholesale (omitted keys are removed)
+     { "action": "delete",    "id": "<suggestion id>" }   update/delete: your user's own only
+     Extra keys beyond the ones above (e.g. "supplier") are kept and shown as tags.
      Each returns the refreshed ranking.
 
 ## 8. Literature research list (add, edit, upvote papers)
@@ -4346,8 +4399,8 @@ ${approvedPaletteText()}
   {/if}
 
   <!-- ===== participate: as a human (community reagents + literature) or via an AI agent ===== -->
-  <!-- Human shows the community sections as-is; Agent swaps them for one copyable
-       block with everything an agent needs to take part on the user's behalf. -->
+  <!-- The community sections always show; Agent mode adds one copyable block above
+       them with everything an agent needs to take part on the user's behalf. -->
   <!-- Three-column header: title left, the Human / Agent switch centred, an empty
        balancing column right (so the switch sits on the page's centre line). -->
   <div class="cf-mode-hd">
@@ -4380,26 +4433,11 @@ ${approvedPaletteText()}
   <div class="cf-block-sub cf-mode-sub">
     {participationMode === 'human'
       ? 'Vote on and suggest reagents, and grow the shared reading list.'
-      : 'Everything your AI agent needs to take part for you — copy the whole block into the agent of your choice.'}
+      : 'Everything your AI agent needs to take part for you — copy the whole block into the agent of your choice. The community sections are below it.'}
   </div>
-  {#if participationMode === 'human'}
-    <div class="cf-participate">
-      <ReagentSuggestions
-        suggestions={data.suggestions ?? []}
-        votedSuggestionIds={data.votedSuggestionIds ?? []}
-        kcUser={data.kcUser ?? null}
-        kcConfigured={data.kcConfigured ?? false}
-        devMode={data.devMode ?? false}
-      />
-      <LiteratureList
-        items={data.literature?.items ?? []}
-        votedIds={data.literature?.votedIds ?? []}
-        kcUser={data.kcUser ?? null}
-        kcConfigured={data.kcConfigured ?? false}
-        devMode={data.devMode ?? false}
-      />
-    </div>
-  {:else}
+  <!-- Agent mode only adds the instructions panel; the community sections below
+       stay visible in both modes. -->
+  {#if participationMode === 'agent'}
     <div class="panel panel--term cf-agent-block">
       <div class="panel__hd">
         <span class="label">agent instructions</span>
@@ -4433,6 +4471,22 @@ ${approvedPaletteText()}
       </div>
     </div>
   {/if}
+  <div class="cf-participate">
+    <ReagentSuggestions
+      suggestions={data.suggestions ?? []}
+      votedSuggestionIds={data.votedSuggestionIds ?? []}
+      kcUser={data.kcUser ?? null}
+      kcConfigured={data.kcConfigured ?? false}
+      devMode={data.devMode ?? false}
+    />
+    <LiteratureList
+      items={data.literature?.items ?? []}
+      votedIds={data.literature?.votedIds ?? []}
+      kcUser={data.kcUser ?? null}
+      kcConfigured={data.kcConfigured ?? false}
+      devMode={data.devMode ?? false}
+    />
+  </div>
 
   <!-- ===== where to start: the levers of cell-free synthesis, layer by layer ===== -->
   <div class="cf-block-hd">Where to Start</div>
@@ -4452,11 +4506,18 @@ ${approvedPaletteText()}
       <div class="cf-seq">
         <div class="cf-seq-hd">
           <div class="cf-seq-tabs" role="group" aria-label="sequence type">
-            <button type="button" class="cf-seq-tab" class:on={seqMode[key] === 'aa'} onclick={() => (seqMode[key] = 'aa')}>amino acid</button>
-            <button type="button" class="cf-seq-tab" class:on={seqMode[key] === 'dna'} onclick={() => (seqMode[key] = 'dna')}>DNA</button>
+            {#each SEQ_TABS as tab (tab.id)}
+              <button
+                type="button"
+                class="cf-seq-tab"
+                class:on={seqMode[key] === tab.id}
+                onclick={() => (seqMode[key] = tab.id)}
+                title={tab.id === 'plasmid' ? plasmidTitle(key) : null}
+              >{tab.label}</button>
+            {/each}
           </div>
-          <span class="cf-seq-meta">{seqMode[key] === 'aa' ? PROTEIN_SEQ[key].aa.length + ' aa' : PROTEIN_SEQ[key].dna.length + ' nt'}</span>
-          <button type="button" class="icon" onclick={() => copySeq(key)} title="Copy {seqMode[key] === 'aa' ? 'amino-acid' : 'DNA'} sequence" aria-label="Copy sequence">{seqCopied === key + ':' + seqMode[key] ? '✓' : seqCopied === key + ':err' ? '✕' : '⧉'}</button>
+          <span class="cf-seq-meta">{seqMeta(key)}</span>
+          <button type="button" class="icon" onclick={() => copySeq(key)} title="Copy {seqMode[key] === 'aa' ? 'amino-acid' : seqMode[key] === 'dna' ? 'coding-region DNA' : 'plasmid'} sequence" aria-label="Copy sequence">{seqCopied === key + ':' + seqMode[key] ? '✓' : seqCopied === key + ':err' ? '✕' : '⧉'}</button>
         </div>
         <pre class="cf-seq-body">{seqText(key)}</pre>
       </div>
@@ -5099,6 +5160,7 @@ ${approvedPaletteText()}
   /* Agent block: one terminal panel, the whole instruction set in a tall scroller. */
   .panel--term .panel__hd .label { color: #ffffff; }
   .cf-agent-pre { max-height: min(70vh, 760px); margin: 0; }
+  .cf-agent-block { margin-bottom: 12px; }
   .cf-agent-copy { margin-left: auto; }
   /* agent token row above the agent instructions */
   .cf-agent-token { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; flex: 0 0 auto; }
@@ -5769,6 +5831,7 @@ ${approvedPaletteText()}
   }
   .cf-seq-tabs {
     display: inline-flex;
+    flex: 0 0 auto;
     border: 1px solid var(--hair);
     border-radius: var(--r-sm);
     overflow: hidden;
@@ -5780,7 +5843,11 @@ ${approvedPaletteText()}
     color: var(--muted);
     background: transparent;
     border: 0;
-    padding: 4px 7px;
+    /* Three tabs share a narrow card: never wrap a label onto a second line (that
+       would make this card's header taller than its neighbours' and break the
+       equal-height alignment the .cf-seq-body comment relies on). */
+    white-space: nowrap;
+    padding: 4px 6px;
     cursor: pointer;
     transition: color .12s var(--ease), background .12s var(--ease);
   }
@@ -5789,6 +5856,10 @@ ${approvedPaletteText()}
   .cf-seq-tab.on { color: var(--ink); background: var(--surface); }
   .cf-seq-meta {
     margin-right: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font: 500 9.5px/1 var(--mono);
     color: var(--faint);
     font-variant-numeric: tabular-nums;
