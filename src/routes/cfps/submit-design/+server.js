@@ -105,8 +105,10 @@ export const POST = async (event) => {
     }
 
     // ── per-sample rules ──────────────────────────────────────────────────────
+    // Agents must have the user's explicit OK before publishing a conversation link.
+    const requireLinkApproval = kcUser.via === 'agent';
     samples.forEach((sample, i) => {
-      const res = validateSample(sample);
+      const res = validateSample(sample, { requireLinkApproval });
       const sid = typeof sample?.sample_id === 'string' ? sample.sample_id.trim() : '';
       for (const e of res.errors) errors.push(isBatch ? { sample_index: i + 1, sample_id: sid || undefined, ...e } : e);
       for (const w of res.warnings) warnings.push(isBatch ? `Sample ${i + 1}: ${w}` : w);

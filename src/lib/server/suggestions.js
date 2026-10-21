@@ -1,5 +1,5 @@
 import { pbAdmin } from '$lib/server/pb.js';
-import { dev } from '$app/environment';
+import { DEV_STUBS } from '$lib/server/devStubs.js';
 
 // Community-suggested reagents + upvotes. The suggestion payload is a free-form
 // JSON dict (name, pH, other attributes, link) stored on cfps_suggested_reagents.
@@ -196,7 +196,9 @@ export async function removeVote(pb, kcUser, suggestionId) {
 
 // Keys treated as links — their values are URL-scheme validated so a stored value
 // can never become a `javascript:`/`data:` URL that executes in a viewer's browser.
-const LINK_KEYS = new Set(['link', 'url', 'href', 'reference', 'ref']);
+// `ai_conversation_link` is here so an agent's shared-chat URL is scheme-checked
+// like any other link before it is stored.
+const LINK_KEYS = new Set(['link', 'url', 'href', 'reference', 'ref', 'ai_conversation_link']);
 
 // Allow only http(s). A bare domain is assumed https; anything carrying a non-http
 // scheme (javascript:, data:, vbscript:, …) is rejected outright.
@@ -275,7 +277,7 @@ export function clampComment(body) {
 // can't be scraped without an account.
 export async function getRankedSuggestions(kcUser) {
   if (!kcUser?.sub) return { suggestions: [], votedSuggestionIds: [] };
-  if (dev) return devRanked(kcUser);
+  if (DEV_STUBS) return devRanked(kcUser);
   try {
     const pb = await pbAdmin();
     return await fetchRankedSuggestions(pb, kcUser);
@@ -290,7 +292,7 @@ export async function loadSuggestions(kcUser) {
 }
 
 export async function submitSuggestion(kcUser, dict) {
-  if (dev) {
+  if (DEV_STUBS) {
     DEV_SUGGESTIONS.push({
       id: `dev-${++devSeq}`, votes: 0, created: new Date().toISOString(),
       suggestion: cleanDict(dict, kcUser),
@@ -302,7 +304,7 @@ export async function submitSuggestion(kcUser, dict) {
 }
 
 export async function upvote(kcUser, suggestionId) {
-  if (dev) {
+  if (DEV_STUBS) {
     const set = DEV_VOTES.get(kcUser.sub) ?? new Set();
     if (!set.has(suggestionId)) {
       const rec = DEV_SUGGESTIONS.find((s) => s.id === suggestionId);
@@ -315,7 +317,7 @@ export async function upvote(kcUser, suggestionId) {
 }
 
 export async function downvote(kcUser, suggestionId) {
-  if (dev) {
+  if (DEV_STUBS) {
     const set = DEV_VOTES.get(kcUser.sub);
     if (set?.has(suggestionId)) {
       const rec = DEV_SUGGESTIONS.find((s) => s.id === suggestionId);
@@ -332,7 +334,7 @@ export async function downvote(kcUser, suggestionId) {
 export async function postComment(kcUser, suggestionId, body) {
   const text = clampComment(body);
   if (!text || !suggestionId) return;
-  if (dev) {
+  if (DEV_STUBS) {
     DEV_COMMENTS.push({
       id: `dc-${++devCommentSeq}`, suggestionId,
       author: kcUser?.name || 'anonymous', authorSub: kcUser?.sub || null,
@@ -351,7 +353,7 @@ export async function postComment(kcUser, suggestionId, body) {
 // Delete a comment — only the comment's own author may remove it.
 export async function deleteComment(kcUser, commentId) {
   if (!commentId) return;
-  if (dev) {
+  if (DEV_STUBS) {
     const i = DEV_COMMENTS.findIndex((c) => c.id === commentId && c.authorSub === kcUser?.sub);
     if (i >= 0) DEV_COMMENTS.splice(i, 1);
     return;
@@ -378,7 +380,7 @@ export async function updateSuggestion(kcUser, suggestionId, dict) {
     }
     return clean;
   };
-  if (dev) {
+  if (DEV_STUBS) {
     const rec = DEV_SUGGESTIONS.find((s) => s.id === suggestionId);
     if (!rec) return { ok: false, reason: 'not_found' };
     if (String(rec.suggestion?._owner_sub || '') !== mySub) return { ok: false, reason: 'forbidden' };
@@ -404,7 +406,7 @@ export async function updateSuggestion(kcUser, suggestionId, dict) {
 export async function deleteSuggestion(kcUser, suggestionId) {
   const mySub = kcUser?.sub ? String(kcUser.sub) : '';
   if (!mySub || !suggestionId) return { ok: false, reason: 'unauthorized' };
-  if (dev) {
+  if (DEV_STUBS) {
     const i = DEV_SUGGESTIONS.findIndex((s) => s.id === suggestionId);
     if (i < 0) return { ok: false, reason: 'not_found' };
     if (String(DEV_SUGGESTIONS[i].suggestion?._owner_sub || '') !== mySub) {

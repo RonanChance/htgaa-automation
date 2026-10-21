@@ -1,4 +1,4 @@
-import { dev } from '$app/environment';
+import { DEV_STUBS } from '$lib/server/devStubs.js';
 import { pbAdmin } from '$lib/server/pb.js';
 import { clampComment } from '$lib/server/suggestions.js';
 
@@ -45,7 +45,7 @@ export async function loadDesignComments(kcUser) {
   const mySub = kcUser?.sub || '';
   if (!mySub) return {};
   let all;
-  if (dev) {
+  if (DEV_STUBS) {
     all = DEV_COMMENTS;
   } else {
     try {
@@ -63,7 +63,7 @@ export async function loadDesignComments(kcUser) {
 // One design's thread (after a write), oldest first.
 export async function loadThread(kcUser, designId) {
   const mySub = kcUser?.sub || '';
-  if (dev) return DEV_COMMENTS.filter((c) => c.designId === designId).map((c) => clientComment(c, mySub));
+  if (DEV_STUBS) return DEV_COMMENTS.filter((c) => c.designId === designId).map((c) => clientComment(c, mySub));
   const pb = await pbAdmin();
   const rows = await pb.collection(DESIGN_COMMENTS).getFullList({
     filter: pb.filter('design = {:d}', { d: designId }),
@@ -76,7 +76,7 @@ export async function loadThread(kcUser, designId) {
 export async function postDesignComment(kcUser, designId, body) {
   const text = clampComment(body);
   if (!text) return { ok: false, reason: 'empty' };
-  if (dev) {
+  if (DEV_STUBS) {
     DEV_COMMENTS.push({
       id: `ddc-${++devSeq}`, designId, author: kcUser?.name || 'anonymous',
       authorSub: kcUser?.sub || null, body: text, created: new Date().toISOString()
@@ -100,7 +100,7 @@ export async function postDesignComment(kcUser, designId, body) {
 // Delete a comment — only its author may. Returns { ok, designId?, reason? }.
 export async function deleteDesignComment(kcUser, commentId) {
   const mySub = String(kcUser?.sub || '');
-  if (dev) {
+  if (DEV_STUBS) {
     const i = DEV_COMMENTS.findIndex((c) => c.id === commentId);
     if (i < 0) return { ok: false, reason: 'not_found' };
     if (DEV_COMMENTS[i].authorSub !== mySub) return { ok: false, reason: 'forbidden' };

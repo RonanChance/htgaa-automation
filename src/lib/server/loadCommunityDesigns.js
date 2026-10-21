@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { pbAdmin } from '$lib/server/pb.js';
-import { dev } from '$app/environment';
+import { DEV_STUBS } from '$lib/server/devStubs.js';
 import { parseStarredBy, starSummary, devStarredBy } from '$lib/server/stars.js';
 
 // Community-submitted CFPS compositions, read from the same cfps_designs
@@ -12,9 +12,9 @@ import { parseStarredBy, starSummary, devStarredBy } from '$lib/server/stars.js'
 // per-reagent concentrations. listRule is null on the collection, so the read
 // goes through the superuser-authed admin client.
 //
-// On localhost (`vite dev`) a small in-memory set is returned instead, so the
-// "Community" comparison columns can be previewed without PocketBase. Never used
-// in a production build.
+// With CFPS_DEV_STUBS=1 on localhost a small in-memory set is returned instead, so
+// the "Community" comparison columns can be previewed without PocketBase (see
+// devStubs.js). Never used in a production build.
 const DESIGNS = process.env.CFPS_COLLECTION || 'cfps_designs';
 
 // ── localhost dummy store ───────────────────────────────────────────────────
@@ -189,6 +189,8 @@ function normalizeDesign(rec, mySub) {
     // same rationale/credits the author sees in "My Compositions". The write path
     // stores the rationale both top-level (`rec.rationale`) and in metadata.
     aiModel: typeof metadata.ai_model === 'string' ? metadata.ai_model : '',
+    // Optional public link to the conversation that produced the design.
+    aiConversationLink: typeof metadata.ai_conversation_link === 'string' ? metadata.ai_conversation_link : '',
     acknowledgements: typeof metadata.acknowledgements === 'string' ? metadata.acknowledgements : '',
     comments:
       typeof metadata.comments === 'string' ? metadata.comments
@@ -209,15 +211,57 @@ function normalizeDesign(rec, mySub) {
 // Keycloak subject) may see other people's submissions, so anonymous visitors
 // can't scrape the dataset. Without a subject this returns [] and nothing about
 // the community designs ever leaves the server. Never throws — a backend hiccup
-// just renders no Community options.
-export async function loadCommunityDesigns(kcUser) {
+// just renders no Community options. `live` skips the dummy store even when
+// CFPS_DEV_STUBS is on (/cfps/analysis is only worth previewing on real data).
+export async function loadCommunityDesigns(kcUser, { live = false } = {}) {
   const mySub = kcUser?.sub ? String(kcUser.sub).trim() : '';
   if (!mySub) return [];
-  if (dev) return DEV_DESIGNS.map((d) => ({ ...d, ...starSummary(devStarredBy(d.id), mySub) }));
+  if (DEV_STUBS && !live) return DEV_DESIGNS.map((d) => ({ ...d, ...starSummary(devStarredBy(d.id), mySub) }));
   try {
     const pb = await pbAdmin();
     const rows = await pb.collection(DESIGNS).getFullList({ sort: '-created' });
     return rows.map((rec) => normalizeDesign(rec, mySub)).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+// Shared-link designs: the compositions named in a /cfps?batch=<id,…> or
+// ?design=<id> link, for a visitor who is NOT signed in.
+//
+// Why this is allowed when loadCommunityDesigns refuses: that function hands over
+// the WHOLE dataset, so it needs a session or anyone could scrape it. Here the
+// caller must already name each record, and a PocketBase id is 15 random
+// characters — unguessable in practice — so the link itself is the key. A person
+// who shares one is choosing to publish those compositions; nothing else about
+// the community becomes reachable, and ids that don't exist are simply absent
+// from the result.
+//
+// Hard-capped so a single URL can't be used to pull an unbounded slice, and
+// queried by explicit id filter rather than by fetching everything and
+// filtering in memory.
+export const MAX_SHARED_IDS = 24;
+
+export async function loadSharedDesigns(ids) {
+  const wanted = [...new Set(
+    (Array.isArray(ids) ? ids : String(ids ?? '').split(','))
+      .map((s) => String(s ?? '').trim())
+      // PocketBase ids are 15 chars of [a-z0-9]; reject anything else outright so
+      // nothing odd reaches the filter builder.
+      .filter((s) => /^[a-z0-9]{15}$/.test(s))
+  )].slice(0, MAX_SHARED_IDS);
+  if (!wanted.length) return [];
+  if (DEV_STUBS) {
+    return DEV_DESIGNS.filter((d) => wanted.includes(d.id))
+      .map((d) => ({ ...d, ...starSummary(devStarredBy(d.id), '') }));
+  }
+  try {
+    const pb = await pbAdmin();
+    const filter = pb.filter(wanted.map((_, i) => `id = {:id${i}}`).join(' || '),
+      Object.fromEntries(wanted.map((id, i) => [`id${i}`, id])));
+    const rows = await pb.collection(DESIGNS).getFullList({ filter, sort: '-created' });
+    // No viewer subject: `mine` / `starredByMe` are false for an anonymous reader.
+    return rows.map((rec) => normalizeDesign(rec, '')).filter(Boolean);
   } catch {
     return [];
   }
@@ -245,6 +289,7 @@ function normalizeMine(rec) {
     authorSub: String(rec.author_sub || '').trim() || null,
     proteinTarget: md.protein_target || null,
     aiModel: typeof md.ai_model === 'string' ? md.ai_model : '',
+    aiConversationLink: typeof md.ai_conversation_link === 'string' ? md.ai_conversation_link : '',
     acknowledgements: typeof md.acknowledgements === 'string' ? md.acknowledgements : '',
     comments: typeof md.comments === 'string' ? md.comments : '',
     experimentHypothesis:
@@ -263,13 +308,13 @@ function normalizeMine(rec) {
 // The signed-in user's own compositions, grouped/managed in the "My Compositions"
 // section. Matched SOLELY by the stable Keycloak subject (author_sub) — display
 // names aren't unique, so matching on `author` caused ownership confusion. Never
-// throws — a backend hiccup just renders an empty manager. On localhost the dummy
-// store is returned so the section can be previewed without PocketBase.
+// throws — a backend hiccup just renders an empty manager. With CFPS_DEV_STUBS=1 the
+// dummy store is returned so the section can be previewed without PocketBase.
 export async function loadMyDesigns(kcUser) {
   const me = kcUser?.name ? String(kcUser.name).trim() : '';
   const mySub = kcUser?.sub ? String(kcUser.sub).trim() : '';
   if (!me && !mySub) return [];
-  if (dev) {
+  if (DEV_STUBS) {
     return DEV_DESIGNS.map((d) => ({
       id: d.id,
       name: d.name,

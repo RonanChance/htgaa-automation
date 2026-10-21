@@ -5,6 +5,7 @@
     // load that formulation's targets into the parent's design state.
 
     import { onDestroy, onMount } from 'svelte';
+    import PlateBuilder from './PlateBuilder.svelte';
     import {
         REAGENT_ALIASES as STATIC_REAGENT_ALIASES,
         REAGENT_GROUPS as STATIC_REAGENT_GROUPS,
@@ -146,6 +147,82 @@
 
     let tableScrollEl = $state(null);
     let isDownloading = $state(false);
+    // Plate-map builder: fullscreen's right-hand pane can swap the comparison table
+    // for a 4-plates-per-target layout board built from the contributions on the left.
+    let rightPane = $state('table'); // 'table' | 'plates'
+    let plateBuilder = $state(null);
+    let placedDesignIds = $state(new Set());
+    // The hovered card, not a frozen id list: ticking a batch member off while the
+    // pointer is still on the card has to update the plate preview live.
+    let hoverItem = $state(null);
+    const inPlateMode = $derived(focusMode && rightPane === 'plates');
+    const hoverIds = $derived(hoverItem ? { ids: idsForItem(hoverItem) } : null);
+
+    // Every placeable composition, carrying the raw pydantic reagent_list the
+    // exporter needs (components[] is display-only and can't round-trip to nL).
+    const placeableDesigns = $derived(
+        communityFormulations
+            .filter((c) => c.reagentList && c.proteinTarget)
+            .map((c) => ({
+                id: c.id,
+                name: c.name,
+                proteinTarget: c.proteinTarget,
+                reagentList: c.reagentList,
+                author: c.author,
+                contributorKey: c.contributorKey,
+                aiModel: c.aiModel,
+                // Submission time — the plate map's auto-fill places oldest first.
+                created: c.created,
+                // Final in-reaction concentrations per paper-reagent, already
+                // including what the base buffer contributes (componentsForVolumes
+                // → finalNm… → baseBufferContributionMm). Drives the range stats.
+                components: c.components
+            }))
+    );
+    // paperName → display unit (mM, g/L, U/mL …) for those concentrations.
+    const componentUnits = $derived(
+        Object.fromEntries(
+            Object.entries(reagentAliases ?? {}).map(([name, alias]) => [name, alias?.unit || 'mM'])
+        )
+    );
+    // Every design id a rail item covers (a batch = all of its members).
+    function allIdsForItem(item) {
+        return item.kind === 'batch'
+            ? item.members.map((m) => m.id ?? String(m.key).replace(/^community-/, ''))
+            : [item.card.id];
+    }
+    // Per-member checkboxes on a batch card let you place a subset. Unticked ids are
+    // tracked (rather than ticked ones) so a member defaults to ON without having to
+    // seed state for every batch up front.
+    let unpickedIds = $state(new Set());
+    const memberPicked = (id) => !unpickedIds.has(id);
+    function toggleMember(id) {
+        const next = new Set(unpickedIds);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        unpickedIds = next;
+    }
+    // What the + button would actually place: the ticked members, minus any already
+    // on a plate. Falls back to every member when the whole batch is unticked.
+    function idsForItem(item) {
+        const all = allIdsForItem(item);
+        if (item.kind !== 'batch') return all;
+        const picked = all.filter(memberPicked);
+        return picked.length ? picked : [];
+    }
+    // A rail item reads as "placed" once every design it covers is on a plate. For a
+    // batch that means its TICKED members — so unticking a placed member offers to
+    // add the rest rather than looking half-done.
+    function itemPlaced(item) {
+        const ids = idsForItem(item);
+        return ids.length > 0 && ids.every((id) => placedDesignIds.has(id));
+    }
+    function togglePlacement(item) {
+        const ids = idsForItem(item);
+        if (!ids.length) return;
+        if (itemPlaced(item)) plateBuilder?.removeDesigns(ids);
+        else plateBuilder?.addDesigns(ids);
+    }
+
     // Toggle for the community-composition browse rail on the left of the designer.
     let showCommunityRail = $state(false);
     // Hover affordances for the frozen mix group: which mix column the pointer is over
@@ -946,6 +1023,27 @@
         return items;
     });
 
+    // Round 1 progress: how many compositions the community has submitted per
+    // target against the round's capacity — 4 plates × 80 designs = 320 each, the
+    // same budget the plate-map builder lays out.
+    const ROUND1_PER_TARGET = 320;
+    // Open by default in both the side rail and the fullscreen pane; the
+    // composition count line toggles it closed.
+    let showRound1 = $state(true);
+    const round1 = $derived.by(() => {
+        const counts = Object.fromEntries(proteinTargets.map((t) => [t, 0]));
+        for (const c of communityFormulations) {
+            if (c.proteinTarget in counts) counts[c.proteinTarget] += 1;
+        }
+        const rows = proteinTargets.map((t) => ({
+            target: t,
+            n: counts[t],
+            pct: Math.min(100, Math.round((counts[t] / ROUND1_PER_TARGET) * 100))
+        }));
+        const total = rows.reduce((a, r) => a + r.n, 0);
+        return { rows, total, capacity: ROUND1_PER_TARGET * proteinTargets.length };
+    });
+
     // Headline numbers for the toggle tab and the list header. Counts are always in
     // compositions (a batch card counts as all of its members — see countIn) so the
     // tab and the opened list agree; contributors are distinct submitters by contributorKey.
@@ -1110,7 +1208,36 @@
             t, searchedRailItems.reduce((n, i) => n + (inTab(i, t) ? countIn(i, t) : 0), 0)
         ]))
     );
-    const visibleRailItems = $derived(searchedRailItems.filter((i) => inTab(i, commTab)));
+    // Sort order for the list, cycled by one button beside the search box. Star
+    // sorts rank by the counts loaded with the page (not optimistic clicks), so a
+    // card doesn't jump out from under the cursor when you star it. Ties fall
+    // back to newest first.
+    const COMM_SORTS = [
+        { key: 'recent', label: 'Newest', title: 'Most recent first' },
+        { key: 'oldest', label: 'Oldest', title: 'Least recent first' },
+        { key: 'most-starred', label: '★ Most', title: 'Most starred first' },
+        { key: 'least-starred', label: '★ Least', title: 'Least starred first' }
+    ];
+    let commSort = $state('recent');
+    const commSortInfo = $derived(COMM_SORTS.find((o) => o.key === commSort) ?? COMM_SORTS[0]);
+    function cycleCommSort() {
+        commSort = COMM_SORTS[(COMM_SORTS.findIndex((o) => o.key === commSort) + 1) % COMM_SORTS.length].key;
+    }
+    function loadedStarCount(item) {
+        if (item.kind !== 'batch') return Number(item.card.starCount) || 0;
+        return new Set(item.members.flatMap((m) => m.starredBy ?? [])).size;
+    }
+    const createdMs = (item) => new Date(item.created || 0).getTime();
+    const visibleRailItems = $derived.by(() => {
+        const items = searchedRailItems.filter((i) => inTab(i, commTab));
+        if (commSort === 'recent') return items; // already newest-first
+        const stars = new Map(items.map((i) => [i.key, loadedStarCount(i)]));
+        return [...items].sort((a, b) => {
+            if (commSort === 'oldest') return createdMs(a) - createdMs(b);
+            const d = stars.get(b.key) - stars.get(a.key);
+            return (commSort === 'most-starred' ? d : -d) || createdMs(b) - createdMs(a);
+        });
+    });
     function commEmptyText() {
         const q = commQuery.trim();
         if (q) return `No contributions match “${q}”${commTab === 'all' ? '' : ' in this tab'}.`;
@@ -1281,6 +1408,10 @@
         <div class="bench-focus__hd">
             <span class="bench-focus__ttl">Cell-Free Reaction Designer</span>
             <span class="bench-focus__sub">fullscreen · Esc to exit</span>
+            <div class="seg bench-focus__seg" role="radiogroup" aria-label="Right-hand pane">
+                <button type="button" role="radio" aria-checked={rightPane === 'table'} onclick={() => (rightPane = 'table')}>Comparison table</button>
+                <button type="button" role="radio" aria-checked={rightPane === 'plates'} onclick={() => (rightPane = 'plates')} title="Lay the contributions out across 384-well plates">Plate map</button>
+            </div>
             <button type="button" class="btn-bp" onclick={exitFocus} title="Exit fullscreen (Esc)">✕ Exit fullscreen</button>
         </div>
     {/if}
@@ -1313,6 +1444,32 @@
                 />
             </svg>
             {#if st.starCount}<span class="cf-star__n">{st.starCount}</span>{/if}
+        </button>
+    {/snippet}
+    <!-- Add ⇄ remove this contribution on the plate map (fullscreen plate mode only).
+         A full-height bar down the card's right edge: a big target that reads as part
+         of the card rather than one more small chip in its footer. -->
+    {#snippet plateBtn(item)}
+        {@const on = itemPlaced(item)}
+        {@const n = idsForItem(item).length}
+        {@const none = n === 0}
+        <button
+            type="button"
+            class="pb-add"
+            class:is-on={on}
+            class:is-empty={none}
+            aria-pressed={on}
+            disabled={none}
+            title={none
+                ? 'Tick at least one composition in this batch'
+                : on
+                    ? `Remove ${n > 1 ? `all ${n}` : 'this composition'} from the plate map`
+                    : `Add ${n > 1 ? `${n} compositions` : 'this composition'} to the plate map — 4 replicates each, or shared wells plus co-contributor credit if the reaction is already there`}
+            onclick={(e) => { e.stopPropagation(); togglePlacement(item); }}
+            onkeydown={(e) => e.stopPropagation()}
+        >
+            <span class="pb-add__sign">{on ? '−' : '+'}</span>
+            {#if n > 1}<span class="pb-add__n">{n}</span>{/if}
         </button>
     {/snippet}
     {#snippet commentBtn(item)}
@@ -1368,19 +1525,23 @@
             class="cf-comm-card"
             class:cf-comm-card--batch={item.kind === 'batch'}
             class:is-active={item.kind !== 'batch' && item.card.key === customStartKey}
+            class:has-plate-btn={inPlateMode}
+            onpointerenter={() => { if (inPlateMode) hoverItem = item; }}
+            onpointerleave={() => { if (inPlateMode && hoverItem === item) hoverItem = null; }}
             onclick={activate}
             onkeydown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); activate(); } }}
             title={item.kind === 'batch'
                 ? `Batch of ${item.count} — click to load all into the designer`
                 : (wide ? 'Click to load into the designer' : item.card.rationale || item.card.name)}
         >
+            {#if inPlateMode}{@render plateBtn(item)}{/if}
             {#if item.kind === 'batch'}
                 <div class="cf-comm-card__top">
                     <span class="cf-comm-card__name">{item.name}</span>
                     {@render starBtn(item)}
                     <span class="cf-comm-card__count" title="{item.count} compositions in this batch">{item.count}×</span>
                 </div>
-                {#if item.targets.length}
+                {#if item.targets.length && !inPlateMode}
                     <div class="cf-comm-card__tags">
                         {#each item.targets as t}
                             <span class="cf-comm-card__badge" style={proteinBadgeStyle(t)}>{t}</span>
@@ -1390,7 +1551,29 @@
                 {#if item.experimentHypothesis}
                     <p class="cf-comm-card__desc" title={wide ? undefined : item.experimentHypothesis}>{item.experimentHypothesis}</p>
                 {/if}
-                {#if wide}
+                {#if inPlateMode}
+                    <!-- Tick the members to place. All on by default; untick to put a
+                         subset of the batch on the plates. -->
+                    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                    <ul class="cf-pick" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                        {#each item.members as m (m.key)}
+                            {@const mid = m.id ?? String(m.key).replace(/^community-/, '')}
+                            {@const placed = placedDesignIds.has(mid)}
+                            <li>
+                                <label class="cf-pick__row" class:is-placed={placed}>
+                                    <span class="cf-pick__hd">
+                                        <input type="checkbox" checked={memberPicked(mid)} onchange={() => toggleMember(mid)} />
+                                        <span class="cf-pick__name">{m.name}</span>
+                                        {#if m.proteinTarget}<span class="cf-comm-card__badge" style={proteinBadgeStyle(m.proteinTarget)}>{m.proteinTarget}</span>{/if}
+                                        {#if placed}<span class="cf-pick__on" title="Already on a plate">on plate</span>{/if}
+                                    </span>
+                                    {#if wide && m.rationale}<span class="cf-pick__why">{m.rationale}</span>{/if}
+                                </label>
+                            </li>
+                        {/each}
+                    </ul>
+                {/if}
+                {#if wide && !inPlateMode}
                     {#each item.members as m (m.key)}
                         {#if m.rationale}
                             <div class="cf-comm-card__member">
@@ -1406,6 +1589,16 @@
                 <div class="cf-comm-card__foot">
                     {#if item.author}<span class="cf-comm-card__by">{item.author}</span>{/if}
                     {#if wide && item.members[0]?.aiModel}<span class="cf-comm-card__ai">{item.members[0].aiModel}</span>{/if}
+                    {#if wide && item.members[0]?.aiConversationLink}
+                        <a
+                            class="cf-comm-card__chat"
+                            href={item.members[0].aiConversationLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onclick={(e) => e.stopPropagation()}
+                            title="Read the AI conversation behind this batch"
+                        >chat ↗</a>
+                    {/if}
                     {#if item.created}<span class="cf-comm-card__date">{fmtDate(item.created)}</span>{/if}
                     {@render commentBtn(item)}
                 </div>
@@ -1422,6 +1615,16 @@
                 <div class="cf-comm-card__foot">
                     {#if c.author}<span class="cf-comm-card__by">{c.author}</span>{/if}
                     {#if wide && c.aiModel}<span class="cf-comm-card__ai">{c.aiModel}</span>{/if}
+                    {#if wide && c.aiConversationLink}
+                        <a
+                            class="cf-comm-card__chat"
+                            href={c.aiConversationLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onclick={(e) => e.stopPropagation()}
+                            title="Read the AI conversation behind this composition"
+                        >chat ↗</a>
+                    {/if}
                     {#if c.created}<span class="cf-comm-card__date">{fmtDate(c.created)}</span>{/if}
                     {@render commentBtn(item)}
                 </div>
@@ -1449,16 +1652,57 @@
                     </button>
                 {/each}
             </div>
-            <input
-                class="cf-in search-in cf-comm-search"
-                type="search"
-                placeholder="Search sample_id, hypothesis…"
-                bind:value={commQuery}
-                aria-label="Search contributions"
-            />
-            <div class="cf-comm-rail__meta">
-                {plural(communityFormulations.length, 'composition')} by {plural(communityContributorCount, 'user')}
+            <div class="cf-comm-find">
+                <input
+                    class="cf-in search-in cf-comm-search"
+                    type="search"
+                    placeholder={wide ? "Search sample_id, hypothesis…" : "Search…"}
+                    bind:value={commQuery}
+                    aria-label="Search contributions"
+                />
+                <!-- One button cycles the order: newest → oldest → most starred → least starred. -->
+                <button
+                    type="button"
+                    class="cf-comm-sort"
+                    onclick={cycleCommSort}
+                    title="Sorted: {commSortInfo.title} — click to change"
+                    aria-label="Sort contributions: {commSortInfo.title}. Click to change."
+                >
+                    <span class="cf-comm-sort__ic" aria-hidden="true">⇅</span>{commSortInfo.label}
+                </button>
             </div>
+            <!-- The composition count doubles as the disclosure for round 1
+                 progress. The narrow rail stacks one row per target; the wide
+                 pane lays the three side by side. -->
+            <button
+                type="button"
+                class="cf-comm-rail__meta cf-r1__toggle"
+                aria-expanded={showRound1}
+                onclick={() => (showRound1 = !showRound1)}
+                title={showRound1 ? 'Hide round 1 progress' : 'Show how the community is tracking against round 1'}
+            >
+                <span>{plural(communityFormulations.length, 'composition')} by {plural(communityContributorCount, 'user')}</span>
+                <span class="cf-r1__chev">{showRound1 ? '▾' : '▸'} round 1</span>
+            </button>
+            {#if showRound1}
+                <div class="cf-r1" class:cf-r1--stacked={!wide}>
+                    <div class="cf-r1__hd">
+                        <span class="cf-r1__ttl">Round 1 progress</span>
+                        <span class="cf-r1__tot">{round1.total} / {round1.capacity} submitted</span>
+                    </div>
+                    <div class="cf-r1__cols">
+                        {#each round1.rows as r (r.target)}
+                            <div class="cf-r1__col" title="{r.n} {r.target} compositions submitted of {ROUND1_PER_TARGET} needed for round 1 (4 plates × 80)">
+                                <span class="cf-r1__t" style={proteinBadgeStyle(r.target)}>{r.target}</span>
+                                <span class="cf-r1__n">{r.n}<span class="cf-r1__of">/{ROUND1_PER_TARGET}</span></span>
+                                <span class="cf-r1__track">
+                                    <span class="cf-r1__fill" class:is-full={r.n >= ROUND1_PER_TARGET} style="width:{r.pct}%"></span>
+                                </span>
+                            </div>
+                        {/each}
+                    </div>
+                </div>
+            {/if}
         </div>
         {#if starError}<div class="cf-comm-err" role="alert">{starError}</div>{/if}
         <div class="cf-comm-rail__list" role="tabpanel">
@@ -1806,18 +2050,29 @@
             </button>
         {/if}
 
-        <div class="cf-designer-main">
+        {#if inPlateMode}
+            <PlateBuilder
+                bind:this={plateBuilder}
+                designs={placeableDesigns}
+                {componentUnits}
+                {hoverIds}
+                {viewerName}
+                onPlacedChange={(ids) => (placedDesignIds = ids)}
+            />
+        {/if}
+        <div class="cf-designer-main" class:is-hidden={inPlateMode}>
     <!-- The table is its own rounded, bordered card (the section is now just a
          transparent spacing wrapper — no white background). overflow-auto clips the
-         opaque sticky cells to all four rounded corners. w-fit + max-w-full makes the
-         card hug the table's own width (no white side gutters) but still scroll when
-         the grid is wider than the viewport. Radius tracks var(--r) to match the
+         opaque sticky cells to all four rounded corners. w-full makes the
+         card span the designer column (at least the settings bar's width) with the
+         table pinned left against the contributions tab; it still scrolls when the
+         grid is wider than the viewport. Radius tracks var(--r) to match the
          sibling .panel sections; bg-base-100 keeps the grid opaque. -->
-    <div class="bench-scroll pb-3 pr-3 overflow-auto max-h-[78vh] isolate border border-base-300 bg-base-100 w-fit max-w-full mx-auto {communityByRecent.length > 0 ? 'rounded-r-[var(--r,5px)]' : 'rounded-[var(--r,5px)]'}" bind:this={tableScrollEl} onscroll={hideSynopsisHover}>
+    <div class="bench-scroll pb-3 pr-3 overflow-auto max-h-[78vh] isolate border border-base-300 bg-base-100 w-full {communityByRecent.length > 0 ? 'rounded-r-[var(--r,5px)]' : 'rounded-[var(--r,5px)]'}" bind:this={tableScrollEl} onscroll={hideSynopsisHover}>
         <!-- Flex rail wrapper: the table plus a thin full-height "add column" button
              pinned to its right edge, so you can add a comparison column the moment
              you scroll to the edge. -->
-        <div class="flex items-stretch w-max mx-auto">
+        <div class="flex items-stretch w-max">
             <!-- border-separate (not collapse): collapse breaks position:sticky on
                  the thead (ghost/duplicate rows) and drops per-cell box-shadows.
                  Separated borders with 0 spacing render identically but make the
@@ -2318,26 +2573,23 @@
             </table>
         </div>
         </div>
-        </div><!-- /.cf-designer-main -->
-    </div><!-- /.cf-designer-row -->
-
-    <div class="bench-toolbar flex flex-col items-center gap-2 px-3 pt-3 pb-1">
-        <!-- Table settings: conventional on/off switches grouped by what they affect,
-             a segmented picker for the salt preset, and the exports. -->
         {#snippet settingSwitch(label, on, toggle, title)}
             <button type="button" role="switch" aria-checked={on} class="bench-switch" onclick={toggle} {title}>
                 <span class="bench-switch__track" aria-hidden="true"><span class="bench-switch__thumb"></span></span>
                 {label}
             </button>
         {/snippet}
-        <div class="bench-settings" role="group" aria-label="Table settings">
+        <div class="bench-settings" class:is-flush={communityByRecent.length > 0} role="group" aria-label="Table settings">
+          <div class="bench-settings__grp">
             <span class="bench-settings__lbl">Columns</span>
-            <div class="bench-settings__items">
+            <div class="bench-settings__items bench-settings__items--grid">
                 {@render settingSwitch('Reference plates', showReferencePlates, () => (showReferencePlates = !showReferencePlates), "Show Ginkgo's reference-plate formulations")}
                 {@render settingSwitch('Ginkgo', showGinkgo, () => (showGinkgo = !showGinkgo), "Show Ginkgo's autonomous (GPT-5 / Smith et al.) reactions")}
                 {@render settingSwitch('Literature', showLiterature, () => (showLiterature = !showLiterature), 'Show published literature formulations')}
                 {@render settingSwitch('Closest match', showClosestMatch, () => (showClosestMatch = !showClosestMatch), 'Show the known reaction the active mix most resembles')}
             </div>
+          </div>
+          <div class="bench-settings__grp">
             <span class="bench-settings__lbl">View</span>
             <div class="bench-settings__items">
                 {@render settingSwitch('Details', showSupplementNl, toggleSupplementMode, 'Show per-reagent supplement volumes (nL) and the $/g cost row')}
@@ -2359,8 +2611,10 @@
                     {/each}
                 </div>
             </div>
-            <div class="bench-settings__export">
-                <span class="bench-settings__lbl">Export</span>
+          </div>
+          <div class="bench-settings__grp bench-settings__export">
+            <span class="bench-settings__lbl">Export</span>
+            <div class="bench-settings__items">
                 <button type="button" class="bench-settings__act" onclick={downloadCSV} title="Download concentrations as CSV">↓ CSV</button>
                 <button
                     type="button"
@@ -2370,7 +2624,16 @@
                     title="Download table as PNG"
                 >{isDownloading ? 'Saving…' : '↓ PNG'}</button>
             </div>
+          </div>
         </div>
+        </div><!-- /.cf-designer-main -->
+    </div><!-- /.cf-designer-row -->
+
+    <!-- Table settings + Submit belong to the comparison table; plate mode hides the
+         whole toolbar so the board gets the height. -->
+    <div class="bench-toolbar flex flex-col items-center gap-2 px-3 pt-3 pb-1" class:is-hidden={inPlateMode}>
+        <!-- Table settings: conventional on/off switches grouped by what they affect,
+             a segmented picker for the salt preset, and the exports. -->
         {#if submitRow}
             <div class="flex items-center flex-wrap justify-center">
                 {@render submitRow()}
@@ -2564,7 +2827,12 @@
        so the table hugs the tab instead of centring inside leftover space (which was
        leaving a gap between the tab and the reagent-category column). */
     .cf-designer-row { display: flex; align-items: stretch; justify-content: center; gap: 0; max-width: 100%; }
-    .cf-designer-main { flex: 0 1 auto; min-width: 0; display: flex; }
+    /* The designer card is one 78vh unit — the same cap the contributions rail and
+       its toggle tab use — so the three columns are exactly as tall as each other
+       and no stub of rail is left beside the settings bar. The table scrolls inside
+       the card and the settings bar stays pinned to its bottom edge. */
+    .cf-designer-main { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; max-height: 78vh; }
+    .cf-designer-main .bench-scroll { flex: 1 1 auto; min-height: 0; max-height: none; }
     /* Slim full-height toggle tab welded to the table's left edge (mirrors the ＋
        add-column rail on the right). Its right border is pulled 1px into the table so
        the two share one seam. Closed, it is the leftmost edge and carries the table's
@@ -2671,8 +2939,57 @@
     /* Contributions header: label, search, filter tabs, totals. */
     .cf-comm-rail__hd { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
     .cf-comm-tabs__n { opacity: .65; font-size: .9em; }
-    .cf-comm-search { flex: 1 0 100%; min-width: 0; }
-    .cf-comm-rail__meta { flex: 1 0 100%; font: 9.5px/1.35 var(--mono); color: var(--muted); }
+    .cf-comm-find { flex: 1 0 100%; display: flex; align-items: stretch; gap: 5px; min-width: 0; }
+    .cf-comm-search { flex: 1 1 auto; min-width: 0; }
+    .cf-comm-sort {
+        flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+        padding: 0 7px; cursor: pointer; white-space: nowrap;
+        font: 500 9.5px/1 var(--mono); color: var(--ink-2);
+        background: var(--surface-2); border: 1px solid var(--hair); border-radius: var(--r-sm);
+    }
+    .cf-comm-sort:hover { color: var(--teal-ink); border-color: var(--teal); }
+    .cf-comm-sort__ic { color: var(--faint); }
+    .cf-comm-sort:hover .cf-comm-sort__ic { color: var(--teal-ink); }
+    .cf-comm-rail__meta { flex: 1 0 100%; font: 8.75px/1.35 var(--mono); color: var(--muted); }
+    /* Round 1 progress — three columns in the wide (fullscreen) pane; stacked
+       rows (.cf-r1--stacked) in the narrow side rail. */
+    .cf-r1 {
+        flex: 1 0 100%; display: flex; flex-direction: column; gap: 3px;
+        margin-top: 2px; padding: 6px 7px;
+        border: 1px solid var(--hair); border-radius: var(--r-sm); background: var(--surface-2);
+    }
+    .cf-r1__hd { display: flex; align-items: baseline; gap: 6px; margin-bottom: 1px; white-space: nowrap; }
+    .cf-r1__ttl { font: 500 9px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    .cf-r1__tot { margin-left: auto; font: 9.5px/1 var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+    /* Three targets side by side rather than a full-width row each. */
+    .cf-r1__cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .cf-r1__col { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .cf-r1__t {
+        font: 500 8.5px/1 var(--mono); text-align: center;
+        padding: 2px 3px; border: 1px solid var(--groove); border-radius: 3px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .cf-r1__track { height: 7px; border-radius: 4px; background: var(--recess); border: 1px solid var(--groove); overflow: hidden; }
+    .cf-r1__fill { display: block; height: 100%; background: var(--teal); }
+    .cf-r1__fill.is-full { background: var(--phosphor, #3fb950); }
+    .cf-r1__n { font: 9.5px/1 var(--mono); color: var(--ink-2); text-align: center; font-variant-numeric: tabular-nums; }
+    .cf-r1__of { color: var(--faint); }
+    .cf-r1--stacked .cf-r1__cols { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    .cf-r1--stacked .cf-r1__col {
+        display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; align-items: center; gap: 6px;
+    }
+    /* Visual order badge · bar · count, while the DOM keeps badge · count · bar. */
+    .cf-r1--stacked .cf-r1__track { grid-column: 2; grid-row: 1; }
+    .cf-r1--stacked .cf-r1__n { grid-column: 3; grid-row: 1; text-align: right; min-width: 7ch; }
+    /* The count line, now a disclosure button — styled flat so it still reads as text. */
+    .cf-r1__toggle {
+        display: flex; align-items: baseline; gap: 8px; width: 100%;
+        background: transparent; border: 0; padding: 0; cursor: pointer; text-align: left;
+        font: 8.75px/1.35 var(--mono); color: var(--muted);
+    }
+    .cf-r1__toggle:hover { color: var(--ink-2); }
+    .cf-r1__chev { margin-left: auto; color: var(--faint); white-space: nowrap; }
+    .cf-r1__toggle:hover .cf-r1__chev { color: var(--teal-ink); }
     /* Comment threads on contribution cards (mirrors the community-reagent threads). */
     .cf-thread {
         display: flex; flex-direction: column; gap: 7px; cursor: default;
@@ -2707,6 +3024,13 @@
     /* Wide-pane-only extras: a batch member's own rationale, acknowledgements, AI model. */
     .cf-comm-card__member { display: flex; flex-direction: column; gap: 4px; padding-left: 8px; border-left: 2px solid var(--hair); }
     .cf-comm-card__ack { margin: 0; font: 10.5px/1.45 var(--sans); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+    /* Link out to the conversation that produced a composition. Stops the click
+       from reaching the card (which would load it into the designer). */
+    .cf-comm-card__chat {
+        flex: 0 0 auto; font: 9.5px/1 var(--mono); color: var(--teal-ink);
+        text-decoration: none; border-bottom: 1px solid var(--teal);
+    }
+    .cf-comm-card__chat:hover { color: var(--teal); }
     .cf-comm-card__ai {
         flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         color: var(--faint); padding: 1px 5px; border: 1px solid var(--hair); border-radius: var(--r-sm);
@@ -2728,9 +3052,57 @@
     .bench-focus__hd .btn-bp { margin-left: auto; }
     .bench-focus .cf-designer-row { flex: 1 1 auto; min-height: 0; }
     .bench-focus .cf-designer-row.is-split {
-        display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px;
+        display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px;
     }
-    .bench-focus .cf-designer-main { min-height: 0; min-width: 0; }
+    /* Fullscreen sizes the column from the grid row, not the viewport cap. */
+    .bench-focus .cf-designer-main { min-height: 0; min-width: 0; max-height: none; }
+    /* Plate mode swaps the right half for the builder. The table is HIDDEN rather
+       than destroyed so its scroll position, column widths and mix columns survive
+       a round trip to the plate map and back. */
+    .cf-designer-main.is-hidden,
+    .bench-toolbar.is-hidden { display: none; }
+    .bench-focus__seg { margin-left: auto; }
+    .bench-focus__hd .bench-focus__seg + .btn-bp { margin-left: 0; }
+    .bench-focus__seg > button { background: transparent; color: rgba(255, 255, 255, .72); }
+    .bench-focus__seg { border-color: rgba(255, 255, 255, .35); }
+    .bench-focus__seg > button + button { border-left-color: rgba(255, 255, 255, .35); }
+    .bench-focus__seg > button:hover { color: #fff; background: rgba(255, 255, 255, .1); }
+    .bench-focus__seg > button[aria-checked="true"] { color: #000; background: #fff; }
+    /* Add/remove-from-plate control: a full-height bar welded to the card's right
+       edge. The card pads itself out of the way rather than re-flowing its content. */
+    .cf-comm-rail .cf-comm-card.has-plate-btn { position: relative; padding-right: 44px; }
+    .pb-add {
+        position: absolute; top: -1px; right: -1px; bottom: -1px; width: 36px;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+        border: 1px solid var(--groove); border-left: 0;
+        border-radius: 0 var(--r-sm) var(--r-sm) 0;
+        background: var(--surface); color: var(--muted); cursor: pointer;
+        font-variant-numeric: tabular-nums;
+        transition: background .12s var(--ease), color .12s var(--ease), border-color .12s var(--ease);
+    }
+    .pb-add:hover:not([disabled]) { background: var(--teal-wash); color: var(--teal-ink); border-color: var(--teal); }
+    .pb-add__sign { font: 400 18px/1 var(--mono); }
+    .pb-add__n { font: 500 9px/1 var(--mono); opacity: .7; }
+    .pb-add.is-on { color: var(--phosphor, #3fb950); border-color: var(--phosphor, #3fb950); background: #f1fbf3; }
+    .pb-add.is-on:hover { background: #e4f7e8; color: #2b8c3c; border-color: #2b8c3c; }
+    .pb-add[disabled] { opacity: .35; cursor: default; }
+    /* Per-member tick list on a batch card. */
+    .cf-pick { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+    .cf-pick__row {
+        display: flex; flex-direction: column; gap: 3px; cursor: pointer;
+        padding: 4px 5px; border-radius: 3px; border: 1px solid transparent;
+        font: 10px/1.3 var(--mono); color: var(--ink-2);
+    }
+    .cf-pick__hd { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .cf-pick__why {
+        padding-left: 20px; font: 10px/1.45 var(--sans); color: var(--muted);
+        white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+    .cf-pick__row:hover { background: var(--surface); border-color: var(--hair); }
+    .cf-pick__row input { accent-color: var(--teal); margin: 0; flex: 0 0 auto; }
+    .cf-pick__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cf-pick__row.is-placed .cf-pick__name { color: var(--muted); }
+    .cf-pick__on { flex: 0 0 auto; font: 9px/1 var(--mono); color: var(--phosphor, #3fb950); }
     .bench-focus .bench-scroll { max-height: none; border-radius: var(--r, 5px); }
     .bench-focus .bench-toolbar { flex: 0 0 auto; padding-top: 0; }
     @media (max-width: 900px) {
@@ -3059,20 +3431,40 @@
     /* ── Table settings bar (below the table) ──────────────────────────────── */
     /* Two rows (Columns / View) with their labels in a left column, and the
        exports in a right column spanning both rows. */
+    /* Welded to the bottom of the table card: full width of the designer, square
+       top corners, and its top border shared with the table's bottom edge so the
+       two read as one panel rather than a card with something floating under it. */
     .bench-settings {
-        display: grid; grid-template-columns: max-content max-content max-content;
-        align-items: center; gap: 6px 14px; padding: 8px 14px; max-width: 100%;
-        border: 1px solid var(--hair); border-radius: var(--r, 5px);
-        background: var(--surface-2); box-shadow: var(--shadow-1);
+        display: flex; align-items: stretch;
+        width: 100%; box-sizing: border-box; margin-top: -1px;
+        border: 1px solid var(--hair); border-radius: 0 0 var(--r, 5px) var(--r, 5px);
+        background: var(--surface-2);
     }
+    /* With the contributions rail welded to the designer's left edge, the settings
+       bar squares off on that side too so the two meet flush. */
+    .bench-settings.is-flush { border-radius: 0 0 var(--r, 5px) 0; }
+    /* Each group is its own fenced cell — the treatment the export block already
+       had, now shared by Columns and View so the three read as peers. */
+    .bench-settings__grp {
+        display: flex; flex-direction: column; justify-content: center; gap: 5px;
+        padding: 8px 14px; min-width: 0; flex: 0 0 auto;
+    }
+    /* Groups keep a fixed size and position — they never wrap or reflow as columns
+       are toggled; a wider table just extends the bar's background to the right. */
+    .bench-settings__grp + .bench-settings__grp { border-left: 1px solid var(--hair); }
+    /* The table squares off at the bottom so the seam is flush. */
+    .cf-designer-main .bench-scroll { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
     .bench-settings__items { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
-    .bench-settings__export {
-        grid-column: 3; grid-row: 1 / span 2; align-self: stretch;
-        display: flex; align-items: center; gap: 8px; padding-left: 14px; border-left: 1px solid var(--hair);
-    }
+    /* The four column switches sit 2×2 to keep the bar compact. */
+    .bench-settings__items--grid { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 2px 14px; }
+    /* Export closes off the groups with a right divider (it no longer floats to the
+       far edge, which made it jump whenever the table width changed). */
+    .bench-settings__export { flex: 0 0 auto; border-right: 1px solid var(--hair); }
+    /* Narrow: stack the groups and swap the dividers from vertical to horizontal. */
     @media (max-width: 760px) {
-        .bench-settings { grid-template-columns: max-content minmax(0, 1fr); }
-        .bench-settings__export { grid-column: 1 / -1; grid-row: auto; padding: 6px 0 0; border-left: 0; border-top: 1px solid var(--hair); }
+        .bench-settings { flex-direction: column; align-items: stretch; }
+        .bench-settings__export { border-right: 0; }
+        .bench-settings__grp + .bench-settings__grp { border-left: 0; border-top: 1px solid var(--hair); }
     }
     .bench-settings__lbl {
         font: 500 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted);

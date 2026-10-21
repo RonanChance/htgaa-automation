@@ -1,4 +1,4 @@
-import { dev } from '$app/environment';
+import { DEV_STUBS } from '$lib/server/devStubs.js';
 import { pbAdmin } from '$lib/server/pb.js';
 import { clampComment } from '$lib/server/suggestions.js';
 
@@ -216,7 +216,7 @@ let devSeq = DEV_PAPERS.length;
 export async function getLiterature(kcUser) {
   const mySub = kcUser?.sub || '';
   if (!mySub) return { items: [], votedIds: [] };
-  if (dev) {
+  if (DEV_STUBS) {
     const voted = DEV_VOTES.get(mySub) ?? new Set();
     return { items: DEV_PAPERS.map((r) => normalize(r, mySub, voted)).sort(byRank), votedIds: [...voted] };
   }
@@ -243,7 +243,7 @@ export async function addPaper(kcUser, input) {
   };
   const isDup = (r) => (paper.doi && String(r.doi || '').toLowerCase() === paper.doi) || urlKey(r.url) === urlKey(paper.url);
 
-  if (dev) {
+  if (DEV_STUBS) {
     const dup = DEV_PAPERS.find(isDup);
     if (dup) return { ok: false, reason: 'duplicate', existing: normalize(dup, mySub, DEV_VOTES.get(mySub) ?? new Set()) };
     const rec = { id: `dev-lit-${++devSeq}`, ...record, created: new Date().toISOString() };
@@ -267,10 +267,10 @@ export async function addPaper(kcUser, input) {
 export async function updatePaper(kcUser, id, input) {
   const mySub = String(kcUser.sub);
   const src = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const current = dev ? DEV_PAPERS.find((p) => p.id === id) : null;
+  const current = DEV_STUBS ? DEV_PAPERS.find((p) => p.id === id) : null;
   let pb = null;
   let rec = current;
-  if (!dev) {
+  if (!DEV_STUBS) {
     pb = await pbAdmin();
     rec = await pb.collection(LITERATURE).getOne(id).catch(() => null);
   }
@@ -288,7 +288,7 @@ export async function updatePaper(kcUser, id, input) {
   if (errors.length) return { ok: false, reason: 'invalid', errors };
 
   const isDup = (r) => r.id !== id && ((paper.doi && String(r.doi || '').toLowerCase() === paper.doi) || urlKey(r.url) === urlKey(paper.url));
-  if (dev) {
+  if (DEV_STUBS) {
     const dup = DEV_PAPERS.find(isDup);
     if (dup) return { ok: false, reason: 'duplicate', existing: normalize(dup, mySub, new Set()) };
     Object.assign(rec, paper);
@@ -327,7 +327,7 @@ export function literatureAsText(items) {
 // One upvote per user (idempotent). Returns { ok, reason? }.
 export async function votePaper(kcUser, id) {
   const sub = String(kcUser.sub);
-  if (dev) {
+  if (DEV_STUBS) {
     const rec = DEV_PAPERS.find((p) => p.id === id);
     if (!rec) return { ok: false, reason: 'not_found' };
     const set = DEV_VOTES.get(sub) ?? new Set();
@@ -348,7 +348,7 @@ export async function votePaper(kcUser, id) {
 
 export async function unvotePaper(kcUser, id) {
   const sub = String(kcUser.sub);
-  if (dev) {
+  if (DEV_STUBS) {
     const rec = DEV_PAPERS.find((p) => p.id === id);
     const set = DEV_VOTES.get(sub);
     if (rec && set?.delete(id)) rec.votes = Math.max(0, rec.votes - 1);
@@ -368,7 +368,7 @@ export async function unvotePaper(kcUser, id) {
 // Delete a paper — only whoever added it may (its votes cascade-delete).
 export async function deletePaper(kcUser, id) {
   const sub = String(kcUser.sub);
-  if (dev) {
+  if (DEV_STUBS) {
     const i = DEV_PAPERS.findIndex((p) => p.id === id);
     if (i < 0) return { ok: false, reason: 'not_found' };
     if (DEV_PAPERS[i].added_by_sub !== sub) return { ok: false, reason: 'forbidden' };

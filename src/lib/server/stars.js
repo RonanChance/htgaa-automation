@@ -1,4 +1,4 @@
-import { dev } from '$app/environment';
+import { DEV_STUBS } from '$lib/server/devStubs.js';
 import { pbAdmin } from '$lib/server/pb.js';
 
 // Stars on community compositions. Each cfps_designs record carries a `starred_by`
@@ -61,7 +61,7 @@ export async function setStars(kcUser, ids, on) {
 
   const stars = {};
   const missing = [];
-  if (dev) {
+  if (DEV_STUBS) {
     for (const id of ids) {
       const next = apply(devStarredBy(id));
       DEV_STARS.set(id, next);

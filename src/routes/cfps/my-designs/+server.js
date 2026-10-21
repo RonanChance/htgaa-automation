@@ -1,10 +1,11 @@
 import { pbAdmin } from '$lib/server/pb.js';
 import { json } from '@sveltejs/kit';
 import { requestUser } from '$lib/server/auth.js';
-import { dev } from '$app/environment';
+import { DEV_STUBS } from '$lib/server/devStubs.js';
 import { loadMyDesigns } from '$lib/server/loadCommunityDesigns.js';
 import { loadCfpsReagentGroups } from '$lib/server/loadCfpsReagentGroups.js';
-import { validateSample, costForReagentList } from '$lib/server/designSubmission.js';
+import { alignTemplateToTarget } from '$lib/cfpsReagentContract.js';
+import { validateSample, costForReagentList, httpUrlProblem, conversationLinkApprovalProblem, LINK_APPROVAL_FIELD, LIMITS } from '$lib/server/designSubmission.js';
 
 // Manage the signed-in user's own CFPS compositions in the cfps_designs
 // collection — rename / edit metadata (op: "update") or remove (op: "delete").
@@ -72,7 +73,7 @@ export const POST = async (event) => {
       if (!clean.length) {
         return json({ success: false, error: 'No valid entries to reorder.' }, { status: 400 });
       }
-      if (dev) {
+      if (DEV_STUBS) {
         return json({ success: true, reordered: clean.length, dev: true });
       }
       const pb = await pbAdmin();
@@ -116,7 +117,7 @@ export const POST = async (event) => {
 
     // On localhost there's no PocketBase to talk to (the community/my-design
     // loaders return a dummy store), so treat mutations as a no-op success.
-    if (dev) {
+    if (DEV_STUBS) {
       return json({ success: true, id, dev: true });
     }
 
@@ -133,6 +134,22 @@ export const POST = async (event) => {
     const owns = String(rec.author_sub || '').trim() === mySub;
     if (!owns) {
       return json({ success: false, error: 'You can only edit your own compositions.' }, { status: 403 });
+    }
+
+    // An agent adding or changing the conversation link needs the user's explicit
+    // OK, same as on submission; re-sending the link already on record is fine.
+    if (op === 'update' && kcUser.via === 'agent') {
+      let recDj = rec.design_json;
+      if (typeof recDj === 'string') { try { recDj = JSON.parse(recDj); } catch { recDj = {}; } }
+      const currentLink = String(recDj?.metadata?.ai_conversation_link || '').trim();
+      const isFull = body?.sample && typeof body.sample === 'object' && !Array.isArray(body.sample);
+      const nextLink = String((isFull ? body.sample.metadata?.ai_conversation_link : body?.aiConversationLink) || '').trim();
+      const approved = isFull ? body.sample.metadata?.[LINK_APPROVAL_FIELD] : body?.aiConversationLinkUserApproved;
+      const names = isFull
+        ? { linkField: 'metadata.ai_conversation_link', approvalField: `metadata.${LINK_APPROVAL_FIELD}` }
+        : { linkField: 'aiConversationLink', approvalField: 'aiConversationLinkUserApproved' };
+      const problem = nextLink !== currentLink ? conversationLinkApprovalProblem(nextLink, approved, names) : null;
+      if (problem) return json({ success: false, error: problem, field: names.approvalField }, { status: 400 });
     }
 
     if (op === 'delete') {
@@ -188,6 +205,14 @@ export const POST = async (event) => {
     }
     const proteinTarget = PROTEIN_TARGETS.includes(body?.proteinTarget) ? body.proteinTarget : null;
     const aiModel = String(body?.aiModel || '').trim();
+    const aiConversationLink = String(body?.aiConversationLink || '').trim();
+    if (aiConversationLink) {
+      if (aiConversationLink.length > LIMITS.aiConversationLink) {
+        return json({ success: false, error: `aiConversationLink is over ${LIMITS.aiConversationLink} characters.` }, { status: 400 });
+      }
+      const problem = httpUrlProblem(aiConversationLink);
+      if (problem) return json({ success: false, error: `aiConversationLink ${problem}` }, { status: 400 });
+    }
     const acknowledgements = String(body?.acknowledgements || '').trim();
     const comments = String(body?.comments || '').trim();
 
@@ -197,14 +222,21 @@ export const POST = async (event) => {
     }
     dj = (dj && typeof dj === 'object' && !Array.isArray(dj)) ? dj : {};
     const md = (dj.metadata && typeof dj.metadata === 'object') ? dj.metadata : {};
+    const nextTarget = proteinTarget ?? md.protein_target ?? null;
+
+    // Relabelling the target must also swap the DNA template, or the record keeps
+    // e.g. template_sfgfp under a Reteplase label. The volume carries over.
+    const reagentList = alignTemplateToTarget(dj.reagent_list, nextTarget);
 
     const nextDesignJson = {
       ...dj,
       sample_id: name,
+      ...(reagentList !== undefined ? { reagent_list: reagentList } : {}),
       metadata: {
         ...md,
         ai_model: aiModel,
-        protein_target: proteinTarget ?? md.protein_target ?? null,
+        ai_conversation_link: aiConversationLink,
+        protein_target: nextTarget,
         acknowledgements,
         comments
       }

@@ -21,6 +21,7 @@ import { PYDANTIC_TO_REAGENT_ID } from '$lib/cfpsReagentIdMap.js';
 export const LIMITS = {
   sampleId: 300,
   aiModel: 300,
+  aiConversationLink: 2000,
   acknowledgements: 300,
   comments: 1500,
   experimentHypothesis: 1500,
@@ -62,8 +63,34 @@ function editDistance(a, b) {
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
 const tooLong = (v, max) => typeof v === 'string' && v.length > max;
 
+// A shareable link must be a real http(s) URL. Anything else (javascript:, data:,
+// a bare note) is refused rather than quietly rewritten, so what gets stored is
+// always something a reader can safely open.
+export function httpUrlProblem(value) {
+  const v = String(value ?? '').trim();
+  if (!v) return null;
+  if (!/^https?:\/\//i.test(v)) return 'must be a full http(s) link (e.g. https://chatgpt.com/share/…).';
+  try {
+    new URL(v);
+  } catch {
+    return 'is not a valid URL.';
+  }
+  return null;
+}
+
 // One sample → { errors: [{ field, message }], warnings: [string] }.
-export function validateSample(sample) {
+// A conversation link publishes the user's chat, so an agent may only send one
+// the user has explicitly approved sharing: it must also set
+// ai_conversation_link_user_approved: true. Returns the error message, or null.
+// (People submitting in the browser type the link themselves — that's consent.)
+export const LINK_APPROVAL_FIELD = 'ai_conversation_link_user_approved';
+export function conversationLinkApprovalProblem(link, approved, { linkField = 'ai_conversation_link', approvalField = LINK_APPROVAL_FIELD } = {}) {
+  if (!String(link ?? '').trim() || approved === true) return null;
+  return `${linkField} was sent without ${approvalField}: true. Ask your user whether they approve publicly sharing a link to this conversation; only if they say yes, resend with ${approvalField}: true — otherwise leave ${linkField} out.`;
+}
+
+// opts.requireLinkApproval: set for agent-token requests (see LINK_APPROVAL_FIELD).
+export function validateSample(sample, { requireLinkApproval = false } = {}) {
   const errors = [];
   const warnings = [];
   const err = (field, message) => errors.push({ field, message });
@@ -122,6 +149,23 @@ export function validateSample(sample) {
     }
     if (m.ai_model != null && typeof m.ai_model !== 'string') err('metadata.ai_model', 'metadata.ai_model must be a string.');
     else if (tooLong(m.ai_model, LIMITS.aiModel)) err('metadata.ai_model', `metadata.ai_model is over ${LIMITS.aiModel} characters.`);
+    // Optional public link to the conversation that produced the design — the
+    // reasoning behind a composition is as useful to the community as the numbers.
+    if (m.ai_conversation_link != null && typeof m.ai_conversation_link !== 'string') {
+      err('metadata.ai_conversation_link', 'metadata.ai_conversation_link must be a string (a shareable http(s) URL).');
+    } else if (tooLong(m.ai_conversation_link, LIMITS.aiConversationLink)) {
+      err('metadata.ai_conversation_link', `metadata.ai_conversation_link is over ${LIMITS.aiConversationLink} characters.`);
+    } else {
+      const problem = httpUrlProblem(m.ai_conversation_link);
+      if (problem) err('metadata.ai_conversation_link', `metadata.ai_conversation_link ${problem}`);
+    }
+    if (m[LINK_APPROVAL_FIELD] != null && typeof m[LINK_APPROVAL_FIELD] !== 'boolean') {
+      err(`metadata.${LINK_APPROVAL_FIELD}`, `metadata.${LINK_APPROVAL_FIELD} must be true or false.`);
+    } else if (requireLinkApproval) {
+      const approvalField = `metadata.${LINK_APPROVAL_FIELD}`;
+      const problem = conversationLinkApprovalProblem(m.ai_conversation_link, m[LINK_APPROVAL_FIELD], { linkField: 'metadata.ai_conversation_link', approvalField });
+      if (problem) err(approvalField, problem);
+    }
     if (m.acknowledgements != null && typeof m.acknowledgements !== 'string') err('metadata.acknowledgements', 'metadata.acknowledgements must be a string.');
     else if (tooLong(m.acknowledgements, LIMITS.acknowledgements)) err('metadata.acknowledgements', `metadata.acknowledgements is over ${LIMITS.acknowledgements} characters.`);
   }
@@ -147,7 +191,18 @@ export function submissionContract(base) {
   const example = (target, extra, comments) => {
     const rl = { base_buffer: BASE_BUFFER_NL, lysate: LYSATE_NL, [PROTEIN_TEMPLATE_FIELD[target]]: TEMPLATE_VOLUME_NL, ...extra };
     rl[WATER_FIELD] = MAX_TOTAL_NL - Object.values(rl).reduce((a, b) => a + b, 0);
-    return { sample_type: 'experimental', reagent_list: rl, metadata: { protein_target: target, ai_model: '<your model>', comments, acknowledgements: '' } };
+    return {
+      sample_type: 'experimental',
+      reagent_list: rl,
+      metadata: {
+        protein_target: target,
+        ai_model: '<your model>',
+        ai_conversation_link: '<public link to this conversation — only if your user approved sharing it>',
+        [LINK_APPROVAL_FIELD]: '<true, only after your user said yes to sharing the link>',
+        comments,
+        acknowledgements: ''
+      }
+    };
   };
   return {
     endpoint: `${base}/submit-design`,
@@ -175,6 +230,8 @@ export function submissionContract(base) {
       protein_target: `required: ${PROTEIN_TARGETS.join(' | ')}`,
       comments: `required: the hypothesis this composition tests, ≤ ${LIMITS.comments} chars`,
       ai_model: `optional, ≤ ${LIMITS.aiModel} chars`,
+      ai_conversation_link: `optional but encouraged when an AI helped: a PUBLIC shareable link to the conversation that produced this design (http(s), ≤ ${LIMITS.aiConversationLink} chars). ChatGPT "Share", Claude "Share chat", a gist — anything a reader can open. Agents MUST ask the user and get an explicit yes before including it (once per submission or batch; never assume consent), and never include a link containing credentials or unpublished data.`,
+      [LINK_APPROVAL_FIELD]: `required (true) whenever an agent sends ai_conversation_link: confirms the user explicitly approved sharing the conversation. A link without it is rejected. Don't set it unless the user said yes.`,
       acknowledgements: `optional, ≤ ${LIMITS.acknowledgements} chars`
     },
     batch: {

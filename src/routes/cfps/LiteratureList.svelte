@@ -1,4 +1,6 @@
 <script>
+  import { page } from '$app/state';
+  import { loginHref } from './loginHref.js';
   // Literature research: a shared, ever-growing list of papers/articles relevant to
   // the coopetition, ranked by upvotes so the most useful rise to the top. Anyone
   // signed in can add a paper (a DOI or a link containing one fills in the title,
@@ -454,7 +456,7 @@
         <span aria-hidden="true">🔒</span>
         <span>The literature list is members-only.</span>
         {#if kcConfigured || devMode}
-          <a class="btn-bp" href="/cfps/auth/login" style="text-decoration:none;">Sign in to read &amp; add</a>
+          <a class="btn-bp" href={loginHref(page.url)} style="text-decoration:none;">Sign in to read &amp; add</a>
         {/if}
       </div>
     {:else}

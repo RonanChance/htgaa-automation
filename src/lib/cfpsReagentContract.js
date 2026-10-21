@@ -54,6 +54,36 @@ export function templateFieldForTarget(target) {
   return PROTEIN_TEMPLATE_FIELD[target] || 'template_sfgfp';
 }
 
+// Does this reagent_list carry exactly the DNA template its protein target needs?
+// The designer starts every composition on sfGFP, so a relabel that doesn't swap
+// the template leaves template_sfgfp under a Reteplase label — a composition that
+// would be built wrong. Returns null when it matches, else a reason.
+export function templateMismatch(rl, target) {
+  const expected = PROTEIN_TEMPLATE_FIELD[target];
+  if (!expected) return `"${target}" is not one of ${Object.keys(PROTEIN_TEMPLATE_FIELD).join(', ')}.`;
+  if (!rl || typeof rl !== 'object' || Array.isArray(rl)) return 'reagent_list is missing.';
+  const present = TEMPLATE_FIELDS.filter((t) => (Number(rl[t]) || 0) > 0);
+  if (present.length === 1 && present[0] === expected) return null;
+  if (present.length === 1) return `protein_target "${target}" needs "${expected}", but the recipe carries "${present[0]}".`;
+  if (!present.length) return `protein_target "${target}" needs "${expected}", but the recipe carries no DNA template.`;
+  return `Only one DNA template is allowed — found ${present.join(', ')}.`;
+}
+
+// Rewrite `rl` so its DNA template matches `target`, keeping the dosed volume and
+// field order. Used when a target is relabelled without the recipe being rebuilt
+// (the My Compositions inline editor). A list that already matches, has no
+// template, or carries several is returned untouched — those are validation
+// errors, not something to silently "fix" into a different reaction.
+export function alignTemplateToTarget(rl, target) {
+  const expected = PROTEIN_TEMPLATE_FIELD[target];
+  if (!expected || !rl || typeof rl !== 'object' || Array.isArray(rl)) return rl;
+  const present = TEMPLATE_FIELDS.filter((t) => (Number(rl[t]) || 0) > 0);
+  if (present.length !== 1 || present[0] === expected) return rl;
+  const next = { ...rl, [expected]: rl[present[0]] };
+  delete next[present[0]];
+  return Object.fromEntries(Object.keys(next).sort().map((k) => [k, next[k]]));
+}
+
 // Validate a reagent_list against the CFPSReagentList contract: recognized keys,
 // finite non-negative volumes on the 25 nL grid, base_buffer / lysate at their fixed
 // volumes, EXACTLY one DNA template at its dose, and a total of EXACTLY 20,000 nL

@@ -2,9 +2,11 @@
   import { onMount, tick } from 'svelte';
   import { enhance } from '$app/forms';
   import { page } from '$app/state';
+  import { loginHref } from './loginHref.js';
   import { invalidateAll } from '$app/navigation';
   import BenchmarksTable from './BenchmarksTable.svelte';
   import LiteratureList from './LiteratureList.svelte';
+  import MetascienceList from './MetascienceList.svelte';
   import CfpsPrimer from './CfpsPrimer.svelte';
   import { PUBLIC_ORIGIN, CFPS_BASE } from '$lib/site.js';
   import ProteinViewer from './ProteinViewer.svelte';
@@ -118,7 +120,7 @@
     const p = PROTEIN_SEQ[key];
     if (seqMode[key] === 'aa') return `${p.aa.length} aa`;
     if (seqMode[key] === 'dna') return `${p.dna.length} nt`;
-    return `${p.plasmid.length.toLocaleString()} bp · ${p.plasmidId}`;
+    return `${p.plasmid.length.toLocaleString()} bp`;
   }
   let seqMode = $state({ sfgfp: 'aa', petase: 'aa', reteplase: 'aa' });
   let seqCopied = $state('');
@@ -1411,9 +1413,14 @@
       rationale: d.comments || '',
       acknowledgements: d.acknowledgements || '',
       aiModel: d.aiModel || '',
+      aiConversationLink: d.aiConversationLink || '',
       // Group-level hypothesis (batch submissions only); carried so loading a batch
       // can repopulate the overall-hypothesis field and the JSON box.
       experimentHypothesis: d.experimentHypothesis || '',
+      // Raw pydantic reagent_list (field → nL) as stored. The plate-map builder
+      // exports these verbatim, so it must be the stored volumes, not the
+      // display-rounded `components` above.
+      reagentList: d.reagentList,
       // Batch grouping — set when this submission was part of a batch (see
       // confirmSubmitDesign). The community rail collapses same-batch columns into
       // one card and loads them all together.
@@ -2006,6 +2013,7 @@
   function buildMetadata() {
     return {
       ai_model: designAiModel,                    // e.g. "claude-opus-4-8"
+      ai_conversation_link: designAiConversationLink, // public share link, optional
       protein_target: proteinTarget,              // sfGFP | PETase | Reteplase
       acknowledgements: designAcknowledgements,   // collaborators to credit
       comments: mixComments[selectedMixId] || ''  // this composition's rationale
@@ -2038,6 +2046,7 @@
           reagent_list: buildReagentListFromVolumes(m.volumes || {}, target),
           metadata: {
             ai_model: designAiModel,
+            ai_conversation_link: designAiConversationLink,
             protein_target: target,
             acknowledgements: designAcknowledgements,
             comments: mixComments[m.id] || ''
@@ -2191,6 +2200,7 @@
       if (typeof topHyp === 'string') experimentHypothesis = topHyp;
       const head = samples[0]?.metadata && typeof samples[0].metadata === 'object' ? samples[0].metadata : {};
       if (typeof head.ai_model === 'string') designAiModel = head.ai_model;
+      if (typeof head.ai_conversation_link === 'string') designAiConversationLink = head.ai_conversation_link;
       if (typeof head.acknowledgements === 'string') designAcknowledgements = head.acknowledgements;
       return;
     }
@@ -2203,6 +2213,7 @@
     const md = parsed?.metadata && typeof parsed.metadata === 'object' ? parsed.metadata : {};
     if (typeof md.comments === 'string') mixComments = { ...mixComments, [selectedMixId]: md.comments };
     if (typeof md.ai_model === 'string') designAiModel = md.ai_model;
+    if (typeof md.ai_conversation_link === 'string') designAiConversationLink = md.ai_conversation_link;
     if (typeof md.acknowledgements === 'string') designAcknowledgements = md.acknowledgements;
   }
 
@@ -2252,6 +2263,10 @@
   // and it just works, even if the metadata carries extra keys the pydantic model
   // doesn't require (metadata is a free-form dict; validation ignores it).
   let designAiModel = $state('');            // shared across a batch
+  // Optional public link to the AI conversation behind the design — shared across a
+  // batch like ai_model. Encouraged whenever an agent helped, so the community can
+  // read the reasoning, not just the volumes.
+  let designAiConversationLink = $state('');
   let designAcknowledgements = $state('');   // shared across a batch
   // Per-mix rationale: a map of mix id → note (1:1 with the Mix columns). REQUIRED
   // for every mix before submit/update.
@@ -2337,6 +2352,7 @@
       .sort((a, b) => a.n - b.n)
       .map((m) => ({ id: m.id, n: m.n, volumes: m.volumes, target: m.proteinTarget }));
     const ai_model = designAiModel.trim();
+    const ai_conversation_link = designAiConversationLink.trim();
     const acknowledgements = designAcknowledgements.trim();
     const experimentHyp = experimentHypothesis.trim();
 
@@ -2373,7 +2389,7 @@
         const target = PROTEIN_TARGETS.includes(mix.target) ? mix.target : proteinTarget;
         const comments = (mixComments[mix.id] || '').trim(); // this experiment's own note
         const sampleId = plannedIds[i];
-        const metadata = { ai_model, protein_target: target, acknowledgements, comments };
+        const metadata = { ai_model, ai_conversation_link, protein_target: target, acknowledgements, comments };
         if (!single) {
           // Batch grouping: lets My Compositions and the community rail collapse these
           // sibling records into one batch card and load them all together.
@@ -2612,6 +2628,7 @@
     if (!canUpdateExisting) { submitError = 'Load one of your own compositions and edit it first.'; return; }
     const firstSaved = myDesignsById.get(updatePlan.updates[0]?.recordId);
     designAiModel = firstSaved?.aiModel ?? '';
+    designAiConversationLink = firstSaved?.aiConversationLink ?? '';
     designAcknowledgements = firstSaved?.acknowledgements ?? '';
     const commentMap = { ...mixComments };
     for (const r of updatePlan.rows) {
@@ -2650,6 +2667,7 @@
     if (!plan.updates.length) { submitError = 'Nothing of yours is loaded to update.'; return; }
 
     const ai_model = designAiModel.trim();
+    const ai_conversation_link = designAiConversationLink.trim();
     const acknowledgements = designAcknowledgements.trim();
     const experimentHyp = experimentHypothesis.trim();
     const total = plan.rows.length;
@@ -2690,7 +2708,7 @@
         const saved = myDesignsById.get(r.recordId);
         const target = r.proteinTarget;
         const comments = (mixComments[r.id] || '').trim();
-        const metadata = { ai_model, protein_target: target, acknowledgements, comments };
+        const metadata = { ai_model, ai_conversation_link, protein_target: target, acknowledgements, comments };
         if (isBatch) {
           metadata.batch_id = batchBase;
           metadata.batch_size = total; // only needs to read as >1; exactness isn't used
@@ -2731,7 +2749,7 @@
         let sid = isBatch ? `${batchBase}_${nextIndex}` : computeSampleId();
         while (existingTitles.has(sid)) sid = `${batchBase || 'mix'}_${nextIndex}_${randomToken()}`;
         existingTitles.add(sid);
-        const metadata = { ai_model, protein_target: target, acknowledgements, comments };
+        const metadata = { ai_model, ai_conversation_link, protein_target: target, acknowledgements, comments };
         if (isBatch) {
           metadata.batch_id = batchBase;
           metadata.batch_size = total;
@@ -2906,6 +2924,7 @@
   let editDesignName = $state('');
   let editDesignTarget = $state('sfGFP');
   let editDesignAiModel = $state('');
+  let editDesignAiLink = $state('');
   let editDesignAck = $state('');
   let editDesignComments = $state('');
 
@@ -2917,6 +2936,7 @@
     editDesignName = d.name || '';
     editDesignTarget = PROTEIN_TARGETS.includes(d.proteinTarget) ? d.proteinTarget : 'sfGFP';
     editDesignAiModel = d.aiModel || '';
+    editDesignAiLink = d.aiConversationLink || '';
     editDesignAck = d.acknowledgements || '';
     editDesignComments = d.comments || '';
   }
@@ -2941,6 +2961,7 @@
           name,
           proteinTarget: editDesignTarget,
           aiModel: editDesignAiModel.trim(),
+          aiConversationLink: editDesignAiLink.trim(),
           acknowledgements: editDesignAck.trim(),
           comments: editDesignComments.trim()
         })
@@ -3081,6 +3102,7 @@
     // lone composition has no group hypothesis, so that field stays as-is).
     mixComments = { ...mixComments, [selectedMixId]: fm.rationale || '' };
     designAiModel = fm.aiModel || '';
+    designAiConversationLink = fm.aiConversationLink || '';
     designAcknowledgements = fm.acknowledgements || '';
     myDesignMessage = `Loaded “${d.name}” into the Custom Mix.`;
     try { scrollToComparison(); } catch { /* ignore */ }
@@ -3090,8 +3112,9 @@
   // ordered by batch index, each seeded from its own "community-<id>" formulation
   // (so the targets/recipes come back exactly as submitted). Used by the batch cards
   // in both My Compositions and the community rail. `memberIds` is the batch members'
-  // record ids in display order; `label` is the batch name for the status line.
-  function loadBatchIntoMixes(memberIds, label = 'batch') {
+  // record ids in display order. The loaded columns are the confirmation, so this
+  // reports nothing on success — only a failure is worth saying out loud.
+  function loadBatchIntoMixes(memberIds) {
     const fms = (Array.isArray(memberIds) ? memberIds : [])
       .map((id) => findFormulation(`community-${id}`))
       .filter(Boolean);
@@ -3116,6 +3139,7 @@
     built.forEach((m, i) => { commentMap[m.id] = fms[i]?.rationale || ''; });
     mixComments = commentMap;
     designAiModel = fms[0]?.aiModel || '';
+    designAiConversationLink = fms[0]?.aiConversationLink || '';
     designAcknowledgements = fms[0]?.acknowledgements || '';
     // The group hypothesis is stored on just one member, so find it across the batch.
     experimentHypothesis = fms.find((f) => f?.experimentHypothesis)?.experimentHypothesis || '';
@@ -3126,7 +3150,7 @@
     customStartKey = first.startKey;
     rankTabMixId = null;
     myDesignError = '';
-    myDesignMessage = `Loaded ${fms.length} composition${fms.length === 1 ? '' : 's'} from “${label}” into the Custom Mix.`;
+    myDesignMessage = '';
     try { scrollToComparison(); } catch { /* ignore */ }
     return true;
   }
@@ -3184,6 +3208,7 @@
     // value — so focusing one card never wipes metadata the user has already typed.
     mixComments = { ...mixComments, [picked.id]: bm.rationale || '' };
     if (bm.aiModel) designAiModel = bm.aiModel;
+    if (bm.aiConversationLink) designAiConversationLink = bm.aiConversationLink;
     if (bm.acknowledgements) designAcknowledgements = bm.acknowledgements;
     if (bm.experimentHypothesis) experimentHypothesis = bm.experimentHypothesis;
   }
@@ -3217,6 +3242,7 @@
     batchSlots.forEach((m, i) => { nextComments[m.id] = fms[i]?.rationale || ''; });
     mixComments = nextComments;
     designAiModel = fms[0]?.aiModel || '';
+    designAiConversationLink = fms[0]?.aiConversationLink || '';
     designAcknowledgements = fms[0]?.acknowledgements || '';
     // The group hypothesis is stored on just one member, so find it across the batch.
     experimentHypothesis = fms.find((f) => f?.experimentHypothesis)?.experimentHypothesis || '';
@@ -3302,6 +3328,22 @@
   const DESIGNER_STATE_KEY = 'cfps:designer-state:v1';
   let stateRestored = $state(false);
 
+  // Drop a consumed ?design= / ?batch= from the address bar so a refresh falls
+  // back to normal persistence instead of re-applying the link.
+  //
+  // ONLY when signed in. A signed-out visitor's shared compositions are fetched
+  // server-side FROM this parameter (they can't see the community list), so
+  // removing it would leave a refresh with nothing to load — the page would come
+  // back empty and the link would look broken.
+  function stripSharedParam(name) {
+    if (!data?.kcUser) return;
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete(name);
+      history.replaceState(history.state, '', u);
+    } catch { /* ignore */ }
+  }
+
   onMount(() => {
     try {
       // Shared composition link (?design=<pocketbase-id>): equip it into the Custom
@@ -3310,11 +3352,7 @@
       const designParam = page?.url?.searchParams?.get('design');
       if (designParam && findFormulation(`community-${designParam}`)) {
         setCustomStart(`community-${designParam}`);
-        try {
-          const u = new URL(window.location.href);
-          u.searchParams.delete('design');
-          history.replaceState(history.state, '', u);
-        } catch { /* ignore */ }
+        stripSharedParam('design');
         try { document.querySelector('#comparison')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* ignore */ }
         stateRestored = true;
         return;
@@ -3324,12 +3362,8 @@
       const batchParam = page?.url?.searchParams?.get('batch');
       if (batchParam) {
         const ids = batchParam.split(',').map((s) => s.trim()).filter(Boolean);
-        if (ids.length && loadBatchIntoMixes(ids, 'shared batch')) {
-          try {
-            const u = new URL(window.location.href);
-            u.searchParams.delete('batch');
-            history.replaceState(history.state, '', u);
-          } catch { /* ignore */ }
+        if (ids.length && loadBatchIntoMixes(ids)) {
+          stripSharedParam('batch');
           stateRestored = true;
           return;
         }
@@ -3449,7 +3483,9 @@ Coopetition (${base}). With these instructions you can do everything a
 participant can: design and submit cell-free reaction compositions, edit or
 delete your user's own compositions, star and comment on other teams'
 compositions, suggest / upvote / comment on community reagents, and add, edit
-and upvote papers in the shared literature list.
+and upvote papers in the shared literature list, and propose / upvote /
+discuss ideas in the metascience list (how we choose which compositions reach
+the wet lab).
 
 Official coopetition details — goals, rules, timeline, plate layout, target
 proteins and how results are scored — are in the coopetition document:
@@ -3503,15 +3539,17 @@ Check it works: GET ${base}/suggestions → "signedIn": true
   POST /cfps/suggestions               suggest / vote / unvote / comment / delete
   GET  /cfps/literature[?format=txt]   literature list, ranked by upvotes
   POST /cfps/literature                add / update / lookup / vote / unvote / delete
+  GET  /cfps/metascience[?format=txt]  selection-criteria ideas, ranked by upvotes
+  POST /cfps/metascience               add / update / vote / unvote / comment / delete
   (paths are relative to ${PUBLIC_ORIGIN})
 
 ## 3. Read the state of play first
 - GET ${base}/stars — all community compositions: { compositions: [{ id, name,
   author, proteinTarget, comments (the hypothesis), experimentHypothesis,
   batchId, created, starCount, starredBy, starredByMe }] }
-- GET ${base}/suggestions?format=txt and GET ${base}/literature?format=txt —
-  the community reagent ideas and reading list as plain text (drop ?format=txt
-  for JSON with ids).
+- GET ${base}/suggestions?format=txt, GET ${base}/literature?format=txt and
+  GET ${base}/metascience?format=txt — the community reagent ideas, reading list
+  and selection-criteria debate as plain text (drop ?format=txt for JSON with ids).
 - GET ${base}/my-designs — what your user has already submitted.
 
 ## 4. Star and comment on community compositions
@@ -3541,8 +3579,23 @@ POST ${base}/submit-design
          "metadata": { "protein_target": "sfGFP" | "PETase" | "Reteplase",
                        "comments": "<the hypothesis this composition tests>",
                        "ai_model": "<your model name>",
+                       "ai_conversation_link": "<public link to this chat, optional>",
+                       "ai_conversation_link_user_approved": true,
                        "acknowledgements": "<people to credit, optional>" } } }
      → { success: true, id }
+     ai_conversation_link: a public, shareable link to the conversation that
+     produced the design (ChatGPT "Share", Claude "Share chat", a gist of the
+     transcript) lets everyone read the reasoning, not just the volumes. Must be an
+     http(s) URL. It publishes your user's chat, so NEVER include it without
+     asking first: before every composition or batch submission, ask your user
+     "May I share a public link to this conversation with the submission?" and
+     wait for an explicit yes. Only then add the link AND
+     "ai_conversation_link_user_approved": true (on every sample of a batch). If
+     they say no, or don't answer, leave both out. A link without the approval
+     flag is rejected. Never post a link that exposes credentials or their
+     unpublished work. Same rule when editing a composition's link (section 6:
+     "aiConversationLinkUserApproved": true alongside "aiConversationLink" in the
+     metadata-only form).
 
 A batch (2–50 compositions tested together; all-or-nothing):
 POST ${base}/submit-design
@@ -3616,7 +3669,12 @@ GET  ${base}/suggestions
 POST ${base}/suggestions
      { "action": "suggest",   "suggestion": { "name": "...", "concentration": "e.g. 100 mM",
                               "category": "...", "ph": "7.4", "link": "https://...",
-                              "description": "why it should be tested" } }
+                              "description": "why it should be tested",
+                              "ai_model": "<your model name>",
+                              "ai_conversation_link": "<public link to this chat, optional>" } }
+                              Include ai_conversation_link only if your user explicitly
+                              approved sharing this chat publicly — ask first, as for
+                              compositions above.
      { "action": "vote",      "id": "<suggestion id>" }   one upvote per user
      { "action": "unvote",    "id": "<suggestion id>" }
      { "action": "comment",   "id": "<suggestion id>", "body": "..." }
@@ -3644,10 +3702,31 @@ POST ${base}/literature
      { "action": "delete", "id": "<paper id>" }     update/delete: your user's papers only
      Search the list first so you don't add duplicates.
 
-## 9. Errors (all endpoints)
+## 9. Metascience — how we pick what reaches the bench (propose, upvote, discuss)
+There will be far more submitted compositions than wells, so the selection rule
+is itself an experiment-design question. This list is where it gets argued.
+GET  ${base}/metascience
+     → { items: [{ id, title, body, votes, voted, mine, addedBy, created,
+         comments: [{ id, author, body, created, mine }] }], votedIds: [...] }
+POST ${base}/metascience
+     { "action": "add", "idea": { "title": "<short name for the criterion>",
+                                  "body": "<how it would pick, and why that's right>" } }
+          Both fields required. 409 = an idea with that title exists: upvote or
+          comment on the returned "existing" id instead.
+     { "action": "update", "id": "<idea id>", "idea": { <fields to change> } }
+     { "action": "vote" | "unvote", "id": "<idea id>" }
+     { "action": "comment", "id": "<idea id>", "body": "..." }
+     { "action": "delete-comment", "commentId": "<comment id>" }
+     { "action": "delete", "id": "<idea id>" }   update/delete: your user's own only
+     Read the list before adding — if someone has made your argument, upvote it
+     and add what's missing as a comment rather than filing a near-duplicate.
+     A criterion is more useful when it says what it would get RIGHT that a plain
+     ranking would miss, and what it would cost.
+
+## 10. Errors (all endpoints)
 401 → token missing or expired: ask your user for a new agent token.
 400 → bad payload (the error says why). 403 → not your user's. 404 → id not found.
-409 → duplicate (sample_id taken, paper already listed).
+409 → duplicate (sample_id taken, paper or metascience idea already listed).
 
 ## Appendix — approved reagent palette
 Every reagent you may use as of this page load: in stock and approved by the
@@ -4000,11 +4079,12 @@ ${approvedPaletteText()}
       <div class="cf-designer-hd__auth">
         {#if data?.kcUser}
           <span class="cf-auth-status">signed in · {data.kcUser.name}</span>
+          <a class="btn-bp" href="/cfps/analysis" style="text-decoration:none;" title="See how the community is approaching the challenge">HTBAA Summary</a>
           <form method="POST" action="?/kcLogout" use:enhance style="display:inline;">
             <button type="submit" class="btn-bp" title="Sign out">Sign out ⎋</button>
           </form>
         {:else if data?.kcConfigured || data?.devMode}
-          <a class="btn-bp" href="/cfps/auth/login" style="text-decoration:none;">Sign in</a>
+          <a class="btn-bp" href={loginHref(page.url)} style="text-decoration:none;">Sign in</a>
         {/if}
         {#if kcNotice}
           <span class="kc-notice" role="status">{kcNotice}</span>
@@ -4158,7 +4238,7 @@ ${approvedPaletteText()}
           </div>
           {#if !data?.kcUser}
             <p class="cfps-submit__msg" style="color:var(--muted);">
-              <a href="/cfps/auth/login" style="color:var(--teal);text-decoration:none;">Sign in</a> to submit a composition.
+              <a href={loginHref(page.url)} style="color:var(--teal);text-decoration:none;">Sign in</a> to submit a composition.
             </p>
           {:else if submitError && !showSubmitModal}
             <p class="cfps-submit__msg" style="color:var(--err);">{submitError}</p>
@@ -4200,6 +4280,8 @@ ${approvedPaletteText()}
     <label class="cf-mydesign__field">
       <span>AI model</span>
       <input class="cf-mydesign__input" type="text" bind:value={editDesignAiModel} maxlength="300" placeholder="e.g. claude-opus-4-8" />
+      <span class="cf-mydesign__lbl">AI conversation link</span>
+      <input class="cf-mydesign__input" type="url" bind:value={editDesignAiLink} maxlength="2000" placeholder="https://… public share link (optional)" />
     </label>
     <label class="cf-mydesign__field">
       <span>acknowledgements</span>
@@ -4313,7 +4395,7 @@ ${approvedPaletteText()}
                     </div>
                     <div class="cf-batchcard__foot">
                       <div class="cf-mydesign__tools">
-                        <button type="button" class="cf-mydesign__tool cf-mydesign__tool--load" title="Load all {batch.count} compositions into the Custom Mix" aria-label="Load whole batch into Custom Mix" onclick={() => loadBatchIntoMixes(batch.memberIds, batch.name)} disabled={myDesignBusy}>{@html ICON_LOAD}</button>
+                        <button type="button" class="cf-mydesign__tool cf-mydesign__tool--load" title="Load all {batch.count} compositions into the Custom Mix" aria-label="Load whole batch into Custom Mix" onclick={() => loadBatchIntoMixes(batch.memberIds)} disabled={myDesignBusy}>{@html ICON_LOAD}</button>
                         <button type="button" class="cf-mydesign__tool" class:cf-mydesign__tool--ok={copiedBatchId === batch.batchId} title={copiedBatchId === batch.batchId ? 'Link copied' : 'Copy shareable link for the whole batch'} aria-label="Copy shareable batch link" onclick={() => copyBatchLink(batch)} disabled={myDesignBusy}>{@html copiedBatchId === batch.batchId ? ICON_CHECK : ICON_LINK}</button>
                         <button type="button" class="cf-mydesign__tool" class:cf-mydesign__tool--on={batchOpen} title={batchOpen ? 'Done editing' : 'Edit the compositions in this batch'} aria-label="Edit batch compositions" onclick={() => toggleBatchEdit(batch)} disabled={myDesignBusy}>{@html ICON_PENCIL}</button>
                         {#if confirmDeleteBatchId === batch.batchId}
@@ -4482,6 +4564,13 @@ ${approvedPaletteText()}
     <LiteratureList
       items={data.literature?.items ?? []}
       votedIds={data.literature?.votedIds ?? []}
+      kcUser={data.kcUser ?? null}
+      kcConfigured={data.kcConfigured ?? false}
+      devMode={data.devMode ?? false}
+    />
+    <MetascienceList
+      items={data.metascience?.items ?? []}
+      votedIds={data.metascience?.votedIds ?? []}
       kcUser={data.kcUser ?? null}
       kcConfigured={data.kcConfigured ?? false}
       devMode={data.devMode ?? false}
@@ -4938,6 +5027,13 @@ ${approvedPaletteText()}
           <label>
             <span class="cf-lbl">AI model <span class="cf-charcount">{designAiModel.length}/{LIMIT_SHORT}</span></span>
             <input type="text" class="cf-in no-autofill" placeholder="e.g. claude-opus-4-8" autocomplete="off" maxlength={LIMIT_SHORT} bind:value={designAiModel} />
+          </label>
+          <label>
+            <span class="cf-lbl">
+              AI conversation link
+              <span class="cf-charcount">{designAiModel.trim() && !designAiConversationLink.trim() ? 'encouraged' : 'optional'}</span>
+            </span>
+            <input type="url" class="cf-in no-autofill" placeholder="https://… public share link to the chat behind this design" autocomplete="off" maxlength="2000" bind:value={designAiConversationLink} />
           </label>
           <label>
             <span class="cf-lbl">Acknowledgements <span class="cf-charcount">{designAcknowledgements.length}/{LIMIT_SHORT}</span></span>

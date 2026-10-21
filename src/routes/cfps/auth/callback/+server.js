@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { isConfigured, exchangeCode, getUserInfo } from '$lib/server/keycloak.js';
 import { createSession, KC_COOKIE } from '$lib/server/session.js';
+import { NEXT_COOKIE, safeNext } from '$lib/server/authNext.js';
 
 const STATE_COOKIE = 'cfps_kc_state';
 
@@ -13,6 +14,10 @@ export async function GET({ url, cookies }) {
   const state = url.searchParams.get('state');
   const saved = cookies.get(STATE_COOKIE);
   cookies.delete(STATE_COOKIE, { path: '/cfps' });
+  // Where the user was when they clicked sign in; re-validated rather than
+  // trusted, since a cookie is still client-supplied input.
+  const next = safeNext(cookies.get(NEXT_COOKIE)) || '/cfps';
+  cookies.delete(NEXT_COOKIE, { path: '/cfps' });
 
   if (!code || !state || !saved || state !== saved) redirect(303, '/cfps?kc=error');
 
@@ -28,5 +33,5 @@ export async function GET({ url, cookies }) {
     redirect(303, '/cfps?kc=error');
   }
 
-  redirect(303, '/cfps');
+  redirect(303, next);
 }

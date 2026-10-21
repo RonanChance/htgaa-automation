@@ -1,4 +1,5 @@
 <script>
+  import { loginHref } from './loginHref.js';
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
   import JsonEditor from './JsonEditor.svelte';
@@ -32,7 +33,7 @@
   let showSuggestForm = $state(false);
   let submitting = $state(false);
   let suggestMsg = $state('');
-  let f = $state({ name: '', concentration: '', category: '', ph: '', link: '', description: '' });
+  let f = $state({ name: '', concentration: '', category: '', ph: '', link: '', description: '', ai_conversation_link: '' });
   // The suggest form can also be filled in as JSON (one reagent object, or an array
   // to suggest several). JSON can carry keys the form has no field for; switching
   // back to the form keeps them in `fExtra` so they're still submitted.
@@ -62,6 +63,10 @@
   const CONC_KEYS = ['concentration', 'conc', 'stock', 'stock_conc', 'stock_concentration'];
   const CATEGORY_KEYS = ['category', 'cat', 'type', 'class'];
   const LINK_KEYS = ['link', 'url', 'href', 'reference', 'ref'];
+  // Optional provenance an AI agent can attach: which model, and a public link to
+  // the conversation that proposed the reagent.
+  const AI_LINK_KEYS = ['ai_conversation_link', 'conversation_link', 'chat_link'];
+  const AI_MODEL_KEYS = ['ai_model', 'model'];
   const NOTE_KEYS = ['description', 'notes', 'note', 'rationale', 'why'];
   const PROPOSER_KEYS = ['proposed_by', 'proposer', 'by', 'author'];
 
@@ -84,7 +89,7 @@
   // Attributes left over after the special-cased keys are pulled out.
   function extraAttrs(dict) {
     const skip = new Set(
-      [...TITLE_KEYS, ...PH_KEYS, ...CONC_KEYS, ...CATEGORY_KEYS, ...LINK_KEYS, ...NOTE_KEYS, ...PROPOSER_KEYS].map((k) => k.toLowerCase())
+      [...TITLE_KEYS, ...PH_KEYS, ...CONC_KEYS, ...CATEGORY_KEYS, ...LINK_KEYS, ...AI_LINK_KEYS, ...AI_MODEL_KEYS, ...NOTE_KEYS, ...PROPOSER_KEYS].map((k) => k.toLowerCase())
     );
     const out = [];
     for (const [k, v] of Object.entries(dict || {})) {
@@ -108,6 +113,12 @@
     if (!l) return '';
     return /^https?:\/\//i.test(l) ? l : `https://${l}`;
   }
+  function aiLinkFor(s) {
+    const l = pick(s.suggestion, AI_LINK_KEYS);
+    if (!l) return '';
+    return /^https?:\/\//i.test(l) ? l : `https://${l}`;
+  }
+  function aiModelFor(s) { return pick(s.suggestion, AI_MODEL_KEYS); }
 
   // Comment length is capped at 500 words (enforced again server-side).
   const COMMENT_WORD_LIMIT = 500;
@@ -270,7 +281,7 @@
   // dict, so a removed key is dropped); `proposed_by` / `votes` are read-only.
   // Removing an object here does NOT delete it (use 🗑 in the list).
   const READONLY = ['id', 'votes', 'proposed_by'];
-  const FORM_KEYS = ['name', 'concentration', 'category', 'ph', 'link', 'description'];
+  const FORM_KEYS = ['name', 'concentration', 'category', 'ph', 'link', 'description', 'ai_conversation_link'];
   let view = $state('list'); // 'list' | 'json'
   let jsonText = $state('');
   let jsonBusy = $state(false);
@@ -440,7 +451,7 @@
   });
 
   function resetSuggestForm() {
-    f = { name: '', concentration: '', category: '', ph: '', link: '', description: '' };
+    f = { name: '', concentration: '', category: '', ph: '', link: '', description: '', ai_conversation_link: '' };
     fExtra = {};
     suggestJson = serialize(formToDict());
   }
@@ -527,7 +538,7 @@
         <button type="submit" class="icon" title="Sign out">⎋</button>
       </form>
     {:else if kcConfigured || devMode}
-      <a class="btn-bp" href="/cfps/auth/login" style="text-decoration:none;">Sign in</a>
+      <a class="btn-bp" href={loginHref(page.url)} style="text-decoration:none;">Sign in</a>
     {:else}
       <span class="tag" style="color:var(--muted);">login not configured yet</span>
     {/if}
@@ -565,7 +576,7 @@
           <p class="cr-teaser__title">Community reagents are members-only</p>
           <p class="cr-teaser__sub">Sign in to browse ideas, upvote, comment, and suggest your own.</p>
           {#if kcConfigured || devMode}
-            <a class="btn-bp cr-teaser__btn" href="/cfps/auth/login" style="text-decoration:none;">Sign in to view</a>
+            <a class="btn-bp cr-teaser__btn" href={loginHref(page.url)} style="text-decoration:none;">Sign in to view</a>
           {:else}
             <span class="tag" style="color:var(--muted);">login not configured yet</span>
           {/if}
@@ -612,6 +623,8 @@
             {#each items as s, i (s.id)}
               {@const hasVoted = voted.has(s.id)}
               {@const link = linkFor(s)}
+              {@const aiLink = aiLinkFor(s)}
+              {@const aiModel = aiModelFor(s)}
               {@const ph = phFor(s)}
               {@const spec = specFor(s)}
               {@const note = noteFor(s)}
@@ -642,6 +655,11 @@
                       {#each attrs as a}<span class="tag" style="text-transform:none;letter-spacing:0;">{a.k}: {a.v}</span>{/each}
                       {#if link}
                         <a href={link} target="_blank" rel="noopener noreferrer" class="mono" style="font-size:10px;color:var(--teal);">link ↗</a>
+                      {/if}
+                      {#if aiLink}
+                        <a href={aiLink} target="_blank" rel="noopener noreferrer" class="tag cr-ai" title="Read the AI conversation that proposed this reagent">{aiModel || 'AI'} chat ↗</a>
+                      {:else if aiModel}
+                        <span class="tag" style="text-transform:none;letter-spacing:0;">{aiModel}</span>
                       {/if}
                     </div>
                     {#if note}<p class="cr-note">{note}</p>{/if}
@@ -740,7 +758,8 @@
           {#if suggestMode === 'json'}
             <p class="cr-json__hint">
               One reagent object — or an array to suggest several. <code>name</code> is required; add any other keys
-              (e.g. <code>"supplier"</code>) and they're shown as tags.
+              (e.g. <code>"supplier"</code>) and they're shown as tags. If an AI proposed this, include
+              <code>"ai_model"</code> and a public <code>"ai_conversation_link"</code> so others can read the reasoning.
             </p>
             <JsonEditor bind:this={suggestEditor} bind:value={suggestJson} invalid={!suggestJsonPlan.ok || suggestJsonPlan.problems.length > 0} height={200} label="Reagent suggestion as JSON" />
             <div class="cr-json__status" role="status">
@@ -781,6 +800,10 @@
           <label class="cr-suggest__full">
             <span class="label">rationale</span>
             <textarea bind:value={f.description} class="cf-in" rows="2" placeholder="Why should this be tested?"></textarea>
+          </label>
+          <label class="cr-suggest__full">
+            <span class="label">AI conversation link <span class="cr-opt">optional — if an AI helped</span></span>
+            <input bind:value={f.ai_conversation_link} class="cf-in" placeholder="https://… public share link to the chat that proposed this" />
           </label>
           {#if Object.keys(fExtra).length}
             <p class="cr-json__hint">Also submitting from JSON: {Object.keys(fExtra).join(', ')} <span class="cr-json__muted">(edit in JSON)</span></p>
@@ -854,6 +877,10 @@
 
   /* ── messages ─────────────────────────────────────────────────────────────── */
   .cr-msg { font: 11px var(--mono); color: var(--err); margin: 0 0 10px; }
+  .cr-opt { color: var(--faint); text-transform: none; letter-spacing: 0; }
+  /* Link out to the conversation that proposed a reagent. */
+  .cr-ai { text-transform: none; letter-spacing: 0; color: var(--teal-ink); border-color: var(--teal); text-decoration: none; }
+  .cr-ai:hover { background: var(--teal-wash); }
   .cr-empty { font: 12px var(--mono); color: var(--faint); text-align: center; padding: 18px 0; }
 
   /* ── ranked list (full-width): cap height so a long list scrolls in place ──── */
