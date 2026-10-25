@@ -8,7 +8,9 @@ import {
   LIMITS,
   validateSample,
   costForReagentList,
-  submissionContract
+  submissionContract,
+  rangeReport,
+  ALLOW_OUT_OF_RANGE_FIELD
 } from '$lib/server/designSubmission.js';
 
 // Reagent-supplement compositions from the Cell-Free Reaction Designer (and AI
@@ -56,8 +58,10 @@ export const GET = async (event) => {
 };
 
 // POST, one of:
-//   { sample: {...}, totalCostUsd?, costPerMlReaction?, dry_run?, allow_duplicate? }  one composition
-//   { samples: [{...}, ...], experiment_hypothesis, batch_id?, dry_run? } a batch (atomic)
+//   { sample: {...}, totalCostUsd?, costPerMlReaction?, dry_run?, allow_duplicate?, allow_out_of_range? }  one composition
+//   { samples: [{...}, ...], experiment_hypothesis, batch_id?, dry_run?, allow_out_of_range? } a batch (atomic)
+// Compositions outside the autonomous-cfps reference ranges are refused unless
+// allow_out_of_range is true (see rangeCheckFindings in designSubmission.js).
 // → { success:true, id } | { success:true, ids:[...], batch_id } | { success:true, dry_run:true, ... }
 export const POST = async (event) => {
   const { request } = event;
@@ -74,6 +78,7 @@ export const POST = async (event) => {
       return rejection([{ field: 'body', message: 'Send a JSON body: { "sample": {...} } for one composition or { "samples": [...], "experiment_hypothesis": "..." } for a batch.' }]);
     }
     const dryRun = body.dry_run === true;
+    const allowOutOfRange = body[ALLOW_OUT_OF_RANGE_FIELD] === true;
     const isBatch = Array.isArray(body.samples);
     if (!isBatch && body.sample === undefined) {
       return rejection([{ field: 'sample', message: 'Missing composition: send { "sample": {...} } (or { "samples": [...] } for a batch).' }]);
@@ -107,12 +112,20 @@ export const POST = async (event) => {
     // ── per-sample rules ──────────────────────────────────────────────────────
     // Agents must have the user's explicit OK before publishing a conversation link.
     const requireLinkApproval = kcUser.via === 'agent';
+    // Per-sample range findings, reported back as out_of_range (and used to stamp
+    // metadata.out_of_range_acknowledged when the caller chose to override).
+    const outOfRange = [];
     samples.forEach((sample, i) => {
-      const res = validateSample(sample, { requireLinkApproval });
+      const res = validateSample(sample, { requireLinkApproval, allowOutOfRange });
       const sid = typeof sample?.sample_id === 'string' ? sample.sample_id.trim() : '';
       for (const e of res.errors) errors.push(isBatch ? { sample_index: i + 1, sample_id: sid || undefined, ...e } : e);
       for (const w of res.warnings) warnings.push(isBatch ? `Sample ${i + 1}: ${w}` : w);
+      if (res.rangeFlags?.length) {
+        outOfRange.push({ sample_index: i + 1, sample_id: sid || undefined, warn_count: res.rangeFlags.filter((f) => f.kind === 'warn').length, flags: rangeReport(res.rangeFlags) });
+      }
     });
+    const rangeExtra = outOfRange.length ? { out_of_range: outOfRange } : {};
+    const rangeBlocked = !allowOutOfRange && outOfRange.some((r) => r.warn_count);
 
     // sample_ids must be unique within the request…
     const ids = samples.map((s) => (typeof s?.sample_id === 'string' ? s.sample_id.trim() : ''));
@@ -123,7 +136,13 @@ export const POST = async (event) => {
         errors.push({ sample_index: i + 1, sample_id: sid, field: 'sample_id', message: `sample_id "${sid}" is used twice in this batch (also sample ${seen.get(sid)}) — each needs a unique id.` });
       } else seen.set(sid, i + 1);
     });
-    if (errors.length) return rejection(errors, 400, warnings.length ? { warnings } : {});
+    if (errors.length) {
+      return rejection(errors, 400, {
+        ...(warnings.length ? { warnings } : {}),
+        ...rangeExtra,
+        ...(rangeBlocked ? { bypass: `Out-of-range compositions can be submitted deliberately: resend with "${ALLOW_OUT_OF_RANGE_FIELD}": true.` } : {})
+      });
+    }
 
     const pb = await pbAdmin();
 
@@ -213,7 +232,8 @@ export const POST = async (event) => {
         ...(isBatch ? { batch_id: batchId } : {}),
         ...(duplicates.length ? { duplicates } : {}),
         ...(!isBatch && duplicates.length ? { note: 'Submitting this for real needs "allow_duplicate": true (or star the original instead).' } : {}),
-        ...(warnings.length ? { warnings } : {})
+        ...(warnings.length ? { warnings } : {}),
+        ...rangeExtra
       });
     }
 
@@ -230,6 +250,12 @@ export const POST = async (event) => {
         metadata.batch_index = i + 1;
         if (i === 0) metadata.experiment_hypothesis = experimentHypothesis;
         else delete metadata.experiment_hypothesis;
+      }
+      // Audit trail: this composition was knowingly submitted outside the ranges.
+      if (allowOutOfRange && outOfRange.some((r) => r.sample_index === i + 1 && r.warn_count)) {
+        metadata.out_of_range_acknowledged = true;
+      } else {
+        delete metadata.out_of_range_acknowledged;
       }
       const sample = { ...s, sample_id: ids[i], metadata };
       const totalNl = Object.values(s.reagent_list).reduce((sum, v) => sum + (Number(v) || 0), 0);
@@ -266,7 +292,8 @@ export const POST = async (event) => {
       success: true,
       ...(isBatch ? { ids: created, batch_id: batchId } : { id: created[0] }),
       ...(duplicates.length ? { duplicates } : {}),
-      ...(warnings.length ? { warnings } : {})
+      ...(warnings.length ? { warnings } : {}),
+      ...rangeExtra
     });
   } catch (error) {
     return json(

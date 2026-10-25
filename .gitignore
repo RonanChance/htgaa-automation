@@ -42,3 +42,9 @@ scripts
 *.generated.json
 # Committed on purpose: the cost-free CFPS contract the app imports (costs live in PB).
 !src/lib/cfpsReagentSpec.generated.json
+Caddyfile.txt
+
+# Range-check parity fixtures: recipes + expected flags generated from the
+# PRIVATE ginkgobioworks/autonomous-cfps reference set. Test-only — regenerate
+# locally with `npm run sync:cfps`, never commit (this repo is public).
+tools/fixtures/

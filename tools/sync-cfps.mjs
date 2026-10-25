@@ -28,6 +28,9 @@ import { REAGENT_ID_TO_PYDANTIC } from '../src/lib/cfpsReagentIdMap.js';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SPEC_OUT = path.join(REPO_ROOT, 'src/lib/cfpsReagentSpec.generated.json');
+// Range-check parity fixtures (recipes + the flags the real autonomous-cfps code
+// raises). Test-only, so they live outside src/ and never reach the bundle.
+const FIXTURES_OUT = path.join(REPO_ROOT, 'tools/fixtures/cfps-range-checks.fixtures.json');
 const EXTRACTOR = path.join(REPO_ROOT, 'tools/extract_cfps_spec.py');
 const BACKUP_DIR = path.join(REPO_ROOT, 'scripts/pb-backups');
 
@@ -80,7 +83,13 @@ function regenerateSpec() {
   // Costs stay in PocketBase only: strip them before writing the committed file
   // (it is imported by the browser bundle). The full spec, costs included, is
   // returned in memory for the PB cost diff below.
-  fs.writeFileSync(SPEC_OUT, JSON.stringify(contractOnly(spec), null, 2) + '\n');
+  const { rangeCheckFixtures, ...rest } = spec;
+  fs.writeFileSync(SPEC_OUT, JSON.stringify(contractOnly(rest), null, 2) + '\n');
+  if (rangeCheckFixtures) {
+    fs.mkdirSync(path.dirname(FIXTURES_OUT), { recursive: true });
+    fs.writeFileSync(FIXTURES_OUT, JSON.stringify(rangeCheckFixtures, null, 2) + '\n');
+    console.log(`  wrote ${path.relative(REPO_ROOT, FIXTURES_OUT)} — ${rangeCheckFixtures.length} range-check fixtures`);
+  }
   console.log(
     `  wrote ${path.relative(REPO_ROOT, SPEC_OUT)} — ${spec.fieldCount} fields, source ${
       (spec.sourceCommit || 'unknown').slice(0, 8)

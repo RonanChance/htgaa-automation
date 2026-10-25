@@ -19,13 +19,14 @@
   import {
     validateReagentList,
     templateFieldForTarget,
+    templateMismatch,
     reagentListKey
   } from '$lib/cfpsReagentContract.js';
   import {
     ROWS, COLS, RESERVED_COLS, SLOTS, REPLICATES, PER_PLATE, PLATES_PER_TARGET,
     TARGETS, ROWL, slotCol, slotWell, plateKey, targetOfKey, emptyPlates,
     placementFor, plateJson, addDesignsToPlates, removeDesignsFromPlates,
-    pruneMissing, placementOrder, placedIdsOf, targetOf, idsOf, sidOf
+    pruneMissing, placementOrder, placedIdsOf, targetOf, idsOf, sidOf, validationBatch
   } from './plateMap.js';
 
   let {
@@ -149,11 +150,8 @@
       const { valid, errors } = validateReagentList(d.reagentList);
       if (!valid) return { valid: false, detail: errors[0] };
       // Export refuses a plate holding a mislabelled design, so refuse it up front.
-      const templateField = templateFieldForTarget(d.proteinTarget);
-      if (!(Number(d.reagentList?.[templateField]) > 0)) {
-        return { valid: false, detail: `template doesn't match ${d.proteinTarget} (expected ${templateField})` };
-      }
-      return { valid: true };
+      const mismatch = templateMismatch(d.reagentList, d.proteinTarget);
+      return mismatch ? { valid: false, detail: mismatch } : { valid: true };
     },
     fingerprint: (d) => reagentListKey(d.reagentList)
   });
@@ -487,6 +485,37 @@
     if (problems.length) { flash(problems[0]); return; }
     download(`${key}.json`, JSON.stringify(buildPlateJson(key), null, 2));
   }
+  // Validation set: EVERY composition, on as many plates as it takes, as one
+  // PlateBatch for the lab team to run through `cfps-validate-design` before any
+  // real plates are picked. Ignores the layout above entirely — it's about
+  // whether each recipe is valid, not where it sits. See validationBatch in
+  // plateMap.js for how it stays acceptable to the pydantic model (padding,
+  // exclusions, the DsbC cap); scripts/check-validation-set.mjs proves it on
+  // live data against the real validator.
+  function exportValidationSet() {
+    if (!designs.length) { flash('No compositions to export — sign in to load them.'); return; }
+    const opts = addOpts(false);
+    const { batch, excluded, summary } = validationBatch(designs, {
+      validate: opts.validate, fingerprint: opts.fingerprint, viewerName
+    });
+    // One self-describing file: the validator reads `plates` (and
+    // `reagent_inventory` when present) and ignores the rest.
+    const doc = {
+      ...batch,
+      summary,
+      excluded,
+      _readme: 'Validate with: cfps-validate-design <this file> (autonomous-cfps). Every submitted composition '
+        + 'that passes the coopetition contract, packed onto as many plates as needed — a validation set, NOT a run '
+        + 'layout. `excluded` lists compositions left out and why. Partial plates are padded with empty wells.'
+    };
+    download(`cfps_validation_set_${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(doc, null, 2));
+    // The file is the confirmation; only call out what needs attention.
+    const notes = [];
+    if (excluded.length) notes.push(`${excluded.length} composition${excluded.length === 1 ? '' : 's'} left out (invalid) — listed under "excluded" in the file`);
+    if (summary.inventory_cap_lifted) notes.push(`the full set needs ${(summary.dsbc_ecoli_nl / 1e6).toFixed(2)} mL DsbC, over one run's 4.1 mL, so that cap is lifted for validation`);
+    if (notes.length) flash(notes.join(' · '));
+  }
+
   // Every full plate as a PlateBatch — the shape the model uses to check a set of
   // plates against the shared reagent inventory.
   function exportAll() {
@@ -543,6 +572,13 @@
       title={placedIds.size ? 'Remove every composition from all 12 plates' : 'Nothing placed yet'}
     >✕ Clear all</button>
     <button type="button" class="btn-bp" onclick={exportAll} title="Download every complete plate as one PlateBatch JSON">↓ Export all</button>
+    <button
+      type="button"
+      class="btn-bp"
+      onclick={exportValidationSet}
+      disabled={!designs.length}
+      title="Download EVERY composition (beyond 4 plates per protein if needed) as one PlateBatch for the lab team to validate with cfps-validate-design"
+    >↓ Validation set</button>
   </div>
 
   {#if notice}<p class="pb__notice" role="alert">{notice}</p>{/if}

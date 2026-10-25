@@ -98,11 +98,175 @@ def build_spec() -> dict:
         },
         "fieldCount": len(fields),
         "fields": fields,
+        "rangeChecks": build_range_checks(),
     }
 
 
+# ─── Advisory range checks ───────────────────────────────────────────────────
+# autonomous-cfps' validate_design flags each experimental well (WellFlag) by
+# comparing its total delivered concentrations against per-target historical
+# references: watchlisted components and matched energy substrates must sit
+# within [0.5×, 2×] of the reference, every well needs an ATP-regeneration
+# substrate, and some components are "present in design, zero in reference".
+# Everything the JS port ($lib/cfpsRangeChecks.js) needs is computed here by
+# CALLING the real functions, so concentrations, references and watchlists
+# can't drift. The 0.5 / 2.0 band literals are hard-coded inside references.py
+# (not importable) — mirrored here; the parity fixtures below catch any change.
+BAND_LOW = 0.5
+BAND_HIGH = 2.0
+
+
+def build_range_checks() -> dict:
+    from autonomous_cfps.concentration import (
+        RECOGNIZED_REAGENTS,
+        compute_component_concentration,
+    )
+    from autonomous_cfps.references import (
+        RECOGNIZED_ENERGY_SUBSTRATES,
+        TARGET_TO_ENERGY_REFS,
+        TARGET_TO_STANDARD_REF,
+        UNEXPECTED_REFERENCE_ZERO_COMPONENTS,
+        get_watchlist_for_target,
+        load_reference,
+    )
+
+    # Every delivered concentration is affine in dispense volume
+    # (value = floor + perNl × nL); measure it and assert that it really is.
+    components: dict[str, dict] = {}
+    for name in RECOGNIZED_REAGENTS:
+        at0 = compute_component_concentration(name, 0.0)
+        at1k = compute_component_concentration(name, 1000.0)
+        per_nl = (at1k.value - at0.value) / 1000.0
+        probe = compute_component_concentration(name, 7000.0)
+        if abs(probe.value - (at0.value + per_nl * 7000.0)) > 1e-9 * max(1.0, abs(probe.value)):
+            raise SystemExit(f"Concentration for {name} is not linear in volume; update the JS port.")
+        components[name] = {
+            "floor": at0.value,
+            "perNl": per_nl,
+            "unit": at0.unit,
+            "comparable": at0.comparable,
+        }
+
+    ref_ids = sorted(
+        set(TARGET_TO_STANDARD_REF.values())
+        | {r for refs in TARGET_TO_ENERGY_REFS.values() for r in refs}
+    )
+    references: dict[str, dict] = {}
+    for ref_id in ref_ids:
+        ref = load_reference(ref_id)
+        references[ref_id] = {
+            "name": ref.name,
+            "proteinTarget": ref.protein_target,
+            # Reference concentrations from the reference's own recipe; the
+            # recipe itself is kept so the energy matched-set lookup can see
+            # which substrates the reference doses.
+            "components": {c.name: c.value for c in ref.components},
+            "recipe": {k: v for k, v in ref.recipe.items() if v},
+        }
+
+    targets = {
+        target: {
+            "standardRef": TARGET_TO_STANDARD_REF[target],
+            "energyRefs": list(TARGET_TO_ENERGY_REFS.get(target, [])),
+            "watchlist": sorted(get_watchlist_for_target(target)),
+        }
+        for target in TARGET_TO_STANDARD_REF
+    }
+    return {
+        "bandLow": BAND_LOW,
+        "bandHigh": BAND_HIGH,
+        "energySubstrates": list(RECOGNIZED_ENERGY_SUBSTRATES),
+        "unexpectedReferenceZero": sorted(UNEXPECTED_REFERENCE_ZERO_COMPONENTS),
+        "components": components,
+        "references": references,
+        "targets": targets,
+    }
+
+
+def build_range_check_fixtures() -> list[dict]:
+    """Recipes + the flags the REAL autonomous-cfps code raises for them.
+
+    Mirrors the per-well block of validate_design._validate_design_impl:
+    watchlist flags + energy flags when a target resolves, energy flags alone
+    otherwise, sorted by _flag_concern_key. tools/check-cfps-range-parity.mjs
+    replays these through the JS port and fails on any difference.
+    """
+    import random
+
+    from autonomous_cfps.concentration import (
+        RECOGNIZED_REAGENTS,
+        compute_well_components,
+        resolve_target_from_reagents,
+    )
+    from autonomous_cfps.references import (
+        RECOGNIZED_ENERGY_SUBSTRATES,
+        TARGET_TO_ENERGY_REFS,
+        TARGET_TO_STANDARD_REF,
+        evaluate_well_energy,
+        evaluate_well_flags,
+        get_standard_reference_for_target,
+        get_watchlist_for_target,
+        load_reference,
+    )
+    from autonomous_cfps.validate_design import _flag_concern_key
+
+    cache: dict = {}
+
+    def flags_for(recipe: dict[str, float]) -> list[dict]:
+        comps, derived = compute_well_components(recipe)
+        target = resolve_target_from_reagents(recipe)
+        if target:
+            ref = get_standard_reference_for_target(target, cache=cache)
+            _, energy = evaluate_well_energy(recipe, comps, target, cache=cache)
+            flags = evaluate_well_flags(comps, derived, ref, get_watchlist_for_target(target)) + energy
+        else:
+            _, flags = evaluate_well_energy(recipe, comps, None, cache=cache)
+        return [f.model_dump() for f in sorted(flags, key=_flag_concern_key)]
+
+    recipes: list[tuple[str, dict[str, float]]] = []
+    ref_ids = sorted(
+        set(TARGET_TO_STANDARD_REF.values())
+        | {r for refs in TARGET_TO_ENERGY_REFS.values() for r in refs}
+    )
+    base_recipes = {rid: {k: v for k, v in load_reference(rid).recipe.items() if v} for rid in ref_ids}
+    for rid, recipe in base_recipes.items():
+        recipes.append((f"reference {rid}", dict(recipe)))
+        # Push each watchlisted / energy component outside (and just inside) its band.
+        tweakable = sorted(k for k in recipe if k not in ("base_buffer", "lysate", "nuclease_free_water")
+                           and not k.startswith("template_"))
+        for k in tweakable:
+            for factor in (0.0, 0.3, 0.6, 1.9, 3.0):
+                r = dict(recipe)
+                r[k] = round(recipe[k] * factor / 25) * 25
+                recipes.append((f"{rid}: {k} x{factor}", r))
+        no_energy = {k: v for k, v in recipe.items() if k not in RECOGNIZED_ENERGY_SUBSTRATES}
+        recipes.append((f"{rid}: no energy substrate", no_energy))
+    # Reteplase-only extras dosed onto an sfGFP / PETase design ("zero in reference").
+    for rid in ("sfgfp_standard", "petase_standard"):
+        if rid in base_recipes:
+            r = dict(base_recipes[rid])
+            r.update({"dsbc_ecoli": 500, "oxidized_glutathione": 475, "reduced_glutathione": 200})
+            recipes.append((f"{rid}: + reteplase redox extras", r))
+    # No template at all: only the universal energy check applies.
+    recipes.append(("no template", {"base_buffer": 2000, "lysate": 5000, "hepes_koh": 500}))
+    # Seeded random designs across the whole reagent menu.
+    rng = random.Random(20261025)
+    templates = ["template_sfgfp", "template_petase", "template_reteplase"]
+    menu = [r for r in RECOGNIZED_REAGENTS if r not in ("base_buffer", "lysate", "nuclease_free_water")
+            and not r.startswith("template_")]
+    for i in range(60):
+        r = {"base_buffer": 2000.0, "lysate": 5000.0, rng.choice(templates): 2000.0}
+        for k in rng.sample(menu, rng.randint(2, 14)):
+            r[k] = float(rng.choice([25, 50, 100, 175, 250, 400, 600, 1000, 1500, 2500, 4000, 6000]))
+        recipes.append((f"random {i}", r))
+
+    return [{"label": label, "reagent_list": recipe, "flags": flags_for(recipe)} for label, recipe in recipes]
+
+
 def main() -> None:
-    json.dump(build_spec(), sys.stdout, indent=2, default=str, sort_keys=True)
+    spec = build_spec()
+    spec["rangeCheckFixtures"] = build_range_check_fixtures()
+    json.dump(spec, sys.stdout, indent=2, default=str, sort_keys=True)
     sys.stdout.write("\n")
 
 

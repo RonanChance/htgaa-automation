@@ -250,6 +250,8 @@
                 await loadRecord(loadRecordId);
             } else {
                 grid_style = 'Echo1536Image';
+                if ($page.url.searchParams.get('htgaa')) {ginkgo_mode = false; grid_style = 'Standard';}
+                if ($page.url.href.includes('opentrons') || $page.url.searchParams.get('opentrons')) {ginkgo_mode = false; grid_style = 'Standard';}
             }
             
             window.addEventListener('keydown', function(event) {
@@ -430,6 +432,7 @@
             radius_mm = r.record.radius_mm;
             point_size = r.record.point_size || 1;
             grid_style = inferLoadedGridStyle(r.record);
+            ginkgo_mode = grid_style.startsWith('Echo');
             setRenderedPoints(generateGrid(grid_style, radius_mm, grid_spacing_mm, QRCode_text, imageColors));
             
             if (r.record.grid_style === 'Image' || r.record.grid_style === 'Echo384Image' || r.record.grid_style === 'Echo1536Image' || r.record.grid_style === 'Echo6144Image') {
@@ -1831,7 +1834,11 @@ def run(protocol):
 
     async function promptImageUpload() {
         stopCameraStream();
-        grid_style = getPreferredEchoImageGridStyle();
+        if (ginkgo_mode) {
+            grid_style = getPreferredEchoImageGridStyle();
+        } else {
+            grid_style = 'Image'; point_size = 0.75; canvasSize = 40; pixelation = 40;
+        }
         interaction_mode = 'draw';
         if (mediaUploadInput) {
             mediaUploadInput.value = '';
@@ -3169,15 +3176,28 @@ async function rebuildFramesNow() {
 {/if}
 
 <!-- MENU BAR -->
-<div class="flex flex-row w-full max-w-[90vw] sm:max-w-[440px] mx-auto pt-0">
-    <div class="items-center flex flex-row gap-2 opacity-70 h-4 text-xs whitespace-nowrap">
+<div class="flex flex-row w-full max-w-[100vw] sm:max-w-[490px] mx-auto px-5 pt-3">
+    <div class="mr-auto items-center flex flex-row gap-2 opacity-70">
+        <label class="swap mr-auto">
+            <input type="checkbox" id="toggle-outlines" bind:checked={show_outlines} />
+            <svg class="swap-on w-6 h-6 opacity-70" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <g data-name="Layer 2"> <g data-name="eye"> <rect width="24" height="24" opacity="0"></rect> <circle cx="12" cy="12" r="1.5"></circle> <path d="M21.87 11.5c-.64-1.11-4.16-6.68-10.14-6.5-5.53.14-8.73 5-9.6 6.5a1 1 0 0 0 0 1c.63 1.09 4 6.5 9.89 6.5h.25c5.53-.14 8.74-5 9.6-6.5a1 1 0 0 0 0-1zm-9.87 4a3.5 3.5 0 1 1 3.5-3.5 3.5 3.5 0 0 1-3.5 3.5z"></path> </g> </g> </g></svg>
+            <svg class="swap-off w-6 h-6 opacity-70" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <g data-name="Layer 2"> <g data-name="eye-off"> <rect width="24" height="24" opacity="0"></rect> <circle cx="12" cy="12" r="1.5"></circle> <path d="M15.29 18.12L14 16.78l-.07-.07-1.27-1.27a4.07 4.07 0 0 1-.61.06A3.5 3.5 0 0 1 8.5 12a4.07 4.07 0 0 1 .06-.61l-2-2L5 7.87a15.89 15.89 0 0 0-2.87 3.63 1 1 0 0 0 0 1c.63 1.09 4 6.5 9.89 6.5h.25a9.48 9.48 0 0 0 3.23-.67z"></path> <path d="M8.59 5.76l2.8 2.8A4.07 4.07 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 4.07 4.07 0 0 1-.06.61l2.68 2.68.84.84a15.89 15.89 0 0 0 2.91-3.63 1 1 0 0 0 0-1c-.64-1.11-4.16-6.68-10.14-6.5a9.48 9.48 0 0 0-3.23.67z"></path> <path d="M20.71 19.29L19.41 18l-2-2-9.52-9.53L6.42 5 4.71 3.29a1 1 0 0 0-1.42 1.42L5.53 7l1.75 1.7 7.31 7.3.07.07L16 17.41l.59.59 2.7 2.71a1 1 0 0 0 1.42 0 1 1 0 0 0 0-1.42z"></path> </g> </g> </g></svg>
+        </label>
+        <label class="swap mr-auto">
+            <input type="checkbox" id="toggle-mode" checked={!ginkgo_mode} disabled={Object.keys(point_colors).length > 0} class="{Object.keys(point_colors).length > 0 ? 'tooltip tooltip-top' : ''}" data-tip="Erase Grid to Change" onclick={() => {if (ginkgo_mode) {grid_style = 'Standard'} else {grid_style = 'Echo1536Image'}; ginkgo_mode = !ginkgo_mode;}} />
+            <svg class="swap-on w-5 h-5 opacity-75" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><circle cx="8" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="8" r="1" fill="currentColor" stroke="none" /><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="8" cy="16" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="16" r="1" fill="currentColor" stroke="none" /><circle cx="16" cy="16" r="1" fill="currentColor" stroke="none" /></svg>
+            <svg class="swap-off w-5 h-5 opacity-75" fill="currentColor" viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path d="M 7.7148 49.5742 L 48.2852 49.5742 C 53.1836 49.5742 55.6446 47.1367 55.6446 42.3086 L 55.6446 13.6914 C 55.6446 8.8633 53.1836 6.4258 48.2852 6.4258 L 7.7148 6.4258 C 2.8398 6.4258 .3554 8.8398 .3554 13.6914 L .3554 42.3086 C .3554 47.1602 2.8398 49.5742 7.7148 49.5742 Z M 4.1288 13.8789 C 4.1288 11.4414 5.4413 10.1992 7.7851 10.1992 L 18.1210 10.1992 L 18.1210 19.8555 L 4.1288 19.8555 Z M 21.6601 19.8555 L 21.6601 10.1992 L 34.2460 10.1992 L 34.2460 19.8555 Z M 37.7851 19.8555 L 37.7851 10.1992 L 48.2147 10.1992 C 50.5350 10.1992 51.8708 11.4414 51.8708 13.8789 L 51.8708 19.8555 Z M 21.8241 32.8398 L 21.8241 23.1602 L 34.4101 23.1602 L 34.4101 32.8398 Z M 37.7851 32.8398 L 37.7851 23.1602 L 51.8708 23.1602 L 51.8708 32.8398 Z M 18.1210 23.1602 L 18.1210 32.8398 L 4.1288 32.8398 L 4.1288 23.1602 Z M 48.2147 45.8008 L 37.7851 45.8008 L 37.7851 36.1445 L 51.8708 36.1445 L 51.8708 42.1211 C 51.8708 44.5586 50.5350 45.8008 48.2147 45.8008 Z M 7.7851 45.8008 C 5.4413 45.8008 4.1288 44.5586 4.1288 42.1211 L 4.1288 36.1445 L 18.1210 36.1445 L 18.1210 45.8008 Z M 21.6601 36.1445 L 34.2460 36.1445 L 34.2460 45.8008 L 21.6601 45.8008 Z"></path></g></svg>
+        </label>
         {#if current_point.x != null && current_point.y != null}
-            {echoWellFromPoint(current_point.x, current_point.y)}
+            {ginkgo_mode ? echoWellFromPoint(current_point.x, current_point.y) : `${roundPoint(current_point.x)}, ${roundPoint(current_point.y)}`}
             <div class="div text-xs" style="color: {well_colors[point_colors[`${current_point.x}, ${current_point.y}`]]};">{hover_point}</div>
-        {:else}
-            <span class="invisible">A1</span>
         {/if}
     </div>
+    {#if ginkgo_mode}
+        <a href='/gallery' class="mr-0 flex flex-row gap-2 items-center opacity-70 text-sm"> Gallery <svg class="w-5 h-5" fill="currentColor" viewBox="0 -0.5 33 33" version="1.1" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <title>pictures1</title> <path d="M26.604 29.587l-2.624-0.72-0.006-7.258 2.51 0.706 3.619-13.509-18.332-4.912-1.208 4.506h-2.068l1.863-6.952 22.193 5.946-5.947 22.193zM23.039 32h-23.039v-22.977h23.039v22.977zM21.041 11.021h-19.043v13.985h19.043v-13.985zM7.849 20.993l2.283-3.692 2.283 2.301 3.139-4.727 3.283 8.134h-14.556l1.855-3.71 1.713 1.694zM6.484 17.086c-0.828 0-1.499-0.67-1.499-1.498s0.671-1.498 1.499-1.498 1.498 0.67 1.498 1.498-0.67 1.498-1.498 1.498z"></path> </g></svg></a>
+    {:else}
+        <a href='/gallery?htgaa=true' class="mr-0 flex flex-row gap-2 items-center opacity-70 text-sm"> Gallery <svg class="w-5 h-5" fill="currentColor" viewBox="0 -0.5 33 33" version="1.1" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <title>pictures1</title> <path d="M26.604 29.587l-2.624-0.72-0.006-7.258 2.51 0.706 3.619-13.509-18.332-4.912-1.208 4.506h-2.068l1.863-6.952 22.193 5.946-5.947 22.193zM23.039 32h-23.039v-22.977h23.039v22.977zM21.041 11.021h-19.043v13.985h19.043v-13.985zM7.849 20.993l2.283-3.692 2.283 2.301 3.139-4.727 3.283 8.134h-14.556l1.855-3.71 1.713 1.694zM6.484 17.086c-0.828 0-1.499-0.67-1.499-1.498s0.671-1.498 1.499-1.498 1.498 0.67 1.498 1.498-0.67 1.498-1.498 1.498z"></path> </g></svg></a>
+    {/if}
 </div>
 
 <!-- AGAR PLATE -->
@@ -3295,10 +3315,6 @@ async function rebuildFramesNow() {
                 Erase All
             </button>
         {/if}
-        <a href="/gallery" class="flex flex-row gap-1.5 items-center opacity-50 hover:opacity-100 text-sm transition-opacity mt-1 mb-2 ml-2">
-            Gallery
-            <svg class="w-5 h-5" fill="currentColor" viewBox="0 -0.5 33 33" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><title>pictures1</title><path d="M26.604 29.587l-2.624-0.72-0.006-7.258 2.51 0.706 3.619-13.509-18.332-4.912-1.208 4.506h-2.068l1.863-6.952 22.193 5.946-5.947 22.193zM23.039 32h-23.039v-22.977h23.039v22.977zM21.041 11.021h-19.043v13.985h19.043v-13.985zM7.849 20.993l2.283-3.692 2.283 2.301 3.139-4.727 3.283 8.134h-14.556l1.855-3.71 1.713 1.694zM6.484 17.086c-0.828 0-1.499-0.67-1.499-1.498s0.671-1.498 1.499-1.498 1.498 0.67 1.498 1.498-0.67 1.498-1.498 1.498z"></path></g></svg>
-        </a>
     </div>
     
     {#if grid_style === 'QRCode'}
@@ -3492,22 +3508,24 @@ async function rebuildFramesNow() {
                 </div>
             {/if}
             <div class="flex flex-col gap-2 my-auto">
-                <button
-                    class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content hover:bg-neutral-700 {Object.keys(point_colors).length > 0 ? 'bg-neutral-700 opacity-50 cursor-not-allowed' : 'bg-neutral-800'}"
-                    type="button"
-                    onclick={toggleEchoDensity}
-                    disabled={Object.keys(point_colors).length > 0}
-                >
-                    <span class="w-full h-full flex items-center justify-center gap-1.5 text-sm">
-                        <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                            <circle cx="8" cy="8" r="2.25" fill="currentColor"/>
-                            <circle cx="16" cy="8" r="2.25" fill="currentColor"/>
-                            <circle cx="8" cy="16" r="2.25" fill="currentColor"/>
-                            <circle cx="16" cy="16" r="2.25" fill="currentColor"/>
-                        </svg>
-                        Coordinate: {isEcho6144GridStyle(grid_style) ? '6144' : '1536'}
-                    </span>
-                </button>
+                {#if ginkgo_mode}
+                    <button
+                        class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content hover:bg-neutral-700 {Object.keys(point_colors).length > 0 ? 'bg-neutral-700 opacity-50 cursor-not-allowed' : 'bg-neutral-800'}"
+                        type="button"
+                        onclick={toggleEchoDensity}
+                        disabled={Object.keys(point_colors).length > 0}
+                    >
+                        <span class="w-full h-full flex items-center justify-center gap-1.5 text-sm">
+                            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                <circle cx="8" cy="8" r="2.25" fill="currentColor"/>
+                                <circle cx="16" cy="8" r="2.25" fill="currentColor"/>
+                                <circle cx="8" cy="16" r="2.25" fill="currentColor"/>
+                                <circle cx="16" cy="16" r="2.25" fill="currentColor"/>
+                            </svg>
+                            Coordinate: {isEcho6144GridStyle(grid_style) ? '6144' : '1536'}
+                        </span>
+                    </button>
+                {/if}
                 <button
                     class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content bg-neutral-800 hover:bg-neutral-700"
                     onclick={promptImageUpload}
@@ -3559,9 +3577,9 @@ async function rebuildFramesNow() {
                     <div class="text-[10px] text-warning">{cameraError}</div>
                 {/if}
                 <button
-                    class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content hover:bg-neutral-700 {interaction_mode === 'select' && grid_style !== 'Echo1536Image' && grid_style !== 'Echo6144Image' ? 'bg-neutral-600' : 'bg-neutral-800'}"
+                    class="btn btn-xs h-auto min-h-0 w-full px-2 py-1.5 text-base-content hover:bg-neutral-700 {interaction_mode === 'select' && grid_style !== 'Echo1536Image' && grid_style !== 'Echo6144Image' && grid_style !== 'Image' ? 'bg-neutral-600' : 'bg-neutral-800'}"
                     onclick={() => {
-                        grid_style = isEcho6144GridStyle(grid_style) ? 'Echo6144' : 'Echo1536';
+                        grid_style = !ginkgo_mode ? 'Standard' : isEcho6144GridStyle(grid_style) ? 'Echo6144' : 'Echo1536';
                         if (interaction_mode === 'select') setInteractionMode('draw');
                         else setInteractionMode('select');
                     }}
@@ -3694,26 +3712,27 @@ async function rebuildFramesNow() {
         </div>
     {/if}
 
-    {#if Object.keys(points_by_color).length >= 1}
-        <div class="flex flex-col w-full mt-3 gap-2 mx-auto bg-base-200 rounded px-3 pb-2">
-            <div class="flex flex-row justify-between pt-2 items-center">
-                <span class="font-semibold">Coordinates</span>
-                <div class="flex flex-row flex-wrap justify-end gap-2 max-w-full overflow-hidden">
-                    {#if grid_style === 'Echo1536' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144' || grid_style === 'Echo6144Image' || grid_style === 'Echo384' || grid_style === 'Echo384Image'}
-                        <button class="btn btn-sm rounded gap-1 bg-base-100 text-base-content hover:bg-neutral hover:text-white opacity-70" aria-label="Download Echo CSV" title="Download Echo CSV" onclick={() => download_echo_csv.showModal()}>
-                            <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
-                        </button>
-                    {:else}
-                        <button class="btn btn-sm rounded gap-1 bg-base-100 text-base-content hover:bg-neutral hover:text-white" aria-label="Download protocol" title="Download protocol" onclick={() => download_modal.showModal()}>
-                            <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
-                        </button>
-                    {/if}
-                    <button class="btn btn-sm rounded bg-base-100 gap-1 hover:bg-neutral hover:text-white px-1 tooltip tooltip-top" aria-label="Copy Points" data-tip="Copy To Clipboard" onclick={copyPointsToClipboard}>
-                        <svg class="w-7 h-7 opacity-70" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path d="M10 8V7C10 6.05719 10 5.58579 10.2929 5.29289C10.5858 5 11.0572 5 12 5H17C17.9428 5 18.4142 5 18.7071 5.29289C19 5.58579 19 6.05719 19 7V12C19 12.9428 19 13.4142 18.7071 13.7071C18.4142 14 17.9428 14 17 14H16M7 19H12C12.9428 19 13.4142 19 13.7071 18.7071C14 18.4142 14 17.9428 14 17V12C14 11.0572 14 10.5858 13.7071 10.2929C13.4142 10 12.9428 10 12 10H7C6.05719 10 5.58579 10 5.29289 10.2929C5 10.5858 5 11.0572 5 12V17C5 17.9428 5 18.4142 5.29289 18.7071C5.58579 19 6.05719 19 7 19Z" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>
+    <!-- SHOW POINTS -->
+    <div class="flex flex-col w-full mt-3 gap-2 mx-auto bg-base-200 rounded px-3 {Object.keys(points_by_color).length >= 1 ? 'pb-2' : ''}">
+        <div class="flex flex-row justify-between pt-2 items-center">
+            <span class="font-semibold">Coordinates</span>
+            <div class="flex flex-row flex-wrap justify-end gap-2 max-w-full overflow-hidden">
+                {#if grid_style === 'Echo1536' || grid_style === 'Echo1536Image' || grid_style === 'Echo6144' || grid_style === 'Echo6144Image' || grid_style === 'Echo384' || grid_style === 'Echo384Image'}
+                    <button class="btn btn-sm rounded gap-1 bg-base-100 text-base-content hover:bg-neutral hover:text-white opacity-70" aria-label="Download Echo CSV" title="Download Echo CSV" onclick={() => download_echo_csv.showModal()}>
+                        <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
                     </button>
-                </div>
+                {:else}
+                    <button class="btn btn-sm rounded gap-1 bg-base-100 text-base-content hover:bg-neutral hover:text-white" aria-label="Download protocol" title="Download protocol" onclick={() => download_modal.showModal()}>
+                        <svg class="w-5 h-5 inline-block align-middle" transform="scale(1.3) translate(-0.5 0)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 5v8.5m0 0l3-3m-3 3l-3-3M5 15v2a2 2 0 002 2h10a2 2 0 002-2v-2" /></svg>
+                    </button>
+                {/if}
+                <button class="btn btn-sm rounded bg-base-100 gap-1 hover:bg-neutral hover:text-white px-1 tooltip tooltip-top" aria-label="Copy Points" data-tip="Copy To Clipboard" onclick={copyPointsToClipboard}>
+                    <svg class="w-7 h-7 opacity-70" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path d="M10 8V7C10 6.05719 10 5.58579 10.2929 5.29289C10.5858 5 11.0572 5 12 5H17C17.9428 5 18.4142 5 18.7071 5.29289C19 5.58579 19 6.05719 19 7V12C19 12.9428 19 13.4142 18.7071 13.7071C18.4142 14 17.9428 14 17 14H16M7 19H12C12.9428 19 13.4142 19 13.7071 18.7071C14 18.4142 14 17.9428 14 17V12C14 11.0572 14 10.5858 13.7071 10.2929C13.4142 10 12.9428 10 12 10H7C6.05719 10 5.58579 10 5.29289 10.2929C5 10.5858 5 11.0572 5 12V17C5 17.9428 5 18.4142 5.29289 18.7071C5.58579 19 6.05719 19 7 19Z" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"></path></g></svg>
+                </button>
             </div>
+        </div>
 
+        {#if Object.keys(points_by_color).length >= 1}
             {#if grid_style !== 'Echo384' && grid_style !== 'Echo384Image' && grid_style !== 'Echo1536' && grid_style !== 'Echo1536Image' && grid_style !== 'Echo6144' && grid_style !== 'Echo6144Image'}
                 <div class="text-xs opacity-70" bind:this={contentToCopy}>
                     {#each Object.entries(points_by_color) as [color, points]}
@@ -3749,8 +3768,8 @@ async function rebuildFramesNow() {
                     {/each}
                 </div>
             {/if}
-        </div>
-    {/if}
+        {/if}
+    </div>
 
     <!-- ABOUT SECTION -->
     {#if !ginkgo_mode}

@@ -9,7 +9,8 @@
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"sync:cfps": "node tools/sync-cfps.mjs",
-		"sync:cfps:apply": "node tools/sync-cfps.mjs --apply"
+		"sync:cfps:apply": "node tools/sync-cfps.mjs --apply",
+		"check:cfps-range": "node tools/check-cfps-range-parity.mjs"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^4.0.0",

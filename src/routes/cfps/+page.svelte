@@ -15,6 +15,7 @@
   import PlateReaderModal from './PlateReaderModal.svelte';
   import PlateReaderCard from './PlateReaderCard.svelte';
   import ReagentSuggestions from './ReagentSuggestions.svelte';
+  import RangeAlertBadge from './RangeAlertBadge.svelte';
   import ReactionFlow from './ReactionFlow.svelte';
   import AsciiProteins from '$lib/components/AsciiProteins.svelte';
   import DecodeText from './DecodeText.svelte';
@@ -47,6 +48,7 @@
     reagentListKey
   } from '$lib/cfpsReagentContract.js';
   import { REAGENT_ID_TO_PYDANTIC, PYDANTIC_TO_REAGENT_ID } from '$lib/cfpsReagentIdMap.js';
+  import { evaluateRangeChecks, describeRangeFlag, rangeFlagBullets, ALLOW_OUT_OF_RANGE_FIELD, SITE_BAND } from '$lib/cfpsRangeChecks.js';
 
   // ---- target-protein sequences ------------------------------------------
   // Amino-acid sequences are translated directly from the coding regions in
@@ -1400,6 +1402,7 @@
       category: 'community',
       citation: d.author || 'community submission',
       components: componentsForVolumes(volumesFromReagentList(d.reagentList)),
+      rangeAlerts: rangeAlertsFor(d.reagentList),
       yield_g_l: null,
       cost_per_l: null,
       cost_per_g: null,
@@ -1491,7 +1494,8 @@
         // divisions land on the live reaction cost (20 µL reaction ⇒ ×50,000).
         cost_per_l: costUsd > 0 ? costUsd * 50000 : null,
         cost_per_g: null,
-        proteinTarget: m.proteinTarget || null
+        proteinTarget: m.proteinTarget || null,
+        rangeAlerts: rangeAlertsFor(buildReagentListFromVolumes(vols, m.proteinTarget))
       };
     })
   );
@@ -1512,6 +1516,28 @@
   // reagent_list ({ pydantic_field: nL }) for an arbitrary volume map + target —
   // the export contract generalized off buildReagentListForExport so saved mixes
   // serialize (clipboard copy) and submit (batch) exactly like the live mix.
+  // ── autonomous-cfps range checks ──────────────────────────────────────────
+  // The same advisory checks the submit endpoint enforces ($lib/cfpsRangeChecks.js):
+  // a composition with a warn-level finding needs an explicit "submit anyway"
+  // (allow_out_of_range). Shaped for RangeAlertBadge + the submit-modal alert.
+  function reagentLabelForField(field) {
+    if (TEMPLATE_FIELDS.includes(field)) return 'DNA template';
+    const appId = PYDANTIC_TO_REAGENT_ID[field] || field;
+    return allReagents.find((r) => r.id === appId)?.name || field;
+  }
+  function rangeAlertsFor(reagentList) {
+    if (!reagentList || typeof reagentList !== 'object') return null;
+    // warnings only: the informational "reference has none" notes aren't failures, so they stay off the badge
+    const { flags: all, warnCount } = evaluateRangeChecks(reagentList);
+    const flags = all.filter((f) => f.kind === 'warn');
+    if (!flags.length) return null;
+    return {
+      warnCount,
+      infoCount: 0,
+      lines: flags.map((f) => ({ kind: f.kind, text: describeRangeFlag(f, reagentLabelForField), ...rangeFlagBullets(f, reagentLabelForField) }))
+    };
+  }
+
   function buildReagentListFromVolumes(volumes, target) {
     const list = {};
     const add = (key, nl) => { if (key) list[key] = (list[key] || 0) + nl; };
@@ -2307,6 +2333,7 @@
     submitSampleId = String((parsed && !Array.isArray(parsed) && parsed.sample_id) || computeSampleId() || '').trim();
     submitMode = 'create';
     dupAcknowledged = false;
+    rangeAcknowledged = false;
     serverDupMatches = [];
     showSubmitModal = true;
   }
@@ -2417,7 +2444,8 @@
               totalCostUsd: costUsdForVolumes(mix.volumes),
               costPerMlReaction: costUsdForVolumes(mix.volumes) * 50,
               // Batch members are notify-only; a lone composition only after "Submit anyway".
-              allow_duplicate: single ? dupAcknowledged : true
+              allow_duplicate: single ? dupAcknowledged : true,
+              [ALLOW_OUT_OF_RANGE_FIELD]: rangeAcknowledged
             })
           });
           const result = await res.json();
@@ -2514,6 +2542,22 @@
       })
       .filter((d) => d.matches.length || d.sameAsMix != null);
   });
+  // Range findings for every mix going out (create and update modes alike).
+  let submitRangeAlerts = $derived.by(() => {
+    if (!showSubmitModal) return [];
+    return [...resolvedMixes]
+      .sort((a, b) => a.n - b.n)
+      .map((m) => {
+        const target = PROTEIN_TARGETS.includes(m.proteinTarget) ? m.proteinTarget : proteinTarget;
+        return { mix: m, alerts: rangeAlertsFor(buildReagentListFromVolumes(m.volumes, target)) };
+      })
+      .filter((r) => r.alerts);
+  });
+  let submitRangeWarnMixes = $derived(submitRangeAlerts.filter((r) => r.alerts.warnCount > 0));
+  // "Submit anyway" ticked for out-of-range compositions → allow_out_of_range.
+  let rangeAcknowledged = $state(false);
+  let rangeBlocked = $derived(submitRangeWarnMixes.length > 0 && !rangeAcknowledged);
+
   let serverDupMatches = $state([]);
   let dupAcknowledged = $state(false); // "Submit anyway" pressed for a single duplicate
   let dupStarBusy = $state(false);
@@ -2643,6 +2687,7 @@
         .map((u) => myDesignsById.get(u.recordId))
         .find((s) => s?.experimentHypothesis)?.experimentHypothesis ?? '';
     submitMode = 'update';
+    rangeAcknowledged = false;
     showSubmitModal = true;
   }
 
@@ -2730,7 +2775,8 @@
               id: r.recordId,
               sample,
               totalCostUsd: costUsdForVolumes(r.volumes),
-              costPerMlReaction: costUsdForVolumes(r.volumes) * 50
+              costPerMlReaction: costUsdForVolumes(r.volumes) * 50,
+              [ALLOW_OUT_OF_RANGE_FIELD]: rangeAcknowledged
             })
           });
           const result = await res.json();
@@ -2770,7 +2816,8 @@
               sample,
               author: data?.kcUser?.name || '',
               totalCostUsd: costUsdForVolumes(r.volumes),
-              costPerMlReaction: costUsdForVolumes(r.volumes) * 50
+              costPerMlReaction: costUsdForVolumes(r.volumes) * 50,
+              [ALLOW_OUT_OF_RANGE_FIELD]: rangeAcknowledged
             })
           });
           const result = await res.json();
@@ -3620,11 +3667,16 @@ ${(() => {
   const ex = knownGoodExample();
   if (!ex) return '';
   const payload = JSON.stringify({ sample: { sample_id: '<unique id>', sample_type: 'experimental', reagent_list: ex.reagent_list, metadata: { protein_target: 'sfGFP', comments: '<the hypothesis this composition tests>', ai_model: '<your model name>', acknowledgements: '' } } }, null, 2);
+  const exWarn = evaluateRangeChecks(ex.reagent_list).flags.filter((f) => f.kind === 'warn');
+  const rangeNote = exWarn.length
+    ? `\nNote: it trips the range checks (${exWarn.map((f) => f.component).join(', ')}), so as-is it
+needs "${ALLOW_OUT_OF_RANGE_FIELD}": true — see the range checks below.`
+    : '';
   return `Example — a reaction known to work: ${ex.name}, the sfGFP PEP-only control
 from Ginkgo's reference plates${ex.yieldGl ? ` (observed ≈ ${ex.yieldGl.toFixed(2)} g/L sfGFP)` : ''}. It is a
-complete, valid submission body; use it to check your request format, or as a
+complete submission body; use it to check your request format, or as a
 baseline to change. The control is already measured, so submitting it unchanged
-adds no new information.
+adds no new information.${rangeNote}
 ${payload}
 
 `;
@@ -3637,6 +3689,21 @@ ${payload}
   • volumes total exactly ${MAX_TOTAL_NL} nL — nuclease_free_water fills the rest
   • metadata.protein_target is one of the three targets
   • metadata.comments (the hypothesis) is required, ≤ 1500 chars
+
+Range checks (a loosened version of the autonomous-cfps advisory checks, on
+total delivered concentrations — base-buffer floors included). They only catch
+highly concerning designs, not small deviations:
+  • at least one ATP-regeneration substrate (pep_mono, ribose, glucose, …)
+  • Reteplase must dose DsbC, GSSG and GSH (none = rejected)
+  • no watchlisted salt / buffer / amino acid / redox component above
+    ${SITE_BAND.high}× the highest value across the target's reference controls
+  • energy substrates at most ${SITE_BAND.high}× a same-target energy reference,
+    when the set of substrates you dose matches one
+A composition outside them is rejected (errors with "check": "range", each with
+the nL window that would fix it; "out_of_range" lists every finding). Adjust the
+volumes — or, only if your user has chosen to test outside the reference ranges,
+resend with "${ALLOW_OUT_OF_RANGE_FIELD}": true (top level, applies to every sample;
+also accepted by POST /cfps/my-designs). Dry runs give the same verdict.
 
 Rejections come back as HTTP 400 (409 if a sample_id is taken):
      { success: false, error: "<summary>",
@@ -4080,6 +4147,9 @@ ${approvedPaletteText()}
         {#if data?.kcUser}
           <span class="cf-auth-status">signed in · {data.kcUser.name}</span>
           <a class="btn-bp" href="/cfps/analysis" style="text-decoration:none;" title="See how the community is approaching the challenge">HTBAA Summary</a>
+          <!-- Final plates (/cfps/final-plates) is built and working but not yet
+               announced — the route stays live so it can be shared by link; put
+               this button back when it goes out to participants. -->
           <form method="POST" action="?/kcLogout" use:enhance style="display:inline;">
             <button type="submit" class="btn-bp" title="Sign out">Sign out ⎋</button>
           </form>
@@ -4375,6 +4445,7 @@ ${approvedPaletteText()}
                             <li class="cf-batchcard__member">
                               <span class="cf-batchcard__mix">Mix {m.batchIndex}</span>
                               <span class="cf-batchcard__mname" title={m.name}>{m.name}</span>
+                              <RangeAlertBadge alerts={rangeAlertsFor(m.reagentList)} compact />
                               {#if m.proteinTarget}
                                 <span class="cf-batchcard__mtarget">{m.proteinTarget}</span>
                               {/if}
@@ -4445,6 +4516,7 @@ ${approvedPaletteText()}
                       {:else}
                         <div class="cf-mydesign__hd">
                           <span class="cf-mydesign__name" title={d.name}>{d.name}</span>
+                          <RangeAlertBadge alerts={rangeAlertsFor(d.reagentList)} />
                           {#if d.proteinTarget}
                             <span class="cf-mydesign__badge" style={pal ? `color:${pal.ink};background:${pal.wash};border-color:${pal.line};` : ''}>{d.proteinTarget}</span>
                           {/if}
@@ -5062,6 +5134,39 @@ ${approvedPaletteText()}
               {/each}
             </div>
           {/if}
+          {#if submitRangeAlerts.length}
+            {@const multi = resolvedMixes.length > 1}
+            <div class="cf-dup" class:cf-dup--warn={submitRangeWarnMixes.length > 0} role={submitRangeWarnMixes.length ? 'alert' : 'status'}>
+              <b class="cf-dup__ttl">
+                {#if submitRangeWarnMixes.length}
+                  {multi
+                    ? `${submitRangeWarnMixes.length} of ${resolvedMixes.length} compositions are outside the reference ranges`
+                    : 'This composition is outside the reference ranges'}
+                {:else}
+                  Range notes
+                {/if}
+              </b>
+              {#each submitRangeAlerts as r (r.mix.id)}
+                {#if multi}<span class="cf-range__mix">{mixLabel(r.mix.n)}</span>{/if}
+                <ul class="cf-dup__list">
+                  {#each r.alerts.lines as line}
+                    <li class:cf-range__info={line.kind !== 'warn'}>
+                      {#if line.bullets}<b>{line.name}</b>
+                        <ul class="cf-range__sub">{#each line.bullets as b}<li>{b}</li>{/each}</ul>
+                      {:else}{line.text}{/if}
+                    </li>
+                  {/each}
+                </ul>
+              {/each}
+              {#if submitRangeWarnMixes.length}
+                <p class="cf-dup__msg">These only flag designs that won't work: a missing essential (no energy substrate, or Reteplase without DsbC / GSSG / GSH) or a component over {SITE_BAND.high}× the reference controls. Fix the volumes, or submit anyway if this is deliberate.</p>
+                <label class="cf-range__ack">
+                  <input type="checkbox" bind:checked={rangeAcknowledged} disabled={submitBusy} />
+                  Submit anyway — I'm deliberately testing outside these ranges
+                </label>
+              {/if}
+            </div>
+          {/if}
           {#if submitMode === 'create' && singleDupBlocked}
             {@const others = singleDupMatches.filter((m) => !m.mine)}
             <div class="cf-dup cf-dup--warn" role="alert">
@@ -5077,7 +5182,7 @@ ${approvedPaletteText()}
                   : 'You’ve already submitted this reaction. Change something to test a new idea, or submit a repeat anyway.'}
               </p>
               <div class="cf-dup__actions">
-                <button type="button" class="btn-bp" onclick={submitAnyway} disabled={submitBusy || dupStarBusy || submitHypothesisMissing} title={submitHypothesisMissing ? 'Add the hypothesis being tested first' : 'Submit your own copy of this reaction'}>Submit anyway</button>
+                <button type="button" class="btn-bp" onclick={submitAnyway} disabled={submitBusy || dupStarBusy || submitHypothesisMissing || rangeBlocked} title={rangeBlocked ? 'Outside the reference ranges — tick “Submit anyway” in the range notice first' : submitHypothesisMissing ? 'Add the hypothesis being tested first' : 'Submit your own copy of this reaction'}>Submit anyway</button>
                 {#if others.length}
                   <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={starInsteadOfSubmitting} disabled={submitBusy || dupStarBusy}>
                     {dupStarBusy ? 'Starring…' : others.every((m) => m.starredByMe) ? '★ Already starred — don’t submit' : '★ Star it instead'}
@@ -5106,11 +5211,11 @@ ${approvedPaletteText()}
         <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px;">
           <button type="button" class="btn-bp" onclick={closeSubmitModal} disabled={submitBusy}>Cancel</button>
           {#if submitMode === 'update'}
-            <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={confirmUpdateDesign} disabled={submitBusy || submitHypothesisMissing} title={submitHypothesisMissing ? 'Add the hypothesis being tested before saving' : ''}>
+            <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={confirmUpdateDesign} disabled={submitBusy || submitHypothesisMissing || rangeBlocked} title={rangeBlocked ? 'Outside the reference ranges — adjust the volumes or tick “Submit anyway”' : submitHypothesisMissing ? 'Add the hypothesis being tested before saving' : ''}>
               {#if submitBusy}Saving…{:else}{updateButtonLabel} ▸{/if}
             </button>
           {:else}
-            <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={confirmSubmitDesign} disabled={submitBusy || submitHypothesisMissing || singleDupBlocked} title={singleDupBlocked ? 'This reaction already exists — star it instead, or choose Submit anyway' : submitHypothesisMissing ? 'Add the hypothesis being tested before submitting' : ''}>
+            <button type="button" class="btn-bp" style="color:#fff;background:var(--teal);border-color:var(--teal-ink);" onclick={confirmSubmitDesign} disabled={submitBusy || submitHypothesisMissing || singleDupBlocked || rangeBlocked} title={rangeBlocked ? 'Outside the reference ranges — adjust the volumes or tick “Submit anyway”' : singleDupBlocked ? 'This reaction already exists — star it instead, or choose Submit anyway' : submitHypothesisMissing ? 'Add the hypothesis being tested before submitting' : ''}>
               {#if submitBusy}Submitting…{:else if batchMixCount > 1}Submit {batchMixCount} ▸{:else}Submit ▸{/if}
             </button>
           {/if}
@@ -5225,6 +5330,15 @@ ${approvedPaletteText()}
     font: 11px/1.5 var(--mono); color: var(--ink-2);
   }
   .cf-dup--warn { background: #fff8e6; border-color: #f0d590; }
+  .cf-range__mix { display: block; margin-top: 4px; font-size: 11px; font-weight: 600; }
+  .cf-range__info { color: #5b6b78; }
+  .cf-range__sub { margin: 1px 0 0; padding-left: 14px; list-style: disc; }
+  /* beats blueprint.css's `.cfps-page .cf-form label` (column, uppercase) */
+  .cf-form .cf-range__ack {
+    flex-direction: row; align-items: center; gap: 6px; margin-top: 2px;
+    font: 600 11px/1.4 var(--mono); color: var(--ink); text-transform: none; letter-spacing: 0; cursor: pointer;
+  }
+  .cf-form .cf-range__ack input { margin: 0; flex: none; }
   .cf-dup__ttl { font: 600 11.5px/1.35 var(--sans); color: var(--ink); }
   .cf-dup__list { margin: 0; padding-left: 16px; list-style: disc; }
   .cf-dup__id { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }

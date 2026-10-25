@@ -5,7 +5,7 @@ import { DEV_STUBS } from '$lib/server/devStubs.js';
 import { loadMyDesigns } from '$lib/server/loadCommunityDesigns.js';
 import { loadCfpsReagentGroups } from '$lib/server/loadCfpsReagentGroups.js';
 import { alignTemplateToTarget } from '$lib/cfpsReagentContract.js';
-import { validateSample, costForReagentList, httpUrlProblem, conversationLinkApprovalProblem, LINK_APPROVAL_FIELD, LIMITS } from '$lib/server/designSubmission.js';
+import { validateSample, costForReagentList, httpUrlProblem, conversationLinkApprovalProblem, LINK_APPROVAL_FIELD, LIMITS, rangeReport, ALLOW_OUT_OF_RANGE_FIELD } from '$lib/server/designSubmission.js';
 
 // Manage the signed-in user's own CFPS compositions in the cfps_designs
 // collection — rename / edit metadata (op: "update") or remove (op: "delete").
@@ -102,14 +102,20 @@ export const POST = async (event) => {
     // Full-composition updates get the same rules (and field-level messages) as a
     // new submission — checked up front so bad payloads fail fast. sample_id may be
     // omitted: the record keeps its current one.
+    // That includes the range checks: out-of-range volumes need allow_out_of_range.
+    const allowOutOfRange = body?.[ALLOW_OUT_OF_RANGE_FIELD] === true;
+    let rangeFlags = null;
     if (op === 'update' && body?.sample && typeof body.sample === 'object' && !Array.isArray(body.sample)) {
       const sample = body.sample;
-      const { errors } = validateSample({ ...sample, sample_id: sample.sample_id || 'existing-id' });
-      if (errors.length) {
+      const res = validateSample({ ...sample, sample_id: sample.sample_id || 'existing-id' }, { allowOutOfRange });
+      rangeFlags = res.rangeFlags;
+      const outOfRange = rangeFlags?.length ? { out_of_range: rangeReport(rangeFlags) } : {};
+      if (res.errors.length) {
         return json({
           success: false,
-          error: `${errors.length} problem${errors.length === 1 ? '' : 's'} found — ${errors.map((e) => e.message).join(' ')}`,
-          errors,
+          error: `${res.errors.length} problem${res.errors.length === 1 ? '' : 's'} found — ${res.errors.map((e) => e.message).join(' ')}`,
+          errors: res.errors,
+          ...outOfRange,
           help: 'GET /cfps/submit-design returns the full contract.'
         }, { status: 400 });
       }
@@ -185,10 +191,13 @@ export const POST = async (event) => {
         totalCost = costForReagentList(reagentList, (await loadCfpsReagentGroups(null)).reagentGroups);
         perMl = totalCost * 50;
       }
+      const metadata = { ...(md || {}) };
+      if (allowOutOfRange && rangeFlags?.some((f) => f.kind === 'warn')) metadata.out_of_range_acknowledged = true;
+      else delete metadata.out_of_range_acknowledged;
       const updated = await pb.collection(COLLECTION).update(id, {
         title: sampleId,
         rationale: String(md.comments || '').trim() || null,
-        design_json: { ...sample, sample_id: sampleId },
+        design_json: { ...sample, sample_id: sampleId, metadata },
         total_volume_nl: totalNl,
         total_cost_usd: round2(totalCost),
         cost_per_ml_reaction: round2(perMl)

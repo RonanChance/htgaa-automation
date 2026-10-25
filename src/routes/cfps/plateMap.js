@@ -396,3 +396,113 @@ export function placementOrder(plates) {
     return a.key === b.key ? a.idx - b.idx : a.key.localeCompare(b.key);
   });
 }
+
+// ── validation set ─────────────────────────────────────────────────────────────
+// EVERY placeable composition laid out on as many plates as it takes — not the
+// four per target a real run gets — so the lab team can push the whole set
+// through `cfps-validate-design` (autonomous-cfps) before anything is chosen.
+// When the real plates are picked later, every candidate is already known-good.
+//
+// Shaped by how that validator behaves:
+//   · One mechanical failure anywhere fails the WHOLE file and blocks the
+//     composition report. So designs our own contract already rejects are left
+//     out and listed in `excluded` with the reason, rather than sinking the lot.
+//   · Plate (column order) demands exactly 320 samples, so each target's last,
+//     partial plate is padded with `empty` wells — the same padding the
+//     autonomous-cfps test fixtures use; empties carry no reagent_list and are
+//     exempt from the replicate rule.
+//   · PlateBatch caps total DsbC at one run's supply (4.1 mL). The batch keeps
+//     that real check whenever the whole set fits under it (it does today —
+//     ~1.5 mL for ~1,500 designs). Only if the set outgrows it is the cap lifted
+//     (`reagent_inventory: {}`), because otherwise an inventory overrun would
+//     fail every design and hide whether the recipes themselves are valid —
+//     inventory belongs to the plates actually picked. `summary` always reports
+//     the demand and says when the cap was lifted, so it never disappears.
+//   · Identical reactions are merged into one well group with every contributor
+//     credited, exactly as the plate builder does.
+//
+// Replicates sit in consecutive wells down a column. That's fine for validation —
+// layout doesn't affect it — but it is NOT a run layout; real plates still come
+// from the builder, which spreads replicates apart.
+export const DSBC_INVENTORY_NL = 4_100_000; // PlateBatch default in autonomous-cfps
+
+export function validationBatch(designs, {
+  validate = () => ({ valid: true }),
+  fingerprint = () => null,
+  viewerName = '',
+  now = new Date()
+} = {}) {
+  const lookup = new Map(designs.map((d) => [d.id, d]));
+  const excluded = [];
+  const plates = [];
+  const perTarget = {};
+  let dsbcNl = 0;
+  const day = now.toISOString().slice(0, 10);
+
+  for (const target of TARGETS) {
+    // Group identical reactions; first submission (oldest) leads the group.
+    const groups = [];
+    const byFp = new Map();
+    const mine = designs
+      .filter((d) => targetOf(d) === target)
+      .sort((a, b) => String(a.created ?? '').localeCompare(String(b.created ?? '')));
+    for (const d of mine) {
+      const check = validate(d);
+      if (!check.valid) {
+        excluded.push({ id: d.id, name: d.name, author: d.author ?? null, target, reason: check.detail ?? 'invalid reagent list' });
+        continue;
+      }
+      const fp = fingerprint(d);
+      const existing = fp ? byFp.get(fp) : null;
+      if (existing) { existing.designIds.push(d.id); continue; }
+      const g = { designIds: [d.id] };
+      groups.push(g);
+      if (fp) byFp.set(fp, g);
+    }
+
+    const plateCount = Math.ceil(groups.length / PER_PLATE);
+    for (let p = 0; p < plateCount; p++) {
+      const chunk = groups.slice(p * PER_PLATE, (p + 1) * PER_PLATE)
+        .map((g, i) => ({ ...g, wells: [0, 1, 2, 3].map((r) => i * REPLICATES + r) }));
+      const json = plateJson(plateKey(target, p), chunk, (id) => lookup.get(id), { viewerName, now });
+      // Pad the unfilled tail so the plate has the 320 samples the model requires.
+      for (let s = chunk.length * REPLICATES; s < SLOTS; s++) {
+        json.samples.push({ sample_id: 'empty', sample_type: 'empty', reagent_list: null, metadata: { well: slotWell(s) } });
+      }
+      json.plate_id = `validation_${target}_${String(p + 1).padStart(2, '0')}_${day}`;
+      json.metadata = {
+        ...json.metadata,
+        source: 'htbaa-validation-set',
+        purpose: 'Validation only — every submitted composition, not a run layout.',
+        empty_wells: SLOTS - chunk.length * REPLICATES
+      };
+      for (const g of chunk) {
+        dsbcNl += (Number(lookup.get(g.designIds[0])?.reagentList?.dsbc_ecoli) || 0) * REPLICATES;
+      }
+      plates.push(json);
+    }
+    perTarget[target] = {
+      compositions: mine.length - excluded.filter((x) => x.target === target).length,
+      reactions: groups.length,
+      plates: plateCount
+    };
+  }
+
+  const overInventory = dsbcNl > DSBC_INVENTORY_NL;
+  return {
+    // Omitting reagent_inventory keeps autonomous-cfps' own default cap in force.
+    batch: overInventory ? { plates, reagent_inventory: {} } : { plates },
+    excluded,
+    summary: {
+      generated_at: now.toISOString(),
+      built_by: viewerName || null,
+      per_target: perTarget,
+      plates: plates.length,
+      // What the whole set would need, against the single-run DsbC supply.
+      dsbc_ecoli_nl: dsbcNl,
+      dsbc_inventory_nl: DSBC_INVENTORY_NL,
+      inventory_cap_lifted: overInventory,
+      excluded: excluded.length
+    }
+  };
+}

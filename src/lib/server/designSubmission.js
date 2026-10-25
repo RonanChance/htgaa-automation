@@ -11,6 +11,9 @@ import {
   validateReagentList
 } from '$lib/cfpsReagentContract.js';
 import { PYDANTIC_TO_REAGENT_ID } from '$lib/cfpsReagentIdMap.js';
+import { evaluateRangeChecks, describeRangeFlag, ALLOW_OUT_OF_RANGE_FIELD, SITE_BAND } from '$lib/cfpsRangeChecks.js';
+
+export { ALLOW_OUT_OF_RANGE_FIELD };
 
 // Every rule a composition must pass before it's written to cfps_designs, in one
 // place, so the browser designer and AI agents get the same verdict — and agents
@@ -89,10 +92,32 @@ export function conversationLinkApprovalProblem(link, approved, { linkField = 'a
   return `${linkField} was sent without ${approvalField}: true. Ask your user whether they approve publicly sharing a link to this conversation; only if they say yes, resend with ${approvalField}: true — otherwise leave ${linkField} out.`;
 }
 
-// opts.requireLinkApproval: set for agent-token requests (see LINK_APPROVAL_FIELD).
-export function validateSample(sample, { requireLinkApproval = false } = {}) {
+// The autonomous-cfps advisory range checks (see $lib/cfpsRangeChecks.js) as
+// submission rules: a warn-level flag rejects the composition unless the caller
+// set ALLOW_OUT_OF_RANGE_FIELD, in which case it's downgraded to a warning.
+// Info-level flags are always just warnings.
+function rangeCheckFindings(rl, allowOutOfRange) {
+  const { flags } = evaluateRangeChecks(rl);
   const errors = [];
   const warnings = [];
+  for (const f of flags) {
+    const field = f.component === 'energy' ? 'reagent_list' : `reagent_list.${f.component}`;
+    const line = describeRangeFlag(f);
+    if (f.kind !== 'warn') warnings.push(line);
+    else if (allowOutOfRange) warnings.push(`Out of range (accepted via ${ALLOW_OUT_OF_RANGE_FIELD}): ${line}`);
+    else errors.push({ field, check: 'range', message: `${line} To submit outside the reference range anyway, resend with "${ALLOW_OUT_OF_RANGE_FIELD}": true.` });
+  }
+  return { flags, errors, warnings };
+}
+
+// opts.requireLinkApproval: set for agent-token requests (see LINK_APPROVAL_FIELD).
+// opts.allowOutOfRange: the request's ALLOW_OUT_OF_RANGE_FIELD (see rangeCheckFindings).
+// → { errors, warnings, rangeFlags } — rangeFlags only when the reagent_list passed
+//   the contract (range checks on a malformed list would just be noise).
+export function validateSample(sample, { requireLinkApproval = false, allowOutOfRange = false } = {}) {
+  const errors = [];
+  const warnings = [];
+  let rangeFlags = null;
   const err = (field, message) => errors.push({ field, message });
   if (!isObj(sample)) {
     err('sample', 'Each composition must be a JSON object: { sample_id, sample_type, reagent_list, metadata }.');
@@ -123,6 +148,12 @@ export function validateSample(sample, { requireLinkApproval = false } = {}) {
     }
     for (const [k, v] of Object.entries(rl)) {
       if (OUT_OF_STOCK.has(k) && Number(v) > 0) warnings.push(`${k} is currently out of stock — this composition may not be run until it is restocked.`);
+    }
+    if (!errors.length) {
+      const range = rangeCheckFindings(rl, allowOutOfRange);
+      rangeFlags = range.flags;
+      errors.push(...range.errors);
+      warnings.push(...range.warnings);
     }
   }
 
@@ -169,7 +200,23 @@ export function validateSample(sample, { requireLinkApproval = false } = {}) {
     if (m.acknowledgements != null && typeof m.acknowledgements !== 'string') err('metadata.acknowledgements', 'metadata.acknowledgements must be a string.');
     else if (tooLong(m.acknowledgements, LIMITS.acknowledgements)) err('metadata.acknowledgements', `metadata.acknowledgements is over ${LIMITS.acknowledgements} characters.`);
   }
-  return { errors, warnings };
+  return { errors, warnings, rangeFlags };
+}
+
+// Per-sample range findings for API responses (dry runs, rejections, accepted
+// overrides): the Python WellFlag fields plus the nL window that would fix each.
+export function rangeReport(rangeFlags) {
+  return (rangeFlags || []).map((f) => ({
+    component: f.component,
+    kind: f.kind,
+    check: f.check,
+    ratio: f.ratio,
+    band: f.band,
+    ...(f.unit ? { value: f.value, unit: f.unit } : {}),
+    ...(f.referenceName ? { reference: f.referenceName } : {}),
+    ...(f.suggestedNl ? { suggested_nl: f.suggestedNl } : {}),
+    message: f.message
+  }));
 }
 
 // Cost of a reagent_list from the PocketBase reagent catalog (costPerMl, keyed by
@@ -184,6 +231,14 @@ export function costForReagentList(rl, reagentGroups) {
     usd += ((Number(nl) || 0) / 1_000_000) * (costById.get(appId) ?? costById.get(field) ?? 0);
   }
   return usd;
+}
+
+// "sfGFP: a, b, c; PETase: …" from the generated range-check watchlists.
+function watchlistByTarget() {
+  return PROTEIN_TARGETS.map((target) => {
+    const modelTarget = spec.templateToProteinTarget[PROTEIN_TEMPLATE_FIELD[target]];
+    return `${target}: ${(spec.rangeChecks.targets[modelTarget]?.watchlist || []).join(', ')}`;
+  }).join('; ');
 }
 
 // The machine-readable contract an agent can fetch before designing.
@@ -222,6 +277,17 @@ export function submissionContract(base) {
         `All volumes sum to exactly ${MAX_TOTAL_NL} nL — ${WATER_FIELD} fills the remainder.`
       ]
     },
+    range_checks: {
+      source: 'A deliberately loosened version of the autonomous-cfps validate_design advisory checks, applied to total delivered concentrations (base-buffer floors included). They catch highly concerning designs, not small deviations.',
+      checks: [
+        `At least one ATP-regeneration substrate (${spec.rangeChecks.energySubstrates.join(', ')}).`,
+        `Watchlisted components present (not zero; only Reteplase's DsbC, GSSG and GSH can be missing, the rest have a base-buffer floor) and at most ${SITE_BAND.high}× the highest value across the target's reference controls — ${watchlistByTarget()}.`,
+        `When the dosed energy substrates exactly match a same-target energy reference, each at most ${SITE_BAND.high}× of it.`,
+        'Informational only: a reteplase redox extra (DsbC, GSSG, GSH) dosed where the target reference has none.'
+      ],
+      enforcement: `A composition that fails a check is rejected (HTTP 400, errors with check: "range" and a suggested nL window). To submit it anyway, add "${ALLOW_OUT_OF_RANGE_FIELD}": true to the request body; the findings then come back as warnings. Dry runs report the same verdict.`,
+      bypass_field: ALLOW_OUT_OF_RANGE_FIELD
+    },
     sample: {
       sample_id: `required, unique across all submissions, ≤ ${LIMITS.sampleId} chars`,
       sample_type: 'must be "experimental"'
@@ -242,6 +308,7 @@ export function submissionContract(base) {
       atomic: 'every sample is validated first — if any fails, nothing is written'
     },
     dry_run: 'add "dry_run": true to validate without saving',
+    [ALLOW_OUT_OF_RANGE_FIELD]: 'add true to submit compositions that fail the range checks (see range_checks); only when your user has chosen to test outside the reference ranges',
     duplicates: 'a reagent_list identical to an existing composition is rejected for a single submission (409 + duplicate_of: star the original via POST /cfps/stars, or resend with "allow_duplicate": true); in a batch it is allowed and reported in "duplicates" / "warnings"',
     examples: {
       // Shape-only examples: the fixed backbone + water, with placeholder text. They

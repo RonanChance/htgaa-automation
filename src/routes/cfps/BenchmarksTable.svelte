@@ -6,6 +6,8 @@
 
     import { onDestroy, onMount } from 'svelte';
     import PlateBuilder from './PlateBuilder.svelte';
+    import { page } from '$app/state';
+    import { loginHref } from './loginHref.js';
     import {
         REAGENT_ALIASES as STATIC_REAGENT_ALIASES,
         REAGENT_GROUPS as STATIC_REAGENT_GROUPS,
@@ -15,6 +17,7 @@
         waterFillNlForFormulation
     } from '$lib/cfps-benchmarks.js';
     import { REAGENT_SYNOPSES } from '$lib/reagent-synopses.js';
+    import RangeAlertBadge from './RangeAlertBadge.svelte';
 
     // Blue-grey accent marker for custom Ginkgo reagents (distinct from the purple
     // ○ used for theoretical / not-in-stock reagents).
@@ -171,7 +174,12 @@
                 author: c.author,
                 contributorKey: c.contributorKey,
                 aiModel: c.aiModel,
-                // Submission time — the plate map's auto-fill places oldest first.
+                // Carried into each well's sample metadata on export, so a plate
+                // credits its contributors and records why each reaction is there.
+                rationale: c.rationale,
+                acknowledgements: c.acknowledgements,
+                aiConversationLink: c.aiConversationLink,
+                // Submission time — auto-fill and the validation set go oldest first.
                 created: c.created,
                 // Final in-reaction concentrations per paper-reagent, already
                 // including what the base buffer contributes (componentsForVolumes
@@ -453,6 +461,21 @@
     // then every visible reference / literature column. Every stocked reagent row is
     // kept even when empty, so the export lists the full reagent set; reference-only
     // rows (nothing in stock, e.g. Bis-Tris) are kept only when some column uses them.
+    // One badge for a batch card: every member's range findings, grouped under the member's name.
+    function batchRangeAlerts(members) {
+        const lines = [];
+        let warnCount = 0;
+        let infoCount = 0;
+        (members || []).forEach((m, i) => {
+            const a = m.rangeAlerts;
+            if (!a) return;
+            warnCount += a.warnCount;
+            infoCount += a.infoCount;
+            for (const l of a.lines) lines.push({ ...l, group: m.name || `#${i + 1}` });
+        });
+        return lines.length ? { warnCount, infoCount, lines } : null;
+    }
+
     function downloadCSV() {
         const allReagentPapers = reagentGroups.flatMap(g => g.reagents);
         const mixCols = resolvedMixColumns.map((col) => ({
@@ -531,8 +554,7 @@
     let activeSynopsis = $state(null); // { name, synopsis } | null
 
     // Escape closes the reagent synopsis popup first, then leaves fullscreen focus
-    // mode (only reachable without the Fullscreen API — with it, the browser eats
-    // Escape itself and onFullscreenChange syncs focusMode back off).
+    // mode.
     function handleSynopsisKeydown(e) {
         if (e.key !== 'Escape') return;
         hideSynopsisHover();
@@ -607,35 +629,24 @@
     }
 
     // ─── Fullscreen focus mode ────────────────────────────────────────────────
-    // Pins the designer over the whole viewport: community contributions on the
-    // left half (wide, readable cards), the comparison table on the right half,
-    // and the toggle bar along the bottom. Also asks the browser for real
-    // fullscreen on <html> (not this section) so the page-level modals — recipe,
-    // submit, plate reader, synopsis — still layer above it as usual.
+    // Pins the designer over the whole browser viewport: community contributions on
+    // the left half (wide, readable cards), the comparison table on the right half,
+    // and the toggle bar along the bottom. Deliberately NOT the browser Fullscreen
+    // API — the overlay alone fills the window, so the tab strip, other windows and
+    // the OS stay reachable, and nothing has to be undone when the user leaves.
+    // Esc exits (handleSynopsisKeydown), as does the header's exit button.
     let focusMode = $state(false);
 
-    async function enterFocus() {
+    function enterFocus() {
         focusMode = true;
-        try {
-            if (document.fullscreenEnabled && !document.fullscreenElement) {
-                await document.documentElement.requestFullscreen();
-            }
-        } catch { /* denied / unsupported (e.g. iOS) — the overlay alone still works */ }
     }
-    async function exitFocus() {
+    function exitFocus() {
         focusMode = false;
-        if (document.fullscreenElement) {
-            try { await document.exitFullscreen(); } catch { /* already exiting */ }
-        }
     }
     function toggleFocus() {
         hideSynopsisHover();
         if (focusMode) exitFocus();
         else enterFocus();
-    }
-    // Leaving browser fullscreen (Esc / F11 / browser UI) also leaves focus mode.
-    function onFullscreenChange() {
-        if (!document.fullscreenElement && focusMode) focusMode = false;
     }
     // Freeze the page behind the overlay so wheel scrolling stays in the panes.
     $effect(() => {
@@ -964,6 +975,18 @@
     const comparisonStickyLeft = $derived(railStickyLeft + (onAddMix ? RAIL_WIDTH : 0));
     const closestStickyLeft = $derived(comparisonStickyLeft + (showComparison ? comparisonColWidth : 0));
 
+    // A big batch would freeze wider than the viewport and leave nothing to scroll.
+    // Freeze the whole group only while it fits in FREEZE_MAX_FRACTION of the
+    // table's visible width; beyond that only the reagent names and the mix being
+    // edited stay pinned (it sticks at customStickyLeft as you scroll — the other
+    // mixes, the add-mix rail and the comparison/closest columns scroll normally).
+    const FREEZE_MAX_FRACTION = 0.6;
+    let tableScrollWidth = $state(0);
+    const frozenGroupRight = $derived(closestStickyLeft + (showClosestMatch ? closestColWidth : 0));
+    const freezeAll = $derived(!tableScrollWidth || frozenGroupRight <= tableScrollWidth * FREEZE_MAX_FRACTION);
+    const mixFree = (col) => !freezeAll && !col.selected;
+    const mixLeft = (col) => (freezeAll ? mixStickyLefts[col.index] : customStickyLeft);
+
     // Community submissions, newest first, for the toggle-able browse rail on the
     // left of the designer. Clicking a card loads it into the Custom Mix via
     // onSetCustomStart; the card whose key matches customStartKey reads as active.
@@ -1216,7 +1239,8 @@
         { key: 'recent', label: 'Newest', title: 'Most recent first' },
         { key: 'oldest', label: 'Oldest', title: 'Least recent first' },
         { key: 'most-starred', label: '★ Most', title: 'Most starred first' },
-        { key: 'least-starred', label: '★ Least', title: 'Least starred first' }
+        { key: 'least-starred', label: '★ Least', title: 'Least starred first' },
+        { key: 'most-alerts', label: '⚠ Most', title: 'Most range alerts first' }
     ];
     let commSort = $state('recent');
     const commSortInfo = $derived(COMM_SORTS.find((o) => o.key === commSort) ?? COMM_SORTS[0]);
@@ -1228,18 +1252,25 @@
         return new Set(item.members.flatMap((m) => m.starredBy ?? [])).size;
     }
     const createdMs = (item) => new Date(item.created || 0).getTime();
+    const alertCount = (item) => (item.kind === 'batch' ? batchRangeAlerts(item.members) : item.card.rangeAlerts)?.warnCount || 0;
     const visibleRailItems = $derived.by(() => {
         const items = searchedRailItems.filter((i) => inTab(i, commTab));
         if (commSort === 'recent') return items; // already newest-first
         const stars = new Map(items.map((i) => [i.key, loadedStarCount(i)]));
         return [...items].sort((a, b) => {
             if (commSort === 'oldest') return createdMs(a) - createdMs(b);
+            if (commSort === 'most-alerts') return alertCount(b) - alertCount(a) || createdMs(b) - createdMs(a);
             const d = stars.get(b.key) - stars.get(a.key);
             return (commSort === 'most-starred' ? d : -d) || createdMs(b) - createdMs(a);
         });
     });
+    // Community compositions are members-only, so a signed-out viewer (or one whose
+    // session has lapsed) sees an empty list — worth saying plainly rather than
+    // leaving them to wonder where everyone's work went.
+    const signedOut = $derived(!viewerName);
     function commEmptyText() {
         const q = commQuery.trim();
+        if (signedOut) return 'Contributions are members-only — sign in to browse them and place them on plates.';
         if (q) return `No contributions match “${q}”${commTab === 'all' ? '' : ' in this tab'}.`;
         if (commTab === 'starred') return 'Nothing starred yet — click the ☆ on any composition to keep it here.';
         if (commTab !== 'all') return `No ${commTab} contributions yet.`;
@@ -1538,6 +1569,7 @@
             {#if item.kind === 'batch'}
                 <div class="cf-comm-card__top">
                     <span class="cf-comm-card__name">{item.name}</span>
+                    <RangeAlertBadge alerts={batchRangeAlerts(item.members)} />
                     {@render starBtn(item)}
                     <span class="cf-comm-card__count" title="{item.count} compositions in this batch">{item.count}×</span>
                 </div>
@@ -1607,6 +1639,7 @@
                 {@const c = item.card}
                 <div class="cf-comm-card__top">
                     <span class="cf-comm-card__name">{c.name}</span>
+                    <RangeAlertBadge alerts={c.rangeAlerts} />
                     {@render starBtn(item)}
                     {#if c.proteinTarget}<span class="cf-comm-card__badge" style={proteinBadgeStyle(c.proteinTarget)}>{c.proteinTarget}</span>{/if}
                 </div>
@@ -1711,6 +1744,9 @@
                 <p class="cf-comm-empty">
                     {commEmptyText()}
                 </p>
+                {#if signedOut}
+                    <a class="btn-bp cf-comm-empty__btn" href={loginHref(page.url)}>Sign in</a>
+                {/if}
             {/if}
         </div>
     {/snippet}
@@ -1810,17 +1846,17 @@
     {#snippet mixHeaderCell(col)}
         {@const i = col.index}
         <th
-            class="bench-custcol text-center px-2 py-2 border-b border-base-300 align-top"
+            class="bench-custcol text-center px-2 py-2 border-b border-base-300 align-top" class:bench-custcol--free={mixFree(col)}
             class:cust-mix-col--sel={col.selected}
             class:cust-mix-col--hover={!col.selected && col.id === hoveredMixId}
             class:cust-mix-col--pick={!col.selected}
             data-mix-id={col.id}
             onclick={() => onSelectMix?.(col.id)}
-            style="--cust-left: {mixStickyLefts[i]}px; min-width: 64px; background: oklch(var(--b2));"
+            style="--cust-left: {mixLeft(col)}px; min-width: 64px; background: oklch(var(--b2));"
         >
             <div class="flex flex-col items-center gap-0.5 min-h-[2.4em]">
                 {#if col.selected}
-                    <div class="font-semibold text-[10px] leading-tight cust-mix-name" title="{col.label} (editing)">{col.label}</div>
+                    <div class="font-semibold text-[10px] leading-tight cust-mix-name" title="{col.label} (editing)">{col.label} <RangeAlertBadge alerts={col.rangeAlerts} compact /></div>
                 {:else}
                     <!-- Editing any value in this column auto-selects it; the name is a
                          shortcut to select without changing a value. It never moves. -->
@@ -1830,6 +1866,7 @@
                         onclick={() => onSelectMix?.(col.id)}
                         title="Select {col.label} — or just start changing a value and it becomes the editable mix (it stays in place)"
                     >{col.label}</button>
+                    <RangeAlertBadge alerts={col.rangeAlerts} compact />
                 {/if}
                 <!-- Same second-row actions on every mix, in this exact order: ✕ ↺ ＋ -->
                 <div class="flex items-center justify-center gap-1">
@@ -1906,13 +1943,13 @@
              edit" step. -->
         {@const cm = col.selected ? customMix?.[paperName] : col.stepper?.[paperName]}
         <td
-            class="bench-custcol text-center px-1 py-1 font-mono leading-tight"
+            class="bench-custcol text-center px-1 py-1 font-mono leading-tight" class:bench-custcol--free={mixFree(col)}
             class:cust-mix-col--sel={col.selected}
             class:cust-mix-col--hover={!col.selected && col.id === hoveredMixId}
             class:cust-mix-col--pick={!col.selected}
             data-mix-id={col.id}
             onclick={() => { if (!col.selected) onSelectMix?.(col.id); }}
-            style="--cust-left: {mixStickyLefts[i]}px; background: {col.selected ? 'oklch(var(--b1))' : 'oklch(var(--b2))'};"
+            style="--cust-left: {mixLeft(col)}px; background: {col.selected ? 'oklch(var(--b1))' : 'oklch(var(--b2))'};"
         >
             {#if cm && cm.value != null}
                 {#if cm.adjustable && onAdjust}
@@ -1935,13 +1972,13 @@
     {#snippet mixWaterCell(col)}
         {@const i = col.index}
         <td
-            class="bench-custcol text-center px-1 py-1 font-mono leading-tight"
+            class="bench-custcol text-center px-1 py-1 font-mono leading-tight" class:bench-custcol--free={mixFree(col)}
             class:cust-mix-col--sel={col.selected}
             class:cust-mix-col--hover={!col.selected && col.id === hoveredMixId}
             class:cust-mix-col--pick={!col.selected}
             data-mix-id={col.id}
             onclick={() => { if (!col.selected) onSelectMix?.(col.id); }}
-            style="--cust-left: {mixStickyLefts[i]}px; background: {col.selected ? 'oklch(var(--b1))' : 'oklch(var(--b2))'};"
+            style="--cust-left: {mixLeft(col)}px; background: {col.selected ? 'oklch(var(--b1))' : 'oklch(var(--b2))'};"
         >
             {#if col.selected}
                 {#if customWaterUl != null}<span class="opacity-80">{customWaterUl.toFixed(2)}</span>{:else}<span class="opacity-30">—</span>{/if}
@@ -1961,13 +1998,13 @@
     {#snippet mixSummaryCell(col, kind)}
         {@const i = col.index}
         <td
-            class="bench-custcol text-center py-1 font-mono"
+            class="bench-custcol text-center py-1 font-mono" class:bench-custcol--free={mixFree(col)}
             class:cust-mix-col--sel={col.selected}
             class:cust-mix-col--hover={!col.selected && col.id === hoveredMixId}
             class:cust-mix-col--pick={!col.selected}
             data-mix-id={col.id}
             onclick={() => { if (!col.selected) onSelectMix?.(col.id); }}
-            style="--cust-left: {mixStickyLefts[i]}px; background: oklch(var(--b2));"
+            style="--cust-left: {mixLeft(col)}px; background: oklch(var(--b2));"
             title={col.selected && kind === 'cost20' && customCostUsd != null ? `≈ ${fmtCost(customCostUsd)} per 20 µL reaction (as mixed)` : (col.selected && kind === 'costml' && customCostUsd != null ? `≈ ${fmtCost(customCostUsd)} per reaction as mixed` : '')}
         >
             {#if kind === 'yield'}
@@ -1989,7 +2026,7 @@
          Omitted entirely when onAddMix isn't wired. -->
     {#snippet railHeaderCell()}
         {#if onAddMix}
-            <th class="bench-custcol bench-rail bench-rail--head border-b border-base-300" class:bench-rail--hover={railHovered} data-rail="1" style="--cust-left: {railStickyLeft}px; width: {RAIL_WIDTH}px; min-width: {RAIL_WIDTH}px; background: oklch(var(--b2));">
+            <th class="bench-custcol bench-rail bench-rail--head border-b border-base-300" class:bench-custcol--free={!freezeAll} class:bench-rail--hover={railHovered} data-rail="1" style="--cust-left: {railStickyLeft}px; width: {RAIL_WIDTH}px; min-width: {RAIL_WIDTH}px; background: oklch(var(--b2));">
                 <button type="button" class="add-col-rail add-col-rail--col" onclick={() => onAddMix()} title="Add a new Mix column (copy of the selected mix)" aria-label="Add a new Mix column" tabindex="-1">
                     <span class="add-col-rail__plus">＋</span>
                     <span class="add-col-rail__label">add mix</span>
@@ -1999,7 +2036,7 @@
     {/snippet}
     {#snippet railCell()}
         {#if onAddMix}
-            <td class="bench-custcol bench-rail bench-rail--click" class:bench-rail--hover={railHovered} data-rail="1" onclick={() => onAddMix()} title="Add a new Mix column (copy of the selected mix)" style="--cust-left: {railStickyLeft}px; width: {RAIL_WIDTH}px; min-width: {RAIL_WIDTH}px; background: oklch(var(--b2));"></td>
+            <td class="bench-custcol bench-rail bench-rail--click" class:bench-custcol--free={!freezeAll} class:bench-rail--hover={railHovered} data-rail="1" onclick={() => onAddMix()} title="Add a new Mix column (copy of the selected mix)" style="--cust-left: {railStickyLeft}px; width: {RAIL_WIDTH}px; min-width: {RAIL_WIDTH}px; background: oklch(var(--b2));"></td>
         {/if}
     {/snippet}
     <!-- Horizontal-scroll wrapper: the table keeps its natural (wide) width and
@@ -2017,15 +2054,19 @@
          mirroring the ＋ add-column rail pinned to the right edge. Pressing the tab
          slides a browse drawer out to the tab's left. Only offered when there are
          community compositions to show (none for a signed-out visitor). -->
-    <div class="cf-designer-row" class:is-split={focusMode && communityByRecent.length > 0}>
+    <div class="cf-designer-row" class:is-split={focusMode && (communityByRecent.length > 0 || inPlateMode)}>
         <!-- The browse drawer opens to the LEFT of the toggle tab, so the tab stays
              welded to the table's left edge (right beside the reagent-category
              column) in both states. The tab — or, when open, the drawer — supplies
              the table's rounded left corners; the table card itself is squared on the
              left so the pieces read as one. -->
-        {#if focusMode && communityByRecent.length > 0}
+        {#if focusMode && (communityByRecent.length > 0 || inPlateMode)}
             <!-- Fullscreen: the contributions get the whole left half, with wide,
-                 taller text boxes for reading long rationales. -->
+                 taller text boxes for reading long rationales. In plate mode the
+                 pane is kept even when the list is empty: it is the only way to put
+                 anything on a plate, so silently dropping it (which is what an
+                 expired session used to do) just looks like the feature vanished —
+                 the empty state below says what to do instead. -->
             <aside class="cf-comm-rail cf-comm-rail--wide" aria-label="Community compositions, newest first">
                 {@render commList(true)}
             </aside>
@@ -2068,7 +2109,7 @@
          table pinned left against the contributions tab; it still scrolls when the
          grid is wider than the viewport. Radius tracks var(--r) to match the
          sibling .panel sections; bg-base-100 keeps the grid opaque. -->
-    <div class="bench-scroll pb-3 pr-3 overflow-auto max-h-[78vh] isolate border border-base-300 bg-base-100 w-full {communityByRecent.length > 0 ? 'rounded-r-[var(--r,5px)]' : 'rounded-[var(--r,5px)]'}" bind:this={tableScrollEl} onscroll={hideSynopsisHover}>
+    <div class="bench-scroll pb-3 pr-3 overflow-auto max-h-[78vh] isolate border border-base-300 bg-base-100 w-full {communityByRecent.length > 0 ? 'rounded-r-[var(--r,5px)]' : 'rounded-[var(--r,5px)]'}" bind:this={tableScrollEl} bind:clientWidth={tableScrollWidth} onscroll={hideSynopsisHover}>
         <!-- Flex rail wrapper: the table plus a thin full-height "add column" button
              pinned to its right edge, so you can add a comparison column the moment
              you scroll to the edge. -->
@@ -2124,6 +2165,7 @@
                             <th
                                 colspan={resolvedMixColumns.length + (onAddMix ? 1 : 0) + (showComparison ? 1 : 0) + (showClosestMatch ? 1 : 0)}
                                 class="bench-vsep bench-custcol border-b"
+                                class:bench-custcol--free={!freezeAll}
                                 style="--cust-left: {customStickyLeft}px; background: oklch(var(--b2)); border-color: oklch(var(--bc) / 0.12);"
                             ></th>
                             {#each displayColumnGroups as grp}
@@ -2152,7 +2194,7 @@
                              dropdown; sits right of the mix batch + rail. Off by default
                              (toggled via "Comparison"). -->
                         {#if showComparison}
-                        <th class="bench-custcol text-center px-2 py-2 border-b border-base-300 align-top" style="--cust-left: {comparisonStickyLeft}px; min-width: 64px; background: oklch(var(--b2));">
+                        <th class="bench-custcol text-center px-2 py-2 border-b border-base-300 align-top" class:bench-custcol--free={!freezeAll} style="--cust-left: {comparisonStickyLeft}px; min-width: 64px; background: oklch(var(--b2));">
                             <div class="flex items-start justify-center gap-1 min-h-[2.4em]">
                                 <div class="font-semibold text-[10px] leading-tight">Comparison Mix</div>
                                 {#if externalComparison}
@@ -2206,7 +2248,7 @@
                              + similarity %; the body cells render its per-reagent
                              values. Off by default (toggled via "Closest Match"). -->
                         {#if showClosestMatch}
-                            <th class="bench-custcol text-center px-2 py-2 border-b border-base-300 align-top" style="--cust-left: {closestStickyLeft}px; min-width: 64px; background: oklch(var(--b2));">
+                            <th class="bench-custcol text-center px-2 py-2 border-b border-base-300 align-top" class:bench-custcol--free={!freezeAll} style="--cust-left: {closestStickyLeft}px; min-width: 64px; background: oklch(var(--b2));">
                                 <div class="font-semibold text-[10px] leading-tight">Closest Match</div>
                                 {#if closestMatch}
                                     <div class="text-[9px] leading-tight mt-0.5 font-semibold" style="color: #4a5560;">{closestNameParts.main}{#if closestNameParts.sub}<br/><span class="font-normal opacity-70">{closestNameParts.sub}</span>{/if}</div>
@@ -2273,10 +2315,10 @@
                         {#each resolvedMixColumns as col (col.id)}{@render mixSummaryCell(col, 'yield')}{/each}
                         {@render railCell()}
                         {#if showComparison}
-                            <td class="bench-custcol text-center py-1 font-mono" style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));">{@render yieldCell(comparisonBm)}</td>
+                            <td class="bench-custcol text-center py-1 font-mono" class:bench-custcol--free={!freezeAll} style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));">{@render yieldCell(comparisonBm)}</td>
                         {/if}
                         {#if showClosestMatch}
-                            <td class="bench-custcol text-center py-1 font-mono" style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));">{@render yieldCell(closestMatch?.bm)}</td>
+                            <td class="bench-custcol text-center py-1 font-mono" class:bench-custcol--free={!freezeAll} style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));">{@render yieldCell(closestMatch?.bm)}</td>
                         {/if}
                         {#each displayFormulations as bm}
                             <td class="text-center py-1 font-mono" style="background: oklch(var(--b2)); box-shadow: {colOutline(selectedKey === bm.key)};">{@render yieldCell(bm)}</td>
@@ -2288,10 +2330,10 @@
                         {#each resolvedMixColumns as col (col.id)}{@render mixSummaryCell(col, 'costg')}{/each}
                         {@render railCell()}
                         {#if showComparison}
-                            <td class="bench-custcol text-center py-1 font-mono" style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{fmtCost(comparisonBm?.cost_per_g)}</span></td>
+                            <td class="bench-custcol text-center py-1 font-mono" class:bench-custcol--free={!freezeAll} style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{fmtCost(comparisonBm?.cost_per_g)}</span></td>
                         {/if}
                         {#if showClosestMatch}
-                            <td class="bench-custcol text-center py-1 font-mono" style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{fmtCost(closestMatch?.bm?.cost_per_g)}</span></td>
+                            <td class="bench-custcol text-center py-1 font-mono" class:bench-custcol--free={!freezeAll} style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{fmtCost(closestMatch?.bm?.cost_per_g)}</span></td>
                         {/if}
                         {#each displayFormulations as bm}
                             <td class="text-center py-1 font-mono" style="background: oklch(var(--b2)); box-shadow: {colOutline(selectedKey === bm.key)};"><span class="opacity-70">{fmtCost(bm.cost_per_g)}</span></td>
@@ -2306,10 +2348,10 @@
                         {#each resolvedMixColumns as col (col.id)}{@render mixSummaryCell(col, 'costml')}{/each}
                         {@render railCell()}
                         {#if showComparison}
-                            <td class="bench-custcol text-center py-1 font-mono" style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{comparisonBm?.cost_per_l != null ? fmtCost(comparisonBm.cost_per_l / 1000) : '—'}</span></td>
+                            <td class="bench-custcol text-center py-1 font-mono" class:bench-custcol--free={!freezeAll} style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{comparisonBm?.cost_per_l != null ? fmtCost(comparisonBm.cost_per_l / 1000) : '—'}</span></td>
                         {/if}
                         {#if showClosestMatch}
-                            <td class="bench-custcol text-center py-1 font-mono" style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{closestMatch?.bm.cost_per_l != null ? fmtCost(closestMatch.bm.cost_per_l / 1000) : '—'}</span></td>
+                            <td class="bench-custcol text-center py-1 font-mono" class:bench-custcol--free={!freezeAll} style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{closestMatch?.bm.cost_per_l != null ? fmtCost(closestMatch.bm.cost_per_l / 1000) : '—'}</span></td>
                         {/if}
                         {#each displayFormulations as bm}
                             <td class="text-center py-1 font-mono" style="background: oklch(var(--b2)); box-shadow: {colOutline(selectedKey === bm.key)};"><span class="opacity-70">{bm.cost_per_l != null ? fmtCost(bm.cost_per_l / 1000) : '—'}</span></td>
@@ -2325,10 +2367,10 @@
                         {#each resolvedMixColumns as col (col.id)}{@render mixSummaryCell(col, 'cost20')}{/each}
                         {@render railCell()}
                         {#if showComparison}
-                            <td class="bench-custcol text-center py-1 font-mono" style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{comparisonBm?.cost_per_l != null ? fmtCost(comparisonBm.cost_per_l / 50000) : '—'}</span></td>
+                            <td class="bench-custcol text-center py-1 font-mono" class:bench-custcol--free={!freezeAll} style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{comparisonBm?.cost_per_l != null ? fmtCost(comparisonBm.cost_per_l / 50000) : '—'}</span></td>
                         {/if}
                         {#if showClosestMatch}
-                            <td class="bench-custcol text-center py-1 font-mono" style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{closestMatch?.bm.cost_per_l != null ? fmtCost(closestMatch.bm.cost_per_l / 50000) : '—'}</span></td>
+                            <td class="bench-custcol text-center py-1 font-mono" class:bench-custcol--free={!freezeAll} style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-70">{closestMatch?.bm.cost_per_l != null ? fmtCost(closestMatch.bm.cost_per_l / 50000) : '—'}</span></td>
                         {/if}
                         {#each displayFormulations as bm}
                             <td class="text-center py-1 font-mono" style="background: oklch(var(--b2)); box-shadow: {colOutline(selectedKey === bm.key)};"><span class="opacity-70">{bm.cost_per_l != null ? fmtCost(bm.cost_per_l / 50000) : '—'}</span></td>
@@ -2447,12 +2489,12 @@
                                 {#each resolvedMixColumns as col (col.id)}{@render mixBodyCell(col, paperName)}{/each}
                                 {@render railCell()}
                                 {#if showComparison}
-                                    <td class="bench-custcol text-center px-1 py-1 font-mono leading-tight" style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));">
+                                    <td class="bench-custcol text-center px-1 py-1 font-mono leading-tight" class:bench-custcol--free={!freezeAll} style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));">
                                         {@render refValueDelta(paperName, compVal)}
                                     </td>
                                 {/if}
                                 {#if showClosestMatch}
-                                    <td class="bench-custcol text-center px-1 py-1 font-mono leading-tight" style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));">
+                                    <td class="bench-custcol text-center px-1 py-1 font-mono leading-tight" class:bench-custcol--free={!freezeAll} style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));">
                                         {@render refValueDelta(paperName, closestComponents?.[paperName])}
                                     </td>
                                 {/if}
@@ -2534,17 +2576,17 @@
                             {#if comparisonBm}
                                 {@const compWaterUl = waterFillNlForFormulation(comparisonBm, { aliases: reagentAliases }) / 1000}
                                 {@const compWaterPct = pctDiff(compWaterUl, customWaterUl)}
-                                <td class="bench-custcol text-center px-1 py-1 font-mono leading-tight" style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));">
+                                <td class="bench-custcol text-center px-1 py-1 font-mono leading-tight" class:bench-custcol--free={!freezeAll} style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));">
                                     <div class="opacity-80 leading-tight">{compWaterUl.toFixed(2)}</div>
                                     {#if showSupplementNl}<div class="text-[8px] leading-tight {pctClass(compWaterPct)}">{pctLabel(compWaterPct)}</div>{/if}
                                 </td>
                             {:else}
-                                <td class="bench-custcol text-center px-1 py-1 font-mono" style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-30">—</span></td>
+                                <td class="bench-custcol text-center px-1 py-1 font-mono" class:bench-custcol--free={!freezeAll} style="--cust-left: {comparisonStickyLeft}px; background: oklch(var(--b2));"><span class="opacity-30">—</span></td>
                             {/if}
                         {/if}
                         {#if showClosestMatch}
                             {@const closestWaterUl = closestMatch ? waterFillNlForFormulation(applyAll(closestMatch.bm), { aliases: reagentAliases }) / 1000 : null}
-                            <td class="bench-custcol text-center px-1 py-1 font-mono leading-tight" style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));">
+                            <td class="bench-custcol text-center px-1 py-1 font-mono leading-tight" class:bench-custcol--free={!freezeAll} style="--cust-left: {closestStickyLeft}px; background: oklch(var(--b2));">
                                 {#if closestWaterUl != null}
                                     {@const closestWaterPct = pctDiff(closestWaterUl, customWaterUl)}
                                     <div class="opacity-80 leading-tight">{closestWaterUl.toFixed(2)}</div>
@@ -2701,7 +2743,6 @@
 </section>
 
 <svelte:window onkeydown={handleSynopsisKeydown} onscroll={hideSynopsisHover} onresize={hideSynopsisHover} />
-<svelte:document onfullscreenchange={onFullscreenChange} />
 
 <!-- Reagent summary body, shared by the click modal and the hover popover.
      `compact` shrinks the structure image for the popover. -->
@@ -2867,6 +2908,7 @@
     .cf-comm-rail__hd .label {
         font: 500 9px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
     }
+    .cf-comm-empty__btn { align-self: center; margin-top: 2px; text-decoration: none; }
     .cf-comm-rail__list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 7px; display: flex; flex-direction: column; gap: 6px; }
     .cf-comm-card {
         display: flex; flex-direction: column; gap: 5px; width: 100%;
@@ -3153,6 +3195,16 @@
         /* Header cells sit above the sticky body columns (z-30/40) they scroll over. */
         :global(thead) .bench-custcol {
             z-index: 30;
+        }
+        /* Too wide to freeze as a group (see freezeAll): these scroll normally. */
+        .bench-custcol.bench-custcol--free {
+            position: relative;
+            left: auto;
+            z-index: 1;
+            box-shadow: none;
+        }
+        :global(thead) .bench-custcol.bench-custcol--free {
+            z-index: 2;
         }
     }
 
