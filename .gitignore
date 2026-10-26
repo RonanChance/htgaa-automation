@@ -48,3 +48,10 @@ Caddyfile.txt
 # PRIVATE ginkgobioworks/autonomous-cfps reference set. Test-only — regenerate
 # locally with `npm run sync:cfps`, never commit (this repo is public).
 tools/fixtures/
+
+# CFPS Arena cluster DATA: every coopetition design with its author, sample_id,
+# recipe and model forecast. Keycloak-gated on the site and removed from git
+# history (2026-10-26) — this repo is public, so never commit these. The page,
+# its stylesheet and its loader script are public on purpose.
+static/cfps/clusters-data/clusters_designs.json
+static/cfps/clusters-data/clusters.json.gz
