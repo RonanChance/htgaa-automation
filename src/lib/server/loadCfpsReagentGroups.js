@@ -1,7 +1,7 @@
 import PocketBase from 'pocketbase';
 import { PB_EMAIL, PB_PASSWORD } from '$env/static/private';
 
-const pb = new PocketBase('https://opentrons-art-pb.rcdonovan.com');
+const pb = new PocketBase('https://db.rcdonovan.com');
 const COLLECTION = 'cfps_reagent_groups';
 const RECORD_ID = 't7a97pyfs8lx67w';
 const DESIGNS_COLLECTION = process.env.CFPS_COLLECTION || 'cfps_designs';

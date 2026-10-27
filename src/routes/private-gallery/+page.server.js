@@ -3,7 +3,7 @@ import { PB_EMAIL, PB_PASSWORD } from '$env/static/private';
 import { env } from '$env/dynamic/private';
 import { error } from '@sveltejs/kit';
 
-const pb = new PocketBase('https://opentrons-art-pb.rcdonovan.com');
+const pb = new PocketBase('https://db.rcdonovan.com');
 
 function toItems(records, source) {
   return (records || []).map((r) => ({

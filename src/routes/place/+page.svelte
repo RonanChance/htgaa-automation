@@ -772,7 +772,7 @@
     async function startRealtimeSubscription() {
         if (!browser || realtimeClient) return;
 
-        realtimeClient = new PocketBase('https://opentrons-art-pb.rcdonovan.com');
+        realtimeClient = new PocketBase('https://db.rcdonovan.com');
 
         try {
             await realtimeClient.collection(PLACE_STATE_COLLECTION).subscribe('*', (event) => {
@@ -791,7 +791,7 @@
     async function startClaimsRealtimeSubscription() {
         if (!browser || claimsRealtimeClient) return;
 
-        claimsRealtimeClient = new PocketBase('https://opentrons-art-pb.rcdonovan.com');
+        claimsRealtimeClient = new PocketBase('https://db.rcdonovan.com');
 
         try {
             await claimsRealtimeClient.collection(PLACE_WELL_CLAIMS_COLLECTION).subscribe('*', (event) => {

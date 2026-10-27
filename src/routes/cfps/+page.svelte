@@ -4146,7 +4146,30 @@ ${approvedPaletteText()}
       <div class="cf-designer-hd__auth">
         {#if data?.kcUser}
           <span class="cf-auth-status">signed in · {data.kcUser.name}</span>
-          <a class="btn-bp" href="/cfps/analysis" style="text-decoration:none;" title="See how the community is approaching the challenge">HTBAA Summary</a>
+          <!-- A crowd: one figure front, two behind. The page is about the
+               people and how the cohort as a whole is approaching the problem. -->
+          <a class="btn-bp cf-navbtn" href="/cfps/analysis" title="See how the community is approaching the challenge">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="9" r="3" />
+              <path d="M6.5 20a5.5 5.5 0 0 1 11 0" />
+              <circle cx="4.6" cy="10.5" r="2.1" />
+              <path d="M1 19.5a3.9 3.9 0 0 1 3.4-3.8" />
+              <circle cx="19.4" cy="10.5" r="2.1" />
+              <path d="M23 19.5a3.9 3.9 0 0 0-3.4-3.8" />
+            </svg>
+            HTBAA Summary
+          </a>
+          <!-- Grid with a filled diagonal: the group-against-group heatmap. -->
+          <a class="btn-bp cf-navbtn" href="/cfps/clusters" title="Which designs the model expects to behave alike">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
+              <rect x="4.2" y="4.2" width="3.6" height="3.6" fill="currentColor" stroke="none" />
+              <rect x="10.2" y="10.2" width="3.6" height="3.6" fill="currentColor" stroke="none" />
+              <rect x="16.2" y="16.2" width="3.6" height="3.6" fill="currentColor" stroke="none" />
+            </svg>
+            Clusters
+          </a>
           <!-- Final plates (/cfps/final-plates) is built and working but not yet
                announced — the route stays live so it can be shared by link; put
                this button back when it goes out to participants. -->
@@ -5330,6 +5353,13 @@ ${approvedPaletteText()}
     font: 11px/1.5 var(--mono); color: var(--ink-2);
   }
   .cf-dup--warn { background: #fff8e6; border-color: #f0d590; }
+  /* Icon + label nav buttons in the designer header. */
+  .cf-navbtn {
+    display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
+  }
+  .cf-navbtn svg { flex: none; opacity: .75; }
+  .cf-navbtn:hover svg { opacity: 1; }
+
   .cf-range__mix { display: block; margin-top: 4px; font-size: 11px; font-weight: 600; }
   .cf-range__info { color: #5b6b78; }
   .cf-range__sub { margin: 1px 0 0; padding-left: 14px; list-style: disc; }

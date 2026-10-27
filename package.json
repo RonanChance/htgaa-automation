@@ -10,7 +10,10 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"sync:cfps": "node tools/sync-cfps.mjs",
 		"sync:cfps:apply": "node tools/sync-cfps.mjs --apply",
-		"check:cfps-range": "node tools/check-cfps-range-parity.mjs"
+		"check:cfps-range": "node tools/check-cfps-range-parity.mjs",
+		"clusters:fetch": "node --env-file-if-exists=.env tools/cfps-clusters.mjs fetch",
+		"clusters:publish": "node --env-file-if-exists=.env tools/cfps-clusters.mjs publish",
+		"clusters:refresh": "node --env-file-if-exists=.env tools/cfps-clusters.mjs refresh"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^4.0.0",

@@ -7,7 +7,7 @@ import {
     PLACE_WELL_CLAIMS_COLLECTION
 } from '$lib/place.js';
 
-const pb = new PocketBase("https://opentrons-art-pb.rcdonovan.com");
+const pb = new PocketBase("https://db.rcdonovan.com");
 const ERASE_CONTRIBUTION_KEY = '__erase__';
 
 export const POST = async ({ request }) => {

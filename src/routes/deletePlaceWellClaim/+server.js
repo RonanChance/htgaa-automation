@@ -6,7 +6,7 @@ import {
     PLACE_WELL_CLAIMS_COLLECTION
 } from '$lib/place.js';
 
-const pb = new PocketBase('https://opentrons-art-pb.rcdonovan.com');
+const pb = new PocketBase('https://db.rcdonovan.com');
 
 async function contributorNameFromInvite(inviteId) {
     const invite = await pb.collection(PLACE_INVITES_COLLECTION).getOne(inviteId);

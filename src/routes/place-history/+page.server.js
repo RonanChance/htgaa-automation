@@ -5,7 +5,7 @@ import {
   PLACE_PIXELS_COLLECTION
 } from '$lib/place.js';
 
-const pb = new PocketBase('https://opentrons-art-pb.rcdonovan.com');
+const pb = new PocketBase('https://db.rcdonovan.com');
 
 export async function load() {
   try {

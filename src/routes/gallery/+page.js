@@ -1,7 +1,7 @@
 import PocketBase from 'pocketbase';
 
 export async function load() {
-    const pb = new PocketBase("https://opentrons-art-pb.rcdonovan.com");
+    const pb = new PocketBase("https://db.rcdonovan.com");
 
     // fetch the record
     const record = await pb.collection('plate_pictures').getOne('gg40q5l7uqe1r04');

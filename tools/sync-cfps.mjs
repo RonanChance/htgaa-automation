@@ -40,7 +40,7 @@ const NO_PB = args.includes('--no-pb');
 const COST_FIELD = (args.find((a) => a.startsWith('--cost-field=')) || '').split('=')[1] || 'cost_ginkgo';
 
 const AUTONOMOUS_CFPS_PATH = process.env.AUTONOMOUS_CFPS_PATH || path.resolve(REPO_ROOT, '..', 'autonomous-cfps');
-const PB_URL = process.env.PB_URL || 'https://opentrons-art-pb.rcdonovan.com';
+const PB_URL = process.env.PB_URL || 'https://db.rcdonovan.com';
 const COLLECTION = process.env.CFPS_COLLECTION_REAGENT_GROUPS || 'cfps_reagent_groups';
 const RECORD_ID = process.env.CFPS_REAGENT_GROUPS_RECORD_ID || 't7a97pyfs8lx67w';
 

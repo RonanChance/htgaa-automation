@@ -1,7 +1,7 @@
 import PocketBase from 'pocketbase';
 import { PB_EMAIL, PB_PASSWORD } from '$env/static/private';
 
-const pb = new PocketBase("https://opentrons-art-pb.rcdonovan.com");
+const pb = new PocketBase("https://db.rcdonovan.com");
 
 export const POST = async ({ request }) => {
     let { title, author, points, grid_style, radius_mm, grid_spacing_mm, point_colors, point_size, canvasSize: canvas_size, pixelationLevel : pixelation_level, brightness, contrast, saturation, ginkgo_mode, target_collection, lastLoadedGifUrl, zoom, rotation, pixelation } = await request.json();

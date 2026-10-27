@@ -55,3 +55,6 @@ tools/fixtures/
 # its stylesheet and its loader script are public on purpose.
 static/cfps/clusters-data/clusters_designs.json
 static/cfps/clusters-data/clusters.json.gz
+
+# Cluster data pulled down for local analysis (npm run clusters:fetch).
+data/cfps-clusters/

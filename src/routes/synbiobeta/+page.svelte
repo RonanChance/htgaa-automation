@@ -516,7 +516,7 @@
     async function startRealtimeSubscription() {
         if (!browser || realtimeClient) return;
 
-        realtimeClient = new PocketBase('https://opentrons-art-pb.rcdonovan.com');
+        realtimeClient = new PocketBase('https://db.rcdonovan.com');
 
         try {
             await realtimeClient.collection(PLACE_STATE_SYNBIOBETA_COLLECTION).subscribe('*', (event) => {

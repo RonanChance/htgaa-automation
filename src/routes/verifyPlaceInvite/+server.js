@@ -2,7 +2,7 @@ import PocketBase from 'pocketbase';
 import { PB_EMAIL, PB_PASSWORD } from '$env/static/private';
 import { PLACE_INVITES_COLLECTION } from '$lib/place.js';
 
-const pb = new PocketBase('https://opentrons-art-pb.rcdonovan.com');
+const pb = new PocketBase('https://db.rcdonovan.com');
 
 function contributorNameFromInvite(invite) {
     return (

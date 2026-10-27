@@ -68,6 +68,75 @@ After running, review the diff to `src/lib/cfpsReagentSpec.generated.json` and
 commit it if the contract changed. PB backups are written to
 `scripts/pb-backups/` (gitignored).
 
+## CFPS clusters (`/cfps/clusters`)
+
+The CFPS Arena cluster export predicts which coopetition designs will behave
+alike. It names **every design with its author, sample_id, recipe and model
+forecast**, so it is deliberately not in this repo (public) and not in
+`static/` (world-readable). It lives as gzipped attachments on the
+superuser-only `cfps_cluster_data` PocketBase collection and reaches the
+browser through `/cfps/clusters-data/<file>`, which checks the Keycloak session
+on every request. The page, its stylesheet and its loader script stay public —
+only the data is gated.
+
+### Analysing the data (start here)
+
+You need a **CFPS agent token**: sign in at the site, switch the *Participate*
+section to **Agent**, and click *Create agent token*. No PocketBase credentials
+required.
+
+```bash
+npm install
+npm run clusters:fetch -- --token=<your agent token>
+```
+
+That writes `data/cfps-clusters/` (gitignored), unpacking the gzip so both files
+are plain JSON:
+
+| File | What's in it |
+| --- | --- |
+| `clusters_designs.json` | one record per design: `author`, `sampleId`, `recipeNl`, `forecast.pBeat`, predicted `ln $/g` + `sd`, `round1Role`, `group` |
+| `clusters.json` | the rendered view plus `tips`: a per-protein pairwise link matrix (549×549 for sfGFP), the 86 groups, and the design names behind them |
+
+```js
+const d = require('./data/cfps-clusters/clusters_designs.json');
+d.proteins.sfGFP.designs.length;                 // 549
+[...d.proteins.sfGFP.designs]                    // best predicted odds first
+  .sort((a, b) => b.forecast.pBeat - a.forecast.pBeat)[0];
+```
+
+Maintainers with `PB_EMAIL` / `PB_PASSWORD` in `.env` can skip the token with
+`npm run clusters:fetch -- --pb`. Add `--raw` to keep the files gzipped.
+
+### Keeping it fresh
+
+The clusters are *predictions from a trained model*, so they only change when
+the exporter re-runs — not when someone submits. Re-export and publish in one
+step:
+
+```bash
+npm run clusters:refresh -- --arena=../cfps-arena --apply
+```
+
+`--arena` is a CFPS Arena checkout (or set `CFPS_ARENA_DIR`); override the
+command with `--cmd="…"`. Drop `--apply` for a dry run. If you already have an
+export on disk, publish it directly:
+
+```bash
+npm run clusters:publish -- --dir=<export dir> --apply
+```
+
+To run it nightly, add a cron entry on a machine that has both the arena
+checkout and the repo `.env`:
+
+```cron
+# 03:15 daily — re-export the clusters and publish them
+15 3 * * * cd /path/to/ginkgo-artworks && /usr/local/bin/npm run clusters:refresh -- --arena=/path/to/cfps-arena --apply >> /tmp/cfps-clusters.log 2>&1
+```
+
+The page prints the export's build time, so staleness is always visible to
+readers.
+
 ### CI later
 
 The same `npm run sync:cfps` is CI-ready: a scheduled GitHub Action can check out

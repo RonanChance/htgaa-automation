@@ -1,7 +1,7 @@
 import PocketBase from 'pocketbase';
 import { PB_EMAIL, PB_PASSWORD } from '$env/static/private';
 
-const pb = new PocketBase("https://opentrons-art-pb.rcdonovan.com");
+const pb = new PocketBase("https://db.rcdonovan.com");
 
 export const POST = async ({ request }) => {
     let { id } = await request.json();
