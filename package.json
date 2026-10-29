@@ -11,6 +11,7 @@
 		"sync:cfps": "node tools/sync-cfps.mjs",
 		"sync:cfps:apply": "node tools/sync-cfps.mjs --apply",
 		"check:cfps-range": "node tools/check-cfps-range-parity.mjs",
+		"check:clusters-explained": "node tools/check-clusters-explained.mjs",
 		"clusters:fetch": "node --env-file-if-exists=.env tools/cfps-clusters.mjs fetch",
 		"clusters:publish": "node --env-file-if-exists=.env tools/cfps-clusters.mjs publish",
 		"clusters:refresh": "node --env-file-if-exists=.env tools/cfps-clusters.mjs refresh"

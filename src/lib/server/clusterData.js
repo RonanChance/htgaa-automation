@@ -1,4 +1,5 @@
 import { pbAdmin, PB_URL } from '$lib/server/pb.js';
+import { activeModel, PUBLISHED } from '$lib/server/clusterModels.js';
 
 // Runtime source for the /cfps/clusters page. The CFPS Arena export names every
 // coopetition design with its author, sample_id, recipe and model forecast, so
@@ -22,42 +23,58 @@ export const CLUSTER_FILES = {
   'clusters_designs.json': { key: 'designs', type: 'application/json', encoded: true }
 };
 
-// key → { body: Buffer, etag } once fetched. The export only changes when
-// someone re-publishes, and it is ~1.3 MB gzipped in total, so holding it is
-// cheaper than re-fetching per request. A failure is never memoized.
+// "<model id>:<key>" → { body: Buffer, etag } once fetched. The export only
+// changes when someone uploads or switches version, and it is ~1.3 MB gzipped
+// in total, so holding it is cheaper than re-fetching per request. Keying on the
+// model id means switching version can never serve the previous one's bytes.
+// A failure is never memoized.
 const cache = new Map();
 
-async function fetchFile(key) {
-  const pb = await pbAdmin();
-  const record = await pb
-    .collection(COLLECTION)
-    .getFirstListItem(pb.filter('key = {:k}', { k: key }));
-  if (!record?.file) throw new Error(`cluster record "${key}" has no file`);
-
+async function download(pb, record, field, what) {
+  if (!record?.[field]) throw new Error(`${what} has no ${field} file`);
   // The collection has no public view rule, so the file URL needs a short-lived
   // token; without it PocketBase answers 403.
   const token = await pb.files.getToken();
-  const url = pb.files.getURL(record, record.file, { token });
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`PocketBase returned ${res.status} for ${key}`);
-
+  const res = await fetch(pb.files.getURL(record, record[field], { token }));
+  if (!res.ok) throw new Error(`PocketBase returned ${res.status} for ${what}`);
   return {
     body: Buffer.from(await res.arrayBuffer()),
-    // Record id + updated stamp change whenever the export is re-published.
+    // Record id + updated stamp change whenever the bytes change.
     etag: `"${record.id}-${record.updated}"`
   };
 }
 
-export async function loadClusterFile(name) {
+async function fetchFile(key) {
+  const pb = await pbAdmin();
+  const model = await activeModel();
+  if (model) {
+    // An uploaded version may carry designs only; fall through for clusters.
+    if (model[key]) return download(pb, model, key, `model ${model.id}`);
+    if (key === 'designs') throw new Error(`model ${model.id} has no designs file`);
+  }
+  const record = await pb
+    .collection(COLLECTION)
+    .getFirstListItem(pb.filter('key = {:k}', { k: key }));
+  return download(pb, record, 'file', `cluster record "${key}"`);
+}
+
+export async function loadClusterFile(name, modelId) {
   const key = CLUSTER_FILES[name]?.key;
   if (!key) return null;
-  if (cache.has(key)) return cache.get(key);
+  const id = modelId ?? (await activeModel())?.id ?? PUBLISHED;
+  const cacheKey = `${id}:${key}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
   const promise = fetchFile(key).catch((error) => {
-    cache.delete(key); // transient failure must not stick
+    cache.delete(cacheKey); // transient failure must not stick
     throw error;
   });
-  cache.set(key, promise);
+  cache.set(cacheKey, promise);
   return promise;
+}
+
+// A fresh upload must not keep serving the old bytes from memory.
+export function clearClusterCache() {
+  cache.clear();
 }
 
 export { PB_URL };

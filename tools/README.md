@@ -137,6 +137,29 @@ checkout and the repo `.env`:
 The page prints the export's build time, so staleness is always visible to
 readers.
 
+### The walkthrough (`/cfps/clusters-explained`)
+
+A step-through explanation of how the export's links, groups and round-1 runs
+are computed. It doesn't replay the export's numbers. It recomputes them in the
+browser from the model (`src/lib/clusterMath.js`, a port of the arena's
+`model.js`), so the reader can drag things and watch them change. The pieces:
+
+- **Link** = correlation of two designs' prediction errors: the GP posterior
+  covariance (RBF kernel on the 30 plate-varied reagents, log1p + z-scored) plus
+  a shared "shock" for every untested change both designs make in the same
+  direction, over √(var_a · var_b).
+- **Groups** = complete linkage on the links, cut at 0.5, then a "group" made
+  only of copies of one recipe is dissolved back into independents.
+- **~N independent experiments** = n² / Σᵢⱼ rᵢⱼ². **New information** = 1 − r²
+  against the group's first run. **First run** = the group's highest `pBeat`.
+
+The GP isn't in the export, so `/cfps/clusters-explained/data` fetches it from
+the arena's public `data.json` (override with `CFPS_ARENA_DATA_URL`). It serves
+that model part to everyone and the anonymised designs only to signed-in users.
+`npm run check:clusters-explained` rebuilds every link and group from
+`data/cfps-clusters/` and fails unless they match the export (links to the
+export's two decimals, groups member for member).
+
 ### CI later
 
 The same `npm run sync:cfps` is CI-ready: a scheduled GitHub Action can check out

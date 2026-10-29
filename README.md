@@ -99,6 +99,11 @@ KEYCLOAK_ISSUER=          # only needed to sign in locally
 KEYCLOAK_CLIENT_ID=
 KEYCLOAK_CLIENT_SECRET=
 KC_SESSION_SECRET=        # optional; falls back to PB_PASSWORD
+
+CFPS_ADMIN_EMAILS=        # optional; comma-separated Keycloak emails allowed to
+                          # upload and switch cluster-model versions on
+                          # /cfps/clusters. Unset means nobody — the picker
+                          # stays hidden.
 ```
 
 > [!NOTE]
@@ -141,6 +146,15 @@ npm run clusters:publish -- --dir=<export dir> --apply      # publish an export 
 
 Both dry-run unless you pass `--apply`. Full details, including a cron example
 for nightly refreshes, are in [`tools/README.md`](tools/README.md).
+
+Or skip the checkout entirely: with your email in `CFPS_ADMIN_EMAILS`, the
+**Model** picker on `/cfps/clusters` uploads and switches between versions.
+**Upload** takes the same two files (`clusters_designs.json`, optionally
+`clusters.json.gz`), validates them and makes them live; the dropdown switches
+back to any earlier version, and the CLI-published copy is always the last
+entry, so there is something to return to. Uploads never overwrite — each one is
+a new row in `cfps_cluster_models` — and the server rejects anything that isn't
+the designs export.
 
 ### 4. Other tooling
 

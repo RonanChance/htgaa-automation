@@ -19,7 +19,20 @@ export async function GET({ url, cookies }) {
   const next = safeNext(cookies.get(NEXT_COOKIE)) || '/cfps';
   cookies.delete(NEXT_COOKIE, { path: '/cfps' });
 
-  if (!code || !state || !saved || state !== saved) redirect(303, '/cfps?kc=error');
+  // Log WHICH precondition failed — all four look identical to the user, and a
+  // silent failure here is impossible to debug from the browser alone.
+  if (!code || !state || !saved || state !== saved) {
+    console.error('[cfps auth] callback rejected before token exchange:', {
+      hasCode: Boolean(code),
+      hasState: Boolean(state),
+      hasStateCookie: Boolean(saved),
+      stateMatches: Boolean(state && saved && state === saved),
+      // Keycloak sends these when it refuses the request itself.
+      oauthError: url.searchParams.get('error'),
+      oauthErrorDescription: url.searchParams.get('error_description')
+    });
+    redirect(303, '/cfps?kc=error');
+  }
 
   try {
     const redirectUri = `${url.origin}/cfps/auth/callback`;
@@ -29,7 +42,9 @@ export async function GET({ url, cookies }) {
       path: '/cfps', httpOnly: true, sameSite: 'lax',
       secure: url.protocol === 'https:', maxAge: 60 * 60 * 24 * 7,
     });
-  } catch {
+  } catch (err) {
+    // Never swallow this: it's the only place the real reason exists.
+    console.error('[cfps auth] token exchange or userinfo failed:', err);
     redirect(303, '/cfps?kc=error');
   }
 
