@@ -143,7 +143,7 @@
 </div>
 
 <svg bind:this={svg} viewBox="0 0 640 310" class="fig-svg" role="img"
-  aria-label="Points being merged into groups, with the dendrogram of merges"
+  aria-label="Points being merged into clusters, with the dendrogram of merges"
   onpointermove={move} onpointerup={up} onpointercancel={up}>
   <!-- links strong enough to matter, so the chain is visible -->
   {#each pts as a, i}
@@ -161,7 +161,7 @@
     {/if}
   {/each}
   <text x={SX(pts[11][0]) - 13} y={SY(pts[11][1]) + 4} text-anchor="end" class="dim">same composition ×2</text>
-  {#if dupRule && labels[11].dup}<text x={SX(pts[11][0]) - 13} y={SY(pts[11][1]) + 17} text-anchor="end" class="dim">not a group</text>{/if}
+  {#if dupRule && labels[11].dup}<text x={SX(pts[11][0]) - 13} y={SY(pts[11][1]) + 17} text-anchor="end" class="dim">not a cluster</text>{/if}
 
   <line x1="318" x2="318" y1="14" y2="300" class="sep" />
   {#each geo as s}
@@ -184,7 +184,7 @@
   {/if}
 </svg>
 <div class="fig-readout">
-  <span>groups <b class="y">{nGroups}</b></span>
+  <span>clusters <b class="y">{nGroups}</b></span>
   <span>on their own <b>{labels.filter((l) => l.g < 0).length}</b></span>
   <span class="dim">drag points{showTau ? ' and the τ line' : ''}</span>
 </div>

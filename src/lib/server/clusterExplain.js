@@ -246,6 +246,11 @@ function buildDesigns(target, src, A) {
     built: src.built,
     modelBuilt: A.generated,
     totals: P.totals,
+    // Counts only, across every protein, for the cover's framing.
+    campaign: {
+      participants: new Set(Object.values(src.proteins ?? {}).flatMap((q) => q.designs.map((d) => d.author).filter(Boolean))).size,
+      compositions: Object.values(src.proteins ?? {}).reduce((a, q) => a + q.designs.length, 0)
+    },
     novelNames: Object.fromEntries([...novelIds].map((id) => [id, nameOf[id] ?? id])),
     designs,
     groups,

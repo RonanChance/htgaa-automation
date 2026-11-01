@@ -59,7 +59,7 @@
   <div class="fig-controls">
     <label class="grow">ingredient
       <select value={sw.reagent} onchange={(e) => setReagent?.(e.currentTarget.value)}>
-        {#each withCurve as s}<option value={s.reagent}>{s.ingredient} · leads {s.leadsGroups} groups</option>{/each}
+        {#each withCurve as s}<option value={s.reagent}>{s.ingredient} · leads {s.leadsGroups} clusters</option>{/each}
       </select>
     </label>
   </div>

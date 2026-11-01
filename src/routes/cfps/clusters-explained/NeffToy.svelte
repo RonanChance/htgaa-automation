@@ -71,9 +71,9 @@
       <span class="k">independent experiments</span>
     </div>
     <div class="bars">
-      <span class="k">the largest groups: designs vs what they are worth · hover a group</span>
+      <span class="k">the largest clusters: designs vs what they are worth · hover a cluster</span>
       {#each top as t}
-        <div class="brow" role="button" tabindex="0" aria-label="Group {t.letter}: {t.size} designs, worth {t.eff.toFixed(1)}"
+        <div class="brow" role="button" tabindex="0" aria-label="Cluster {t.letter}: {t.size} designs, worth {t.eff.toFixed(1)}"
           onpointerenter={() => (hover = t)} onpointerleave={() => (hover = null)}
           onfocus={() => (hover = t)} onblur={() => (hover = null)}>
           <span class="lt">{t.letter}</span>

@@ -46,11 +46,11 @@
   <button type="button" class="fig-btn" onclick={() => (tau = 0.5)}>back to 0.5</button>
 </div>
 <svg bind:this={svg} viewBox="0 0 {W} {H}" class="fig-svg scrub" role="img"
-  aria-label="Number of groups at each threshold; click or drag to set τ"
+  aria-label="Number of clusters at each threshold; click or drag to set τ"
   onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up}>
   <rect x={PL} y={PT} width={W - PL - PR} height={H - PT - PB} class="hit" />
   <line x1={sx(0.5)} x2={sx(0.5)} y1={PT} y2={H - PB} class="mark" />
-  <text x={sx(0.5) + 4} y={PT + 10} class="axt">the export: 0.5 → {exportGroups} groups</text>
+  <text x={sx(0.5) + 4} y={PT + 10} class="axt">the export: 0.5 → {exportGroups} clusters</text>
   <path d={line((c) => c.loners, sl)} class="lon" />
   <path d={line((c) => c.groups, sy)} class="grp" />
   <line x1={sx(tau)} x2={sx(tau)} y1={PT} y2={H - PB} class="cur" />
@@ -62,7 +62,7 @@
   <text x={W - PR} y={H - 6} text-anchor="end" class="axt">τ 0.95 · only near-twins</text>
 </svg>
 <div class="fig-readout">
-  <span><i class="sw" style="background:var(--yellow)"></i>groups <b class="y">{now.groups}</b></span>
+  <span><i class="sw" style="background:var(--yellow)"></i>clusters <b class="y">{now.groups}</b></span>
   <span><i class="sw" style="background:var(--purple)"></i>on their own <b>{now.loners}</b></span>
   <span class="hint">click or drag across the chart</span>
 </div>

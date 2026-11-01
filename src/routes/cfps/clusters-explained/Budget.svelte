@@ -45,7 +45,7 @@
     {/each}
   </ul>
   <p class="fig-note">
-    {totals.designs - totals.runsInAll} {target} designs don’t need a run of their own: their group’s runs are
+    {totals.designs - totals.runsInAll} {target} designs don’t need a test of their own: their cluster’s tests are
     expected to speak for them, or someone else submitted the identical composition.
     {totals.runsInAll <= CAP ? `The plan fits, with ${CAP - totals.runsInAll} to spare.` : `That is ${totals.runsInAll - CAP} more than fits, so the planner has to trim.`}
   </p>

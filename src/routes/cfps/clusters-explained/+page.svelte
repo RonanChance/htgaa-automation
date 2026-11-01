@@ -36,6 +36,8 @@
   import SweepCurve from './SweepCurve.svelte';
   import Budget from './Budget.svelte';
   import Scatter2D from './Scatter2D.svelte';
+  import Overview from './Overview.svelte';
+  import PlainExplain from './PlainExplain.svelte';
 
   let { data } = $props();
 
@@ -96,7 +98,7 @@
     cloud: [
       'Each point is one composition. White diamonds are Ginkgo’s measured wells; the rest are class designs.',
       'Points close together use similar amounts across the 30 measured reagents. Each axis blends several reagents, and its caption says how much of the total spread it shows. The rest is hidden, so closeness here is approximate.',
-      'Clumps here reflect composition similarity only. The model’s groups (chapter 6) also count untested reagents and what the measured wells already explain, so they don’t always match the clumps.',
+      'Clumps here reflect composition similarity only. The model’s clusters (chapter 6) also count untested reagents and what the measured wells already explain, so they don’t always match the clumps.',
       'Switch to 2-D to read one pair of components at a time. PC1 × PC2 shows the most spread.'
     ],
     slice: [
@@ -110,12 +112,12 @@
       'A falling diagonal (a negative link) can appear when a measurement sits between A and B: a curve pinned there that rises on one side tends to fall on the other.'
     ],
     groups: [
-      'The yellow line counts groups at each threshold τ; the purple line counts designs left on their own.',
-      'At low τ almost everything links, giving a few large, loose groups. At high τ only near-identical designs group and most are left on their own. The export’s 0.5 is in between: every pair in a group shares at least a quarter of its variance.',
-      'In the cloud each colour is a group at the current τ, and grey points are on their own.'
+      'The yellow line counts clusters at each threshold τ; the purple line counts designs left on their own.',
+      'At low τ almost everything links, giving a few large, loose clusters. At high τ only near-identical designs cluster and most are left on their own. The export’s 0.5 is in between: every pair in a cluster shares at least a quarter of its variance.',
+      'In the cloud each colour is a cluster at the current τ, and grey points are on their own.'
     ],
     runs: [
-      'Each point is one design in the chosen group; higher means better odds of beating Ginkgo’s best. The star is the first test, rings are check tests.',
+      'Each point is one design in the chosen cluster; higher means better odds of beating Ginkgo’s best. The star is the first test, rings are check tests.',
       'In the second step the horizontal position is new information: how much running the design would add beyond the first test. Far right means it asks something the first test can’t answer. Near 0 means its result should follow the first test’s.'
     ],
     sweep: [
@@ -226,7 +228,7 @@
   const designLabel = (i) => {
     const d = D?.designs[i];
     if (!d) return null;
-    const g = d.g >= 0 ? `group ${D.groups[d.g].letter}` : 'in no group';
+    const g = d.g >= 0 ? `cluster ${D.groups[d.g].letter}` : 'in no cluster';
     return `design #${i + 1} · ${g}\n${(ROLE_STYLE[d.role] ?? ROLE_STYLE.follows).label} · odds ${(d.p * 100).toFixed(1)}%`;
   };
   function cloudLabel(i) {
@@ -248,16 +250,20 @@
   // `word` is the timeline's one- or two-word label for the chapter.
   const CHAPTERS = [
     { id: 'start', title: 'How the round-1 plan was chosen', word: 'Start', steps: 1 },
-    { id: 'point', title: 'A composition is a point', word: 'Points', steps: 4 },
-    { id: 'gp', title: 'Predicting from 78 wells', word: 'Prediction', steps: 4 },
-    { id: 'link', title: 'From error bars to links', word: 'Links', steps: 4 },
-    { id: 'unknown', title: 'The shared unknown', word: 'Unknowns', steps: 4 },
-    { id: 'matrix', title: 'Every link at once', word: 'Link matrix', steps: 3 },
-    { id: 'groups', title: 'Drawing the lines', word: 'Grouping', steps: 5 },
-    { id: 'neff', title: 'How many experiments, really?', word: 'True count', steps: 2 },
-    { id: 'runs', title: 'Choosing what to test', word: 'Choosing tests', steps: 6 },
+    // protein-independent, illustrative: the whole pipeline before the details
+    { id: 'overview', title: 'The whole process at a glance', word: 'Overview', steps: 6 },
+    { id: 'point', n: 1, title: 'A composition is a point', word: 'Points', steps: 4 },
+    { id: 'gp', n: 2, title: 'Predicting from 78 wells', word: 'Prediction', steps: 4 },
+    { id: 'link', n: 3, title: 'From error bars to links', word: 'Links', steps: 4 },
+    { id: 'unknown', n: 4, title: 'The shared unknown', word: 'Unknowns', steps: 4 },
+    { id: 'matrix', n: 5, title: 'Every link at once', word: 'Link matrix', steps: 3 },
+    { id: 'groups', n: 6, title: 'Drawing the lines', word: 'Clustering', steps: 5 },
+    { id: 'neff', n: 7, title: 'How many experiments, really?', word: 'True count', steps: 2 },
+    { id: 'runs', n: 8, title: 'Choosing what to test', word: 'Choosing tests', steps: 6 },
     { id: 'end', title: 'What round 1 tests', word: 'End', steps: 1 }
   ];
+  // first slide of the chapter with this id
+  const startOf = (id) => START[CHAPTERS.findIndex((c) => c.id === id)];
   // first slide index of each chapter
   const START = CHAPTERS.map((_, i) => CHAPTERS.slice(0, i).reduce((a, c) => a + c.steps, 0));
   const SLIDES = CHAPTERS.flatMap((c, ci) =>
@@ -322,29 +328,29 @@
     kernel: ['Kernel', 'The formula that scores how similar two compositions are: 1 for identical compositions, falling towards 0 as they move apart.'],
     posterior: ['Posterior covariance', 'How much two predictions’ errors tend to move together, once the measurements are taken into account.'],
     link: ['Link', 'The correlation between two designs’ prediction errors, from 0 (unrelated) to 1 (if the model is wrong about one, it is wrong about the other in the same way).'],
-    group: ['Group', 'A set of designs the model expects to succeed or fail together: every pair in it is linked at least 0.5. Running one of them tells you a lot about the rest.'],
+    group: ['Cluster', 'A set of designs the model expects to succeed or fail together: every pair in it is linked at least 0.5. Running one of them tells you a lot about the rest.'],
     student: ['Student reagent composition', 'One participant’s submitted set of reagent amounts for a 20 µL cell-free reaction. The rest of the page also calls these designs.'],
     tested: ['Tested composition', 'A student reagent composition chosen for the round-1 plates and tested in quadruplicate: four replicate wells on one plate. It is not the same as an independent experiment, because linked compositions overlap in what they tell you.'],
     shock: ['Shock', 'An extra random effect the model adds for an untested reagent. Every design that makes the same change shares it.'],
     collapse: ['Collapse', 'The reaction failing outright. For untested reagents the model assumes a chance of yield dropping about 50-fold.'],
-    agglom: ['Agglomerative clustering', 'Start with every item on its own and keep merging the two closest groups.'],
-    dendrogram: ['Dendrogram', 'A tree of the merges. The height where two branches join shows how linked those two groups were.'],
-    single: ['Single linkage', 'Two groups count as close as their closest pair. Prone to chaining.'],
-    complete: ['Complete linkage', 'Two groups count as close as their least-linked pair, so every pair inside a group clears the bar.'],
-    tau: ['Threshold τ', 'The minimum link every pair in a group must have. The export uses 0.5.'],
+    agglom: ['Agglomerative clustering', 'Start with every item on its own and keep merging the two closest clusters.'],
+    dendrogram: ['Dendrogram', 'A tree of the merges. The height where two branches join shows how linked those two clusters were.'],
+    single: ['Single linkage', 'Two clusters count as close as their closest pair. Prone to chaining.'],
+    complete: ['Complete linkage', 'Two clusters count as close as their least-linked pair, so every pair inside a cluster clears the bar.'],
+    tau: ['Threshold τ', 'The minimum link every pair in a cluster must have. The export uses 0.5.'],
     neff: ['Participation ratio', 'A count of how many truly independent experiments a set of correlated ones is worth.'],
     indep: ['Independent experiments', 'How many truly separate questions a set of designs answers, counted with the participation ratio. Linked designs overlap, so a few hundred designs can be worth only a few dozen unlinked ones. It measures information, not wells.'],
-    first: ['First test', 'The group’s design with the best odds. It tests what the whole group has in common.'],
+    first: ['First test', 'The cluster’s design with the best odds. It tests what the whole cluster has in common.'],
     odds: ['Odds', 'The model’s chance that a design beats Ginkgo’s best composition through every screen of the competition.'],
     newinfo: ['New information', 'The share of a design’s uncertainty the first test can’t explain: 1 − r².'],
-    virtual: ['Virtual compositions', 'Made-up compositions spread across a group’s amounts, used to ask the model which ingredients matter.'],
+    virtual: ['Virtual compositions', 'Made-up compositions spread across a cluster’s amounts, used to ask the model which ingredients matter.'],
     cpg: ['Cost per gram', 'Composition cost divided by predicted yield. Every ranking here uses it.'],
     regression: ['Regression', 'A fit that estimates how much each ingredient moves a prediction, holding the others fixed.'],
     lhc: ['Latin hypercube', 'A sampling plan that cuts each ingredient’s range into equal slices and uses each slice once, for even coverage with few points.'],
-    check: ['Check test', 'A second design from a group, chosen because it differs most in the ingredient the model thinks matters.'],
-    independent: ['Independent test', 'A design in no group: nothing else on the plates predicts it.'],
+    check: ['Check test', 'A second design from a cluster, chosen because it differs most in the ingredient the model thinks matters.'],
+    independent: ['Independent test', 'A design in no cluster: nothing else on the plates predicts it.'],
     sweep: ['Sweep test', 'One of a submitted series that varies a single ingredient, tested together to measure that ingredient’s curve.'],
-    kmeans: ['k-means', 'A common clustering method that splits points into a chosen number (k) of groups around centres. It needs k up front and allows loose groups.']
+    kmeans: ['k-means', 'A common clustering method that splits points into a chosen number (k) of clusters around centres. It needs k up front and allows loose clusters.']
   };
   const TIP_W = 300;
   let tip = $state(null);
@@ -359,8 +365,10 @@
   $effect(() => { key; tip = null; });
 
   // Steps with something under "more on this step".
-  const DETAILS = new Set([
-    'start.0', 'point.0', 'point.1', 'point.2', 'point.3', 'gp.0', 'gp.1', 'gp.2', 'gp.3',
+  // Every step has an "In plain terms" explanation (PlainExplain); these also
+  // have technical notes, shown after it under "Going deeper".
+  const TECH = new Set([
+    'start.0', 'overview.0', 'point.0', 'point.1', 'point.2', 'point.3', 'gp.0', 'gp.1', 'gp.2', 'gp.3',
     'link.0', 'link.1', 'link.2', 'link.3', 'unknown.0', 'unknown.1', 'unknown.2', 'unknown.3',
     'matrix.0', 'matrix.1', 'matrix.2', 'groups.0', 'groups.1', 'groups.2', 'groups.3', 'groups.4',
     'neff.0', 'neff.1', 'runs.0', 'runs.1', 'runs.2', 'runs.3', 'runs.4', 'end.0'
@@ -400,6 +408,10 @@
   onmouseenter={(ev) => showTip(ev, k)} onmouseleave={hideTip}
   onfocus={(ev) => showTip(ev, k)} onblur={hideTip}>{label}</button>{/snippet}
 
+{#snippet more(id, label)}
+  <button type="button" class="jump" onclick={() => go(startOf(id))}>{label} in detail →</button>
+{/snippet}
+
 {#snippet viewControls()}
   {#if D && gp}
     <div class="fig-controls">
@@ -416,7 +428,7 @@
         </div>
       {/if}
       <div class="cx-seg" role="group" aria-label="How to colour the points">
-        <button type="button" class:is-on={!colourByReagent} onclick={() => (colourByReagent = false)}>{cur.ci === 6 ? 'by group' : st >= 3 ? 'by plates' : 'plain'}</button>
+        <button type="button" class:is-on={!colourByReagent} onclick={() => (colourByReagent = false)}>{ch.id === 'groups' ? 'by cluster' : st >= 3 ? 'by plates' : 'plain'}</button>
         <button type="button" class:is-on={colourByReagent} onclick={() => (colourByReagent = true)}>by reagent</button>
       </div>
       {#if colourByReagent}
@@ -450,16 +462,17 @@
 <div class="cfps-page cx">
   <header class="cx-bar">
     <a class="cx-back" href="/cfps/clusters">← Round-1 planner</a>
-    <nav class="cx-tabs" aria-label="Protein target">
+    <nav class="cx-tabs" class:idle={ch.id === 'overview'} aria-label="Protein target">
       {#each TARGETS as t}
         <button type="button" class:is-on={target === t} style={target === t ? `--tc:${TCOLOR[t]}` : ''}
           onclick={() => (target = t)}>{t}</button>
       {/each}
     </nav>
     <span class="cx-status">
-      {#if loadErr}<span class="err">{loadErr}</span>
+      {#if ch.id === 'overview'}the overview is the same for every protein
+      {:else if loadErr}<span class="err">{loadErr}</span>
       {:else if !resp}loading…
-      {:else if matches}recomputed here: {matches.same}/{matches.of} groups match the export
+      {:else if matches}recomputed here: {matches.same}/{matches.of} clusters match the export
       {:else if locked}<a href={loginHref(page.url)}>sign in</a> for the real designs{/if}
     </span>
   </header>
@@ -472,26 +485,32 @@
       <!-- ═══════════════════════════ the words ═══════════════════════════ -->
       <div class="stage-text">
         {#key key}
-          <div class="slide" class:cover={cur.ci === 0} in:fly={{ x: 44 * dir, duration: 380, easing: cubicOut }}>
-            {#if cur.ci > 0 && cur.ci < FINAL_CH}
-              <p class="eyebrow"><span class="num">{cur.ci}</span>{ch.title}<span class="of">{st + 1} / {ch.steps}</span></p>
+          <div class="slide" class:cover={ch.id === 'start'} in:fly={{ x: 44 * dir, duration: 380, easing: cubicOut }}>
+            {#if ch.id !== 'start' && ch.id !== 'end'}
+              <p class="eyebrow"><span class="num">{ch.n ?? '·'}</span>{ch.title}<span class="of">{st + 1} / {ch.steps}</span></p>
             {/if}
 
             {#if key === 'start.0'}
               <p class="kicker">CFPS round 1 · a visual walkthrough</p>
-              <h1>How {N ?? 'hundreds of'} student reagent compositions became {D?.totals.runsInAll ?? 'a plate of'} tested compositions</h1>
+              <h1>How {N ?? 'hundreds of'} student ideas became {D?.totals.runsInAll ?? 'a plate of'} tested compositions</h1>
               <p class="lede">
-                Students submitted more {target} reagent compositions than there are wells, and none had been tested yet.
-                The CFPS Arena model chose which ones to test. This walkthrough shows how, one picture at a time:
-                {@render t('student', 'student reagent compositions')} become points, points get
-                <em class="c-blue">{@render t('link', 'links')}</em>, links form
-                <em class="c-yellow">{@render t('group', 'groups')}</em>, and groups become
-                <em class="c-teal">{@render t('tested', 'tested compositions')}</em>.
+                {#if D?.campaign}{D.campaign.participants}{:else}Over a hundred{/if} HTBAA student-scientists around the
+                world submitted {#if D?.campaign}{D.campaign.compositions.toLocaleString()}{:else}hundreds of{/if} reagent
+                compositions across three proteins, each one an experimental idea. Round 1 can test only some of them,
+                so a {@render t('gp', 'Gaussian-process regression model')} organizes them mathematically: it predicts how each idea will perform, finds
+                which ideas would teach the same thing, and chooses tests so that each well answers a different
+                question.
+              </p>
+              <p class="lede">
+                This walkthrough shows how {@render t('student', 'student reagent compositions')} become points in
+                30-dimensional space, points get <em class="c-blue">{@render t('link', 'links')}</em>, links form
+                <em class="c-yellow">{@render t('group', 'clusters')}</em>, and clusters become
+                <em class="c-teal">{@render t('tested', 'tested compositions')}</em> in the final plate request to Ginkgo.
               </p>
               {#if D}
                 <div class="hero-stats">
                   <div><b>{N}</b><span>{@render t('student', 'student compositions')}</span></div>
-                  <div><b>{D.groups.length}</b><span>{@render t('group', 'groups')}</span></div>
+                  <div><b>{D.groups.length}</b><span>{@render t('group', 'clusters')}</span></div>
                   <div><b>~{fmt(effAll)}</b><span>{@render t('indep', 'independent experiments')}</span></div>
                   <div><b>{D.totals.runsInAll}</b><span>{@render t('tested', 'tested compositions')}</span></div>
                 </div>
@@ -501,8 +520,42 @@
                   build from the export ({new Date(D.built).toLocaleString()}), so links recomputed here may drift from the export.</p>
               {/if}
               <button type="button" class="cx-btn begin" onclick={() => go(1)}>Begin →</button>
-              <p class="howto">Step with <kbd>←</kbd> <kbd>→</kbd>, the screen edges or the timeline. Hover a
-                <span class="dotted">dotted word</span> for a definition. Scroll down on any step for more detail.</p>
+
+            <!-- · The whole process at a glance (illustrative, any protein) -->
+            {:else if key === 'overview.0'}
+              <h2 class="ov-h">Student ideas</h2>
+              <p>Each {@render t('student', 'student reagent composition')} becomes a point, placed by its reagent
+                amounts, so similar compositions land close together. The diamonds are
+                {@render t('controls', 'Ginkgo’s measured wells')}, the only compositions with a known yield.</p>
+              {@render more('point', 'Chapter 1')}
+            {:else if key === 'overview.1'}
+              <h2 class="ov-h">A model predicts every idea</h2>
+              <p>A {@render t('gp', 'Gaussian process')} learns from the measured wells. It predicts each idea’s yield
+                and how unsure it is: confident near the wells, guessing far from them.</p>
+              {@render more('gp', 'Chapter 2')}
+            {:else if key === 'overview.2'}
+              <h2 class="ov-h">Ideas get links</h2>
+              <p>Two ideas are {@render t('link', 'linked')} when the model expects them to succeed or fail together:
+                because their compositions are close, or because they share an
+                {@render t('untested', 'untested reagent')} (red dashes), even when they are far apart.</p>
+              {@render more('link', 'Chapters 3 and 4')}
+            {:else if key === 'overview.3'}
+              <h2 class="ov-h">Every link at once</h2>
+              <p>Put every link in a table, one row and one column per idea. In random order it looks like noise.
+                Sorted, linked ideas form bright blocks along the diagonal.</p>
+              {@render more('matrix', 'Chapter 5')}
+            {:else if key === 'overview.4'}
+              <h2 class="ov-h">The blocks become clusters</h2>
+              <p>{@render t('complete', 'Complete-linkage clustering')} joins ideas only while every pair stays linked at
+                least 0.5. Each {@render t('group', 'cluster')} is one hypothesis the plates can test, and linked ideas
+                are worth fewer {@render t('indep', 'independent experiments')} than their count.</p>
+              {@render more('groups', 'Chapters 6 and 7')}
+            {:else if key === 'overview.5'}
+              <h2 class="ov-h">Clusters choose what gets tested</h2>
+              <p>Each cluster sends its best-odds idea (★ {@render t('first', 'first test')}) and the one that differs
+                most from it (◯ {@render t('check', 'check test')}). Ideas in no cluster are tested on their own. Ideas
+                that would only repeat a cluster’s result wait.</p>
+              {@render more('runs', 'Chapter 8')}
 
             <!-- 1 · A composition is a point -->
             {:else if key === 'point.0'}
@@ -522,13 +575,11 @@
                   <msub><mi>σ</mi><mi>j</mi></msub>
                 </mfrac>
               </math>
-              <p>The grey guides are evenly spaced in nanolitres; they bunch up as they pass through the log. Click or
-                drag on any line to move the amount.</p>
+              <p>The grey guides are evenly spaced in nanolitres; they bunch up as they pass through the log.</p>
             {:else if key === 'point.2'}
               <p>Doing this for all 30 reagents puts each design at a point in 30-dimensional space. To look at it, the
                 view is turned to the three directions where the points spread most, the
-                {@render t('pc', 'principal components')}. Drag to rotate, or switch to 2-D to compare any two of the
-                first four components side by side.</p>
+                {@render t('pc', 'principal components')}. The 2-D view compares any two of the first four.</p>
               <p><span class="c-white">◆ White diamonds</span> are {@render t('controls', 'Ginkgo’s 78 control wells')},
                 the only compositions with a measured yield. <span class="c-blue">● Blue dots</span> are the class’s designs.</p>
             {:else if key === 'point.3'}
@@ -550,7 +601,7 @@
                 for a lot and distant ones for little. This kind of model is a {@render t('gp', 'Gaussian process')}.</p>
               <p>The plot shows the idea with one reagent. White dots are measurements, the
                 <span class="c-blue">blue line</span> is the prediction, and the shaded band is where the true value
-                probably lies. Click anywhere to add a measurement, or drag one.</p>
+                probably lies.</p>
             {:else if key === 'gp.1'}
               <p>How far one measurement’s influence reaches is set by the {@render t('ls', 'length-scale')} ℓ, part of
                 the {@render t('kernel', 'kernel')}, the formula that scores how close two compositions are:</p>
@@ -580,9 +631,8 @@
               <p>This is a slice through the real {target} model. It starts from Ginkgo’s best composition, holds 29 reagents
                 fixed and varies one.</p>
               <p>Inside the <span class="c-green">green</span> range the plates have data and the band stays narrow.
-                Past it, the band widens because the model is {@render t('extrapolate', 'extrapolating')}. Click or drag on
-                the plot to move along the curve, and try other reagents. Your choice carries through the rest of the
-                walkthrough.</p>
+                Past it, the band widens because the model is {@render t('extrapolate', 'extrapolating')}. Some reagents
+                barely move the yield; others move it a lot.</p>
 
             <!-- 3 · From error bars to links -->
             {:else if key === 'link.0'}
@@ -595,7 +645,7 @@
               <p>Place two probes, <span class="c-blue">A</span> and <span class="c-gold">B</span>. For each curve,
                 record how far it is from the mean at A and at B, and plot that pair as a dot.</p>
               <p>Drag B towards A and the dots line up on a diagonal: a curve that runs high at A also runs high at B.
-                Move them apart, or click between them to add a measurement, and the dots spread into a round cloud.</p>
+                Move them apart, or add a measurement between them, and the dots spread into a round cloud.</p>
             {:else if key === 'link.2'}
               <p>The slope of that cloud is the {@render t('posterior', 'posterior covariance')}. Scaled to run between 0
                 and 1, it becomes the {@render t('link', 'link')}, which the whole plan is built from:</p>
@@ -619,7 +669,7 @@
                 {@render t('untested', 'never on a Ginkgo plate')}. They aren’t among the 30 axes, so the Gaussian
                 process can’t see them. Two designs that both add PEG-8000 but differ in everything else look
                 <i>unrelated</i> to it.</p>
-              <p>These two designs come from one group. The <span class="c-blue">blue</span> bar is all the link the GP
+              <p>These two designs come from one cluster. The <span class="c-blue">blue</span> bar is all the link the GP
                 finds between them.</p>
             {:else if key === 'unknown.1'}
               <p>To account for this, the model adds a {@render t('shock', 'shock')} for each untested change: a random
@@ -635,15 +685,15 @@
               <p>The link is the <span class="c-blue">GP covariance</span> plus this <span class="c-red">shared
                 covariance</span>, divided by the same total, so the two parts add up.</p>
             {:else if key === 'unknown.2'}
-              <p>This shared term is what holds the group together. If the untested change hurts {target}, these designs
+              <p>This shared term is what holds the cluster together. If the untested change hurts {target}, these designs
                 are likely to fail <i>together</i>, however different the rest of their compositions are.</p>
               <p>Take the shared change away from B and the link drops back to the composition-only part. The two small
                 heatmaps show the same designs without and with the shared term.</p>
             {:else if key === 'unknown.3'}
               <p>σ<sub>N</sub> and <i>p</i> were never measured. They are <b>assumptions</b>, set by the type of
                 reagent: an established additive gets a smaller shock than a magnesium chelator.</p>
-              <p>The dial scales all untested-reagent variance. Each change recomputes every link and regroups the
-                designs, which shows how much the groups depend on these assumptions.</p>
+              <p>The dial scales all untested-reagent variance. Each change recomputes every link and reclusters the
+                designs, which shows how much the clusters depend on these assumptions.</p>
 
             <!-- 5 · Every link at once -->
             {:else if key === 'matrix.0'}
@@ -654,24 +704,23 @@
             {:else if key === 'matrix.1'}
               <p>Reorder the rows and columns so linked designs sit next to each other. The numbers are the same, but
                 <b>blocks</b> appear along the diagonal.</p>
-              <p>Each bright block is a set of designs the model expects to succeed or fail together. Hover any pixel to
-                see the pair.</p>
+              <p>Each bright block is a set of designs the model expects to succeed or fail together.</p>
             {:else if key === 'matrix.2'}
               <p>The buttons split the link into its two parts. <span class="c-blue">Composition similarity</span> is high for
                 designs that are close across the 30 measured reagents. <span class="c-red">Shared unknown</span> is high
                 for designs that make the same untested change, even when their compositions are far apart.</p>
-              <p>The blocks are the groups. The next chapter decides exactly where their edges go.</p>
+              <p>The blocks are the clusters. The next chapter decides exactly where their edges go.</p>
 
             <!-- 6 · Drawing the lines -->
             {:else if key === 'groups.0'}
-              <p>Start with every design on its own. Find the two most-linked groups, merge them, and repeat. This is
+              <p>Start with every design on its own. Find the two most-linked clusters, merge them, and repeat. This is
                 {@render t('agglom', 'agglomerative clustering')}, and the {@render t('dendrogram', 'dendrogram')} on the
                 right records the height of each merge.</p>
-              <p>The toy uses plain distance as the link so you can see it. Step through the merges with ▶.</p>
+              <p>The toy uses plain distance as the link so the merges are easy to follow.</p>
             {:else if key === 'groups.1'}
-              <p>Measuring the link between two <i>groups</i> needs a rule. {@render t('single', 'Single linkage')} uses
+              <p>Measuring the link between two <i>clusters</i> needs a rule. {@render t('single', 'Single linkage')} uses
                 their strongest pair. In the chain along the bottom each point links to its neighbour, so the whole
-                chain becomes one group even though its two ends are unrelated.</p>
+                chain becomes one cluster even though its two ends are unrelated.</p>
             {:else if key === 'groups.2'}
               <p>{@render t('complete', 'Complete linkage')} uses the <i>weakest</i> pair instead:</p>
               <math display="block">
@@ -679,19 +728,18 @@
                 <munder><mi>min</mi><mrow><mi>a</mi><mo>∈</mo><mi>G</mi><mo>,</mo><mi>b</mi><mo>∈</mo><mi>H</mi></mrow></munder>
                 <msub><mi>r</mi><mrow><mi>a</mi><mi>b</mi></mrow></msub>
               </math>
-              <p>Cutting the tree at {@render t('tau', 'τ = 0.5')} means every pair inside every group is linked at least
-                0.5, so a group is a set of designs expected to move together rather than a chain. Drag the τ line to
-                move the cut.</p>
+              <p>Cutting the tree at {@render t('tau', 'τ = 0.5')} means every pair inside every cluster is linked at least
+                0.5, so a cluster is a set of designs expected to move together rather than a chain.</p>
             {:else if key === 'groups.3'}
               <p>The export adds one more rule. Some participants submitted identical compositions. Copies of one composition link
-                at exactly 1 and would always form a group, but that is the same experiment twice rather than a
-                hypothesis. So a group must contain at least two <i>different</i> compositions.</p>
+                at exactly 1 and would always form a cluster, but that is the same experiment twice rather than a
+                hypothesis. So a cluster must contain at least two <i>different</i> compositions.</p>
             {:else if key === 'groups.4'}
               <p>The same algorithm, run in your browser on all {N ?? ''} {target} designs,
-                {#if matches}finds <b class="c-yellow">{matches.mine}</b> groups at τ = 0.5.
-                  <b>{matches.same} of the export’s {matches.of}</b> match member for member.{:else}reproduces the export’s groups.{/if}</p>
-              <p>Click or drag across the chart to change τ and watch groups split or merge. In the 3-D view, adding the
-                untested reagents as axes pulls together designs that share an unknown.</p>
+                {#if matches}finds <b class="c-yellow">{matches.mine}</b> clusters at τ = 0.5.
+                  <b>{matches.same} of the export’s {matches.of}</b> match member for member.{:else}reproduces the export’s clusters.{/if}</p>
+              <p>Lowering τ merges clusters; raising it splits them. Adding the untested reagents as axes in the 3-D view
+                pulls together designs that share an unknown.</p>
 
             <!-- 7 · How many experiments -->
             {:else if key === 'neff.0'}
@@ -709,56 +757,55 @@
             {:else if key === 'neff.1'}
               <p>For {target}: <b class="c-yellow">{N ?? '…'} designs are worth about {fmt(effAll)} independent
                 experiments</b>, the same figure the export reports.
-                {#if groupA}Group {groupA.letter}’s {groupA.members.length} designs count as about
+                {#if groupA}Cluster {groupA.letter}’s {groupA.members.length} designs count as about
                   {fmt(LM ? nEff(LM.R, LM.n, groupA.members) : null)}.{/if}</p>
-              <p>This is why the plan tests groups rather than every design: one test per group captures most of what the
-                group can show. Hover a group’s bar to see what it contains.</p>
+              <p>This is why the plan tests clusters rather than every design: one test per cluster captures most of what the
+                cluster can show.</p>
 
             <!-- 8 · Choosing what to test -->
             {:else if key === 'runs.0'}
-              <p>Each group gets a <b class="c-yellow">{@render t('first', 'first test')}</b>: the member with the best
+              <p>Each cluster gets a <b class="c-yellow">{@render t('first', 'first test')}</b>: the member with the best
                 {@render t('odds', 'odds')} of beating Ginkgo’s best. The odds come from simulating the design through the
                 competition’s screens thousands of times, using its predicted cost per gram and uncertainty.</p>
-              <p>The first test tests what the whole group has in common. If it fails, the rest of the group probably
+              <p>The first test tests what the whole cluster has in common. If it fails, the rest of the cluster probably
                 would too.</p>
             {:else if key === 'runs.1'}
-              <p>A second test from the same group only adds what the first test can’t predict. If its link to the first
+              <p>A second test from the same cluster only adds what the first test can’t predict. If its link to the first
                 test is r, the first test accounts for r² of its uncertainty, and the rest is
                 {@render t('newinfo', 'new information')}:</p>
               <math display="block">
                 <mtext>new information</mtext><mo>=</mo><mn>1</mn><mo>−</mo><msubsup><mi>r</mi><mrow><mtext>first</mtext><mo>,</mo><mi>d</mi></mrow><mn>2</mn></msubsup>
               </math>
-              <p>A design linked at 0.86 adds 26%. Designs close to 0% <span class="c-dim">follow their group’s
+              <p>A design linked at 0.86 adds 26%. Designs close to 0% <span class="c-dim">follow their cluster’s
                 tests</span>: their result is expected to come along with the first test’s.</p>
             {:else if key === 'runs.2'}
-              <p>To choose among the rest, the model asks which ingredients matter <i>within</i> the group. It generates
+              <p>To choose among the rest, the model asks which ingredients matter <i>within</i> the cluster. It generates
                 {D?.groups.find((g) => g.virtualRecipes)?.virtualRecipes ?? 160} or more
-                {@render t('virtual', 'virtual compositions')} across the amounts the group’s designs use, predicts each one’s
+                {@render t('virtual', 'virtual compositions')} across the amounts the cluster’s designs use, predicts each one’s
                 {@render t('cpg', 'cost per gram')}, and fits a {@render t('regression', 'regression')} on the ingredients.</p>
               <p>The virtual compositions come from a {@render t('lhc', 'Latin hypercube')}: each ingredient’s range is cut
                 into slices and every slice is used once. Random points, for comparison, leave gaps.</p>
             {:else if key === 'runs.3'}
               <p>The regression ranks ingredients by how much they move the predicted cost per gram. For the top one or
                 two, the <b class="c-teal">{@render t('check', 'check test')}</b> is the member whose amount differs <i>most</i> from the first
-                test’s. Click an ingredient to follow it through the walkthrough; groups marked ★ in the list feature
-                the reagent you’ve chosen.</p>
-              <p>If the check test comes out as predicted, the group is behaving as modelled. If it doesn’t, that
+                test’s.</p>
+              <p>If the check test comes out as predicted, the cluster is behaving as modelled. If it doesn’t, that
                 ingredient matters more or less than the model assumes.</p>
             {:else if key === 'runs.4'}
               <p>Two more kinds of test fill the plan. <b class="c-purple">{@render t('independent', 'Independent tests')}</b> are designs in no
-                group, so nothing else on the plates predicts them.</p>
+                cluster, so nothing else on the plates predicts them.</p>
               <p><b class="c-gold">{@render t('sweep', 'Sweep tests')}</b> are submitted series that change one ingredient and nothing else. Tested
                 together, they turn the model’s predicted curve into a measured one, and those measurements feed the
-                round-2 model. Click or drag on the plot to read the curve.</p>
+                round-2 model.</p>
             {:else if key === 'runs.5'}
               <p>First tests, check tests, independents and sweeps together make up the plan.</p>
               <p>The <a href="/cfps/clusters">round-1 planner</a> starts from this plan. There you can change how deeply
-                each group is tested and export the plates.</p>
+                each cluster is tested and export the plates.</p>
 
             {:else if key === 'end.0'}
               <h2 class="end-h">What round 1 tests</h2>
               <p>Everything in this walkthrough is a <i>prediction</i> made before any class design was tested. Round 1
-                checks it: whether each group really moves together (first test against check tests), whether the shared
+                checks it: whether each cluster really moves together (first test against check tests), whether the shared
                 bets pay off, what the price-only reagents do, and whether the measured sweeps follow the predicted
                 curves.</p>
               <p>Where results differ, they go back into the Gaussian process, and the next model improves.</p>
@@ -766,21 +813,21 @@
             {/if}
           </div>
         {/key}
-        {#if DETAILS.has(key)}
-          <button type="button" class="more" onclick={() => detailsEl?.scrollIntoView({ behavior: 'smooth' })}>{key === 'start.0' ? '↓ the approach at a glance' : '↓ more on this step'}</button>
-        {/if}
+        <button type="button" class="more" onclick={() => detailsEl?.scrollIntoView({ behavior: 'smooth' })}>{key === 'start.0' ? '↓ the problem and the approach' : '↓ more on this step'}</button>
       </div>
 
       <!-- ═══════════════════════════ the figure ═══════════════════════════ -->
       <div class="stage-fig">
         {#key cur.ci}
           <div class="fig-in" in:fade={{ duration: 260 }}>
-            {#if !model && cur.ci !== 3 && cur.ci !== 6 && cur.ci !== 7}
+            {#if !model && !['overview', 'link', 'groups', 'neff'].includes(ch.id)}
               {@render loadingCard()}
-            {:else if cur.ci === 0}
+            {:else if ch.id === 'start'}
               <Cloud3D points={D ? ptsGroups : ptsPlain} label={cloudLabel} axes={null} height="clamp(280px, calc(100dvh - 260px), 620px)" />
-              <p class="fig-note">{D ? `Every ${target} design in the model’s space, coloured by its group. Drag to rotate.` : 'Ginkgo’s control wells in the model’s space. Sign in to add the class’s designs.'}</p>
-            {:else if cur.ci === 1}
+              <p class="fig-note">{D ? `Every ${target} design in the model’s space, coloured by its cluster.` : 'Ginkgo’s control wells in the model’s space. Sign in to add the class’s designs.'}</p>
+            {:else if ch.id === 'overview'}
+              <Overview step={st} onstep={(k) => go(startOf('overview') + k)} />
+            {:else if ch.id === 'point'}
               <div class:gone={st >= 2}><AxisTransform {model} designs={D?.designs ?? null} step={st}
                 reagent={reagentCol} {amount} {setReagent} {setAmount} /></div>
               <div class:gone={st < 2}>
@@ -799,27 +846,27 @@
                 </ul>
                 {@render howTo('cloud')}
               </div>
-            {:else if cur.ci === 2}
+            {:else if ch.id === 'gp'}
               <div class:gone={st >= 3}><GpToy mode="fit" /></div>
               <div class:gone={st < 3}><GpSlice {model} designs={D?.designs ?? null}
                 reagent={reagentCol} {amount} {setReagent} {setAmount} />{@render howTo('slice')}</div>
-            {:else if cur.ci === 3}
+            {:else if ch.id === 'link'}
               <GpToy mode={st === 0 ? 'samples' : 'link'} />
               {#if st >= 1}{@render howTo('linktoy')}{/if}
-            {:else if cur.ci === 4}
+            {:else if ch.id === 'unknown'}
               {#if !D}{@render signIn('this chapter on the real designs')}
               {:else if ds}<SharedUnknown {model} data={D} {ds} step={st} />{/if}
-            {:else if cur.ci === 5}
+            {:else if ch.id === 'matrix'}
               {#if !D}{@render signIn('the real link matrix')}
               {:else if LM}
                 <LinkHeatmap n={LM.n} R={LM.R} G={LM.G} groupOf={D.designs.map((d) => d.g)} groups={D.groups}
                   sorted={st >= 1} labelFor={designLabel} eff={effAll} {target} />
               {/if}
-            {:else if cur.ci === 6}
+            {:else if ch.id === 'groups'}
               <div class:gone={st >= 4}><LinkageToy step={st} /></div>
               <div class:gone={st < 4}>
                 {#if !model}{@render loadingCard()}
-                {:else if !D}{@render signIn('the real grouping')}
+                {:else if !D}{@render signIn('the real clustering')}
                 {:else if merges}
                   <GroupCount n={LM.n} {merges} {rc} bind:tau exportGroups={D.groups.length} />
                   <div class="fig-controls">
@@ -833,10 +880,10 @@
                   {@render howTo('groups')}
                 {/if}
               </div>
-            {:else if cur.ci === 7}
+            {:else if ch.id === 'neff'}
               <NeffToy R={LM?.R ?? null} n={LM?.n ?? 0} groups={D?.groups ?? null} step={st} />
               {#if st >= 1 && !D}{@render signIn('the real count')}{/if}
-            {:else if cur.ci === 8}
+            {:else if ch.id === 'runs'}
               {#if st === 2}<LhcDemo />
               {:else if !D}{@render signIn('this chapter on the real designs')}
               {:else if st <= 1 && ds}<RunPicker {model} data={D} {ds} view={st === 0 ? 'odds' : 'info'} bind:pick={runGroup} reagent={reagentCol} {setReagent} />{@render howTo('runs')}
@@ -844,7 +891,7 @@
               {:else if st === 4}<SweepCurve sweeps={D.sweeps} {reagent} {setReagent} />{@render howTo('sweep')}
               {:else if st >= 5}<Budget totals={D.totals} {target} />
               {/if}
-            {:else if cur.ci === FINAL_CH}
+            {:else if ch.id === 'end'}
               {#if D}<Budget totals={D.totals} {target} />{:else}{@render signIn('the round-1 tally')}{/if}
             {/if}
           </div>
@@ -858,7 +905,7 @@
       <div class="tl-track">
         {#each CHAPTERS as c, ci}
           <div class="tl-ch" class:on={ci === cur.ci} style="flex:{c.steps}">
-            <span class="tl-lbl" title={c.title}>{#if ci > 0 && ci < FINAL_CH}<i>{ci}</i>{/if}{c.word}</span>
+            <span class="tl-lbl" title={c.title}>{#if c.n}<i>{c.n}</i>{/if}{c.word}</span>
             <div class="tl-dots">
               {#each Array(c.steps) as _, s}
                 {@const i = START[ci] + s}
@@ -884,8 +931,12 @@
 
   <!-- ═══════════════════════ more on this step ═══════════════════════ -->
   <section class="details" bind:this={detailsEl}>
-    {#if DETAILS.has(key)}
-      <p class="d-eyebrow">More on · {cur.ci > 0 && cur.ci < FINAL_CH ? `${cur.ci}. ${ch.title} · step ${st + 1}` : ch.title}</p>
+    <p class="d-eyebrow">More on · {ch.n ? `${ch.n}. ${ch.title} · step ${st + 1}` : ch.title}</p>
+    <PlainExplain {key} {target} n={N} clusters={D?.groups.length ?? null} eff={effAll} ls={gp?.ls ?? null}
+      tested={D?.totals.runsInAll ?? null} participants={D?.campaign?.participants ?? null}
+      compositions={D?.campaign?.compositions ?? null} />
+    {#if TECH.has(key)}
+      <p class="deeper">Going deeper</p>
 
       {#if key === 'start.0'}
         <!-- the whole method on one card, with what each step is chosen over -->
@@ -908,31 +959,42 @@
             <span>asks whether one result predicts another; plain composition distance ignores the measured wells and can’t see untested reagents</span>
           </div>
           <div class="ap-row">
-            <b>4 Group</b>
+            <b>4 Cluster</b>
             <span>{@render t('complete', 'complete-linkage')} {@render t('agglom', 'hierarchical clustering')}, cut at link 0.5</span>
-            <span>no need to pick the number of groups (as {@render t('kmeans', 'k-means')} does), and every pair in a group clears the bar, so no chains</span>
+            <span>no need to pick the number of clusters (as {@render t('kmeans', 'k-means')} does), and every pair in a cluster clears the bar, so no chains</span>
           </div>
           <div class="ap-row">
             <b>5 Choose</b>
-            <span>{@render t('first', 'first test')} per group, {@render t('check', 'check tests')} by {@render t('newinfo', 'new information')}, plus independents and sweeps</span>
+            <span>{@render t('first', 'first test')} per cluster, {@render t('check', 'check tests')} by {@render t('newinfo', 'new information')}, plus independents and sweeps</span>
             <span>spends wells on separate questions instead of re-testing designs that would succeed or fail together</span>
           </div>
         </div>
-        <h3>How to read this</h3>
-        <p>Each chapter has a few steps. The text on the left explains what the figure on the right shows, and the
-          figure responds to clicks, drags and hovers. It stays in place while you step through a chapter, so you can
-          see it change from one step to the next.</p>
-        <p>The reagent you pick in one figure carries through to the others, so you can follow one ingredient from the
-          first chapter to the last.</p>
-        <p>The protein tabs at the top switch every real-data figure between sfGFP, PETase and reteplase. The three
-          differ: most reteplase groups rest on one untested change (the redox and folding package), while most sfGFP
-          groups are held together by similar compositions.</p>
+        <h3>Three proteins, three kinds of question</h3>
+        <p>The three proteins differ: most reteplase clusters rest on one untested change (the redox and folding package), while most sfGFP
+          clusters are held together by similar compositions.</p>
         <h3>Where the numbers come from</h3>
-        <p>The model and the export are Clinton Monteiro’s CFPS Arena. This page recomputes the links and groups in
+        <p>The model is a Gaussian-process regression model built by Clinton Monteiro in his CFPS Arena tool, which also
+          produced the export. This page recomputes the links and clusters in
           your browser from the model rather than copying them, and compares the result with the export: links agree to
-          the export’s two decimals and groups agree member for member.
+          the export’s two decimals and clusters agree member for member.
           {#if D && model}Export built {new Date(D.built).toLocaleString()}; model built {new Date(model.modelBuilt).toLocaleString()}.{/if}</p>
+        <h3>What to call the model</h3>
+        <p>A <b>Gaussian-process (GP) regression model</b>: it predicts how each composition will perform, and how
+          uncertain that prediction is, before anything is run. In full: GP
+          regression with a squared-exponential (RBF) kernel on log-scaled, z-scored reagent concentrations, fitted to
+          Ginkgo’s 78 control wells, plus a shared random-effect term for reagents the plates never varied.</p>
+        <p>The procedure as a whole is <b>model-based (Bayesian) experimental design</b>: the GP’s uncertainty, and how its
+          errors correlate between compositions, decides which experiments to run. It differs from Bayesian optimisation,
+          which picks experiments one at a time to chase the best result; here one batch is chosen to cover as many
+          distinct questions as possible.</p>
 
+      {:else if key === 'overview.0'}
+        <h3>About this overview</h3>
+        <p>The overview uses 31 made-up ideas and 8 measured wells so the whole process fits on one picture, and it is
+          the same whichever protein is selected. The steps are real, though: the links follow the same two sources as
+          the model’s (closeness and shared untested reagents), and the clusters come from the same complete-linkage
+          code the later chapters run on the real designs.</p>
+        <p>Each step links to the chapter that covers it with the real data.</p>
       {:else if key === 'point.0'}
         <h3>The 30 axes</h3>
         <p>These are the reagents Ginkgo’s control plates varied, so they are the only ones the model can learn an
@@ -978,7 +1040,7 @@
         <p>Before seeing any data, a GP treats yield as a smooth surface over composition space: the yields of two compositions
           are correlated, more strongly the closer the compositions are. Measured wells fix the surface near them. The result,
           the posterior, is a best guess (the mean) plus a spread showing how uncertain that guess is.</p>
-        <p>The real model predicts ln(yield), standardised, from the 78 control wells.{#if gp} Its prior variance is
+        <p>The real model predicts ln(yield), standardised, from the 78 control wells.{#if gp}{' '}Its prior variance is
           a = {gp.amp.toFixed(2)} (in standardised units) and its length-scale ℓ = {gp.ls.toFixed(2)}.{/if}</p>
       {:else if key === 'gp.1'}
         <h3>What ℓ means in composition terms</h3>
@@ -1055,17 +1117,17 @@
       {:else if key === 'unknown.2'}
         <h3>How common this is</h3>
         {#if untestedGroups != null}
-          <p>For {target}, {untestedGroups} of {D.groups.length} groups get more of their link from a shared untested
+          <p>For {target}, {untestedGroups} of {D.groups.length} clusters get more of their link from a shared untested
             change than from similar compositions.</p>
         {/if}
-        <p>In those groups, the first test tests the shared change for every design at once. Groups held together by
+        <p>In those clusters, the first test tests the shared change for every design at once. Clusters held together by
           similar compositions tell you less if they behave alike, because the model already expected that.</p>
       {:else if key === 'unknown.3'}
         <h3>What the dial changes</h3>
         <p>It multiplies both parts of every shock (the spread and the collapse term) by the same factor, in each
-          design’s variance and in every shared covariance. Then it recomputes all the links and reruns the grouping.</p>
-        <p>At ×0 the untested reagents drop out of the model and the groups that depended on them dissolve. Turned up,
-          those groups take in more designs. Reteplase changes most, because most of its groups rest on an untested
+          design’s variance and in every shared covariance. Then it recomputes all the links and reruns the clustering.</p>
+        <p>At ×0 the untested reagents drop out of the model and the clusters that depended on them dissolve. Turned up,
+          those clusters take in more designs. Reteplase changes most, because most of its clusters rest on an untested
           change.</p>
 
       {:else if key === 'matrix.0'}
@@ -1074,14 +1136,14 @@
           diagonal is 1. Identical compositions also link at 1, so they show up as bright pixels wherever they fall.</p>
       {:else if key === 'matrix.1'}
         <h3>The order</h3>
-        <p>Groups appear in the export’s order, each starting with its first test. Designs in no group come last, so
+        <p>Clusters appear in the export’s order, each starting with its first test. Designs in no cluster come last, so
           the bottom-right corner is dark: those designs aren’t strongly linked to anything.</p>
-        <p>Bright patches off the diagonal are pairs of groups that would largely move together even though they are
-          separate. Two groups can be close on average while one pair between them falls below 0.5.</p>
+        <p>Bright patches off the diagonal are pairs of clusters that would largely move together even though they are
+          separate. Two clusters can be close on average while one pair between them falls below 0.5.</p>
       {:else if key === 'matrix.2'}
         <h3>Why the split matters</h3>
-        <p>The two parts mean different things for planning. A group held together by composition similarity is close to
-          what the plates already measured. A group held together by a shared unknown is an open question that its
+        <p>The two parts mean different things for planning. A cluster held together by composition similarity is close to
+          what the plates already measured. A cluster held together by a shared unknown is an open question that its
           first test can answer.</p>
 
       {:else if key === 'groups.0'}
@@ -1090,20 +1152,20 @@
           n² steps instead of n³ and, for complete linkage, gives the same tree as merging greedily.</p>
       {:else if key === 'groups.1'}
         <h3>Why chaining is a problem</h3>
-        <p>A chain of designs, each linked to the next, can connect compositions that have nothing in common. As one group,
+        <p>A chain of designs, each linked to the next, can connect compositions that have nothing in common. As one cluster,
           its first test would be treated as speaking for designs it doesn’t predict.</p>
       {:else if key === 'groups.2'}
         <h3>Why 0.5</h3>
-        <p>It is the export’s threshold. With every pair linked at least 0.5, any one design in a group explains at
-          least a quarter (0.5²) of the variance of every other, enough for a first test to represent the group.</p>
+        <p>It is the export’s threshold. With every pair linked at least 0.5, any one design in a cluster explains at
+          least a quarter (0.5²) of the variance of every other, enough for a first test to represent the cluster.</p>
       {:else if key === 'groups.3'}
         <h3>Where the rule came from</h3>
-        <p>Plain complete linkage at 0.5 finds a few more groups than the export lists, and each extra one consists of
+        <p>Plain complete linkage at 0.5 finds a few more clusters than the export lists, and each extra one consists of
           identical copies of a single composition. Dropping those reproduces the export. Those designs stay independent, and
           the planner credits every co-submitter of the composition on the plate.</p>
       {:else if key === 'groups.4'}
         <h3>How this is checked</h3>
-        <p><code>npm run check:clusters-explained</code> rebuilds every link and group for all three proteins from the
+        <p><code>npm run check:clusters-explained</code> rebuilds every link and cluster for all three proteins from the
           downloaded export and fails if they don’t match. The status line at the top of the page runs the same
           comparison in your browser.</p>
         <p>The “untested reagents as axes” view adds one axis per untested reagent, holding each design’s dose weight
@@ -1117,8 +1179,8 @@
           designs spread in, sometimes called the effective rank.</p>
       {:else if key === 'neff.1'}
         <h3>Reading the bars</h3>
-        <p>Blue is a group’s size, yellow what its designs are worth together. Large groups of near-copies count as
-          little more than one experiment. A group worth 2 or more contains more variety, so its check tests add more.</p>
+        <p>Blue is a cluster’s size, yellow what its designs are worth together. Large clusters of near-copies count as
+          little more than one experiment. A cluster worth 2 or more contains more variety, so its check tests add more.</p>
 
       {:else if key === 'runs.0'}
         <h3>How the odds are simulated</h3>
@@ -1133,7 +1195,7 @@
           numbers match the export’s.</p>
       {:else if key === 'runs.2'}
         <h3>The second regression</h3>
-        <p>The virtual compositions span the range of amounts the group’s own designs use. Their predicted ln(cost per gram)
+        <p>The virtual compositions span the range of amounts the cluster’s own designs use. Their predicted ln(cost per gram)
           is regressed on the ingredient amounts, giving standardised coefficients from −1 to 1. The r² of that fit is
           the “single ingredients account for” figure: low means the ingredients act in combination.</p>
         <p>This regression uses the model’s own predictions, not lab data. Round 1 tests it.</p>
@@ -1144,7 +1206,7 @@
           of what it does to yield.</p>
       {:else if key === 'runs.4'}
         <h3>Which sweeps are recommended</h3>
-        <p>An ingredient gets a recommended sweep if it leads what matters in two or more groups, or if it is price-only
+        <p>An ingredient gets a recommended sweep if it leads what matters in two or more clusters, or if it is price-only
           and leads any. The sweep on the best background is tested, plus a second background where one was submitted. If the
           two curves agree, the curve can be expected to hold in other compositions too.</p>
 
@@ -1153,11 +1215,11 @@
         <p>Model and export by <b>Clinton Monteiro</b>:
           <a href="https://pages.htgaa.org/2026b/clinton-monteiro/week-4.5/cfps-clusters/index.html" target="_blank" rel="noopener">CFPS Clusters</a>
           and the <a href="https://pages.htgaa.org/2026b/clinton-monteiro/week-3/cfps-arena/index.html" target="_blank" rel="noopener">CFPS Arena</a>.
-          This page recomputes the links and groups from that model in your browser.</p>
+          This page recomputes the links and clusters from that model in your browser.</p>
       {/if}
 
-      <button type="button" class="back-up" onclick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>↑ back to the step</button>
     {/if}
+    <button type="button" class="back-up" onclick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>↑ back to the step</button>
   </section>
 </div>
 
@@ -1236,12 +1298,7 @@
   .hero-stats span { display: block; max-width: 12ch; font: 10.5px/1.5 var(--mono); color: var(--faint); text-transform: uppercase; letter-spacing: .08em; }
   .warnline { font: 12px var(--mono); color: var(--gold); }
   .begin { margin-top: 4px; }
-  .howto { font: 12px var(--mono); color: var(--faint); margin-top: 16px !important; }
   .end-h { font: 600 30px var(--sans); margin: 0 0 16px; }
-  kbd {
-    font: 11px var(--mono); padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px;
-    border-radius: 4px; color: var(--text); background: var(--fig-2);
-  }
 
   /* left / right edge zones */
   .edge {
@@ -1289,6 +1346,12 @@
     color: var(--dim); font-size: 15.5px;
   }
   .d-eyebrow { font: 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin: 0 0 6px; }
+  /* divider between the plain explanation and the technical notes */
+  .deeper {
+    display: flex; align-items: center; gap: 12px; margin: 30px 0 4px !important;
+    font: 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+  }
+  .deeper::after { content: ''; flex: 1; height: 1px; background: var(--line); }
   .details h3 { font: 600 19px var(--sans); color: var(--text); margin: 22px 0 8px; }
   .details p { margin: 0 0 12px; }
   .details a { color: var(--blue); }
@@ -1302,6 +1365,15 @@
   .dtab td { border-bottom: 1px solid var(--line); padding: 6px 8px; vertical-align: top; color: var(--text); }
   .back-up { margin-top: 18px; background: none; border: 0; cursor: pointer; font: 11px var(--mono); color: var(--faint); padding: 0; }
   .back-up:hover { color: var(--yellow); }
+
+  /* overview */
+  .ov-h { font: 600 26px/1.2 var(--sans); margin: 0 0 14px; }
+  .jump {
+    margin-top: 6px; background: none; border: 1px solid var(--line); border-radius: 4px; cursor: pointer;
+    font: 11.5px var(--mono); color: var(--dim); padding: 5px 10px;
+  }
+  .jump:hover { color: var(--yellow); border-color: var(--yellow); }
+  .cx-tabs.idle { opacity: .35; }
 
   /* cover: the method on one card */
   .approach { margin: 4px 0 26px; }
@@ -1330,7 +1402,6 @@
     border-bottom: 1px dotted var(--faint);
   }
   .term:hover, .term:focus-visible { color: var(--yellow); border-bottom-color: var(--yellow); outline: none; }
-  .dotted { border-bottom: 1px dotted var(--faint); }
   .tip {
     position: fixed; z-index: 60; pointer-events: none; padding: 10px 12px; border-radius: 6px;
     background: #171b22; border: 1px solid #343b46; box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
@@ -1402,10 +1473,11 @@
   /* Short laptop screens: tighten the type so a step still fits in one view. */
   @media (max-height: 800px) and (min-width: 901px) {
     .slide { font-size: 15.5px; }
-    .cover h1 { font-size: clamp(22px, 2.5vw, 32px); margin-bottom: 10px; }
-    .lede { font-size: 14.5px; line-height: 1.55; }
-    .howto { margin-top: 10px !important; }
-    .hero-stats { margin: 14px 0 16px; gap: 22px; }
+    .cover h1 { font-size: clamp(22px, 2.5vw, 32px); margin-bottom: 8px; }
+    .kicker { margin-bottom: 8px !important; }
+    .begin { margin-top: 0; }
+    .lede { font-size: 14.5px; line-height: 1.5; margin-bottom: 9px !important; }
+    .hero-stats { margin: 10px 0 12px; gap: 22px; }
     .hero-stats b { font-size: 24px; }
     .stage { padding-top: 14px; }
   }

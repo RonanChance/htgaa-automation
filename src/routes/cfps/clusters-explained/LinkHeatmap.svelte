@@ -5,7 +5,7 @@
   // columns are drawn as strips into a scratch canvas, then rows from that.
   import { onMount } from 'svelte';
   import { heatRGB } from './colors.js';
-  import { mulberry32 } from '$lib/clusterMath.js';
+  import { mulberry32, groupColor } from '$lib/clusterMath.js';
 
   let { n, R, G, groupOf, groups, sorted = false, labelFor = null, eff = null, target = '' } = $props();
 
@@ -107,15 +107,44 @@
   // A new matrix (another protein) invalidates the cached renders.
   $effect(() => { R; G; srcs = {}; posFrom = null; if (view) retarget(); });
 
-  // Group outlines, once the rows have landed.
+  // Cluster blocks along the diagonal, once the rows have landed. Numbered in
+  // display order; colour follows the export cluster, as in the 3-D views.
   const blocks = $derived.by(() => {
     if (!sorted) return [];
     let at = 0;
-    return groups.map((g) => {
-      const b = { at, size: g.members.length, letter: g.letter };
+    return groups.map((g, k) => {
+      const b = { k, num: k + 1, at, size: g.members.length, letter: g.letter, name: g.name, color: groupColor(k) };
       at += g.members.length;
       return b;
     });
+  });
+  // design → its block, for naming clusters on hover
+  const blockOf = $derived.by(() => {
+    const m = new Map();
+    for (const b of blocks) for (const i of groups[b.k].members) m.set(i, b);
+    return m;
+  });
+
+  // "Number the clusters": every block outlined in its colour and numbered,
+  // with a key beside the matrix. Hovering a key row or a block highlights it.
+  let showKey = $state(false);
+  let hl = $state(null);
+  let hmW = $state(400);
+  const u = $derived(n / Math.max(hmW, 1)); // viewBox units per screen pixel
+  // Number the blocks big enough to carry a label, without labels colliding.
+  const labelled = $derived.by(() => {
+    const out = [];
+    let lastY = -Infinity;
+    for (const b of blocks) {
+      const px = b.size / u;
+      if (px < 2.5) continue;
+      const inside = px >= 22;
+      const y = b.at + b.size / 2;
+      if (!inside && y - lastY < 11 * u) continue;
+      out.push({ ...b, inside, x: inside ? b.at + b.size / 2 : b.at + b.size + 4 * u, y });
+      if (!inside) lastY = y;
+    }
+    return out;
   });
 
   function onMove(ev) {
@@ -126,10 +155,15 @@
     const a = order[row], b = order[col];
     const total = R[a * n + b], gp = G[a * n + b];
     const w = wrap.getBoundingClientRect();
+    const ba = blockOf.get(a), bb = blockOf.get(b);
+    const where = showKey && sorted
+      ? `\n${ba ? `cluster ${ba.num}` : 'no cluster'} × ${bb ? `cluster ${bb.num}` : 'no cluster'}${ba && ba === bb ? ' (inside one block)' : ''}`
+      : '';
+    if (showKey) hl = ba && ba === bb ? ba.k : null;
     hover = {
       x: ev.clientX - w.left, y: ev.clientY - w.top,
       text: `${labelFor ? labelFor(a) : `#${a}`}\n× ${labelFor ? labelFor(b) : `#${b}`}\n` +
-        `link ${total.toFixed(2)} = composition ${gp.toFixed(2)} + shared unknown ${(total - gp).toFixed(2)}`
+        `link ${total.toFixed(2)} = composition ${gp.toFixed(2)} + shared unknown ${(total - gp).toFixed(2)}${where}`
     };
   }
 </script>
@@ -140,19 +174,42 @@
     <button type="button" class:is-on={part === 'g'} onclick={() => (part = 'g')}>composition similarity</button>
     <button type="button" class:is-on={part === 's'} onclick={() => (part = 's')}>shared unknown</button>
   </div>
+  {#if sorted}
+    <button type="button" class="fig-btn keybtn" class:on={showKey} aria-pressed={showKey}
+      onclick={() => { showKey = !showKey; hl = null; }}>{showKey ? '✓ ' : ''}number the clusters</button>
+  {/if}
   <span class="dim">{n} × {n} = {(n * n).toLocaleString()} links</span>
 </div>
 
 <div class="hmrow">
   <div class="hmcol">
-    <div class="hm" bind:this={wrap} onpointermove={onMove} onpointerleave={() => (hover = null)}
+    <div class="hm" bind:this={wrap} bind:clientWidth={hmW} onpointermove={onMove}
+      onpointerleave={() => { hover = null; if (showKey) hl = null; }}
       role="img" aria-label="Heatmap of every pairwise link, {sorted ? 'sorted by group' : 'in shuffled order'}">
       <canvas bind:this={view} width={n} height={n}></canvas>
       {#if sorted && done}
-        <svg viewBox="0 0 {n} {n}" preserveAspectRatio="none" class="outl">
-          {#each blocks as b}
-            {#if b.size >= 3}<rect x={b.at} y={b.at} width={b.size} height={b.size} />{/if}
+        <svg viewBox="0 0 {n} {n}" preserveAspectRatio="none" class="outl" class:keyed={showKey}>
+          {#each blocks as b (b.k)}
+            {#if showKey}
+              <rect x={b.at} y={b.at} width={b.size} height={b.size} class="kb" class:hl={hl === b.k} class:dim={hl != null && hl !== b.k}
+                style="stroke:{b.color}" />
+            {:else if b.size >= 3}
+              <rect x={b.at} y={b.at} width={b.size} height={b.size} />
+            {/if}
           {/each}
+          {#if showKey && hl != null}
+            <!-- crosshair bands through the highlighted cluster's rows and columns -->
+            {@const hb = blocks[hl]}
+            <rect x="0" y={hb.at} width={n} height={hb.size} class="band" style="fill:{hb.color}" />
+            <rect x={hb.at} y="0" width={hb.size} height={n} class="band" style="fill:{hb.color}" />
+          {/if}
+          {#if showKey}
+            {#each labelled as b (b.k)}
+              <text x={b.x} y={b.y} font-size={(b.inside ? 11 : 9.5) * u} class="num" class:dim={hl != null && hl !== b.k}
+                text-anchor={b.inside ? 'middle' : 'start'} dominant-baseline="central"
+                style="fill:{b.inside ? '#0b0d11' : b.color}; stroke:{b.inside ? b.color : '#0b0d11'}; stroke-width:{3 * u}">{b.num}</text>
+            {/each}
+          {/if}
         </svg>
       {/if}
       {#if hover}<div class="tip" style="left:{hover.x + 14}px; top:{hover.y + 10}px">{hover.text}</div>{/if}
@@ -163,22 +220,38 @@
     </div>
   </div>
 
+  {#if showKey && sorted}
+    <!-- the cluster key: one row per block, numbered as on the matrix -->
+    <div class="guide key">
+      <b>Cluster key · {groups.length} clusters</b>
+      <p class="keynote">Each outlined block on the diagonal is one cluster: its designs, row against column. Small blocks
+        are outlined but too thin to number; hover one, or a row here, to light up its rows and columns.</p>
+      <ol>
+        {#each blocks as b (b.k)}
+          <li class:hl={hl === b.k} onpointerenter={() => (hl = b.k)} onpointerleave={() => (hl = null)}>
+            <i style="background:{b.color}"></i><span class="kn">{b.num}</span>
+            <span class="kname"><em>{b.letter}</em> {b.name}</span><span class="ks">{b.size}</span>
+          </li>
+        {/each}
+      </ol>
+    </div>
+  {:else}
   <!-- how to read it, with this protein's numbers -->
   <div class="guide">
     <b>How to read it</b>
     <ul>
       <li>Each pixel is one pair of designs: the row’s and the column’s. Bright means the model expects their results to
         move together; dark means they are unrelated.</li>
-      <li>A <span class="y">bright square on the diagonal</span> is a group: designs that should succeed or fail
+      <li>A <span class="y">bright square on the diagonal</span> is a cluster: designs that should succeed or fail
         together, so testing one can speak for all of them.</li>
-      <li>Bright patches <i>off</i> the diagonal are separate groups that are still related.</li>
+      <li>Bright patches <i>off</i> the diagonal are separate clusters that are still related.</li>
       <li>Dark rows are designs linked to nothing. Each one is its own experiment.</li>
     </ul>
     <b>What it says for {target}</b>
     <ul>
       <li><span class="y">{pct(stats.strong)}</span> of pairs are linked 0.5 or more, and
-        <span class="y">{pct(stats.grouped)}</span> of designs sit in a group.
-        {stats.bets} of {groups.length} groups are held together mainly by a shared untested reagent.</li>
+        <span class="y">{pct(stats.grouped)}</span> of designs sit in a cluster.
+        {stats.bets} of {groups.length} clusters are held together mainly by a shared untested reagent.</li>
       <li>More brightness means more overlap. That helps the budget: a few tests cover many designs{#if eff}
         ({n} designs behave like ~{eff.toFixed(1)} independent experiments){/if}. It also concentrates risk: if the
         shared assumption behind a block is wrong, every design in it is wrong together.</li>
@@ -187,6 +260,7 @@
         : 'So most blocks here are compositions that look alike; they mostly repeat what the plates already suggest, and the bright squares from untested reagents are the real bets.'}</li>
     </ul>
   </div>
+  {/if}
 </div>
 
 <style>
@@ -200,6 +274,21 @@
   canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; border: 1px solid var(--line); }
   .outl { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .outl rect { fill: none; stroke: var(--white); stroke-width: 1.2; vector-effect: non-scaling-stroke; opacity: .8; }
+  .outl rect.kb { stroke-width: 1.4; opacity: .95; transition: opacity .15s; }
+  .outl rect.kb.hl { stroke-width: 3; opacity: 1; }
+  .outl rect.band { stroke: none; opacity: .16; }
+  .outl .dim { opacity: .18 !important; }
+  .outl .num { font-family: var(--mono); font-weight: 700; paint-order: stroke; stroke-linejoin: round; transition: opacity .15s; }
+  .keybtn.on { color: var(--yellow); border-color: var(--yellow); }
+  .key .keynote { margin: 0 0 8px; font-size: 11.5px; color: var(--faint); }
+  .key ol { list-style: none; margin: 0; padding: 0; max-height: 380px; overflow-y: auto; }
+  .key li { display: grid; grid-template-columns: 10px 2.2em 1fr 2.4em; gap: 6px; align-items: center; padding: 2px 4px; border-radius: 3px; cursor: default; }
+  .key li.hl { background: var(--fig-2); }
+  .key li i { width: 10px; height: 10px; border-radius: 2px; }
+  .key .kn { font: 600 11px var(--mono); color: var(--text); text-align: right; }
+  .key .kname { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .key .kname em { font: 600 10.5px var(--mono); font-style: normal; color: var(--dim); margin-right: 3px; }
+  .key .ks { font: 11px var(--mono); color: var(--faint); text-align: right; }
   .tip {
     position: absolute; pointer-events: none; z-index: 2; max-width: 300px;
     padding: 6px 9px; border-radius: 4px; background: rgba(10, 12, 16, .95);

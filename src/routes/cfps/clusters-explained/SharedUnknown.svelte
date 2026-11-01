@@ -99,10 +99,10 @@
 </script>
 
 {#if !bets.length}
-  <p class="fig-note">No group for this protein is held together mainly by an untested reagent.</p>
+  <p class="fig-note">No cluster for this protein is held together mainly by an untested reagent.</p>
 {:else}
   <div class="fig-controls">
-    <label class="grow">group
+    <label class="grow">cluster
       <select bind:value={pick}>
         {#each bets as g}<option value={g.gi}>{g.letter} · {g.name} ({g.members.length})</option>{/each}
       </select>
@@ -115,7 +115,7 @@
         {@const d = k === 0 ? aLive : bLive}
         <div class="dcard">
           <span class="who" style="color:{k ? 'var(--gold)' : 'var(--blue)'}">{k ? 'B' : 'A'}</span>
-          <small>{k ? 'another design in the group' : 'the group’s first test'}</small>
+          <small>{k ? 'another design in the cluster' : 'the cluster’s first test'}</small>
           <div class="uchips">
             {#each ds[i].nd as u}
               {@const isShared = shared.some((w) => w.id === u.id && w.dir === u.dir)}
@@ -135,12 +135,12 @@
       <div class="lstack">
         <i class="gp" style="width:{Math.max(0, L.gp) * 100}%"></i>
         <i class="sh" style="width:{step >= 1 ? Math.max(0, L.shared) * 100 : 0}%"></i>
-        <span class="half" title="the 0.5 a group needs"></span>
+        <span class="half" title="the 0.5 a cluster needs"></span>
       </div>
       <div class="dkey">
         <span><i class="sw" style="background:var(--blue)"></i>composition similarity (GP) {L.gp.toFixed(2)}</span>
         {#if step >= 1}<span><i class="sw" style="background:var(--red)"></i>shared untested change {L.shared.toFixed(2)}</span>{/if}
-        <span class="dim">│ = 0.5, the bar for a group</span>
+        <span class="dim">│ = 0.5, the bar for a cluster</span>
       </div>
     </div>
 
@@ -161,7 +161,7 @@
     <div class="minis">
       {#each [['composition similarity only', 'gp'], ['the full link', 'r']] as [title, key]}
         <figure>
-          <svg width={members.length * CELL} height={members.length * CELL} role="img" aria-label="{title} heatmap for the group">
+          <svg width={members.length * CELL} height={members.length * CELL} role="img" aria-label="{title} heatmap for the cluster">
             {#each mats as row, a}
               {#each row as l, b}<rect x={b * CELL} y={a * CELL} width={CELL} height={CELL} fill={heat(l[key])} />{/each}
             {/each}
@@ -180,11 +180,11 @@
     </div>
     <div class="fig-readout">
       {#if regroup}
-        <span>groups <b class="y">{regroup.groups}</b> <i class="dim">(export: {data.groups.length})</i></span>
+        <span>clusters <b class="y">{regroup.groups}</b> <i class="dim">(export: {data.groups.length})</i></span>
         <span>identical to the export’s <b>{regroup.same}</b>/{data.groups.length}</span>
         <span>on their own <b>{regroup.loners}</b></span>
       {:else}
-        <span class="dim">regrouping…</span>
+        <span class="dim">reclustering…</span>
       {/if}
     </div>
   {/if}

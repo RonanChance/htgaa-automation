@@ -29,5 +29,5 @@ export const ROLE_STYLE = {
   check: { label: 'check test', color: '#5cd0b3' },
   independent: { label: 'independent test', color: '#a87cd8' },
   sweep: { label: 'sweep test', color: '#f0ac5f' },
-  follows: { label: "follows its group's tests", color: '#4b5563' }
+  follows: { label: "follows its cluster's tests", color: '#4b5563' }
 };

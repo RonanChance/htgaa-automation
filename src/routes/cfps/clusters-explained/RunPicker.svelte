@@ -50,7 +50,7 @@
   const cMax = $derived(Math.max(0.3, ...(g?.ingredients ?? []).map((i) => Math.abs(i.coefficient))));
 
   // The top ingredient's amounts across the group, first test and check marked
-  // — or the shared reagent's, when it is one of the group's top two.
+  // — or the shared reagent's, when it is one of the cluster's top two.
   const axis = $derived.by(() => {
     if (!g?.axes?.length) return null;
     const a = g.axes.find((x) => x.reagent === reagent) ?? g.axes[0];
@@ -63,10 +63,10 @@
 </script>
 
 {#if !g}
-  <p class="fig-note">No group with check tests for this protein.</p>
+  <p class="fig-note">No cluster with check tests for this protein.</p>
 {:else}
   <div class="fig-controls">
-    <label class="grow">group
+    <label class="grow">cluster
       <select bind:value={pick}>
         {#each choices as c}
           <!-- ★ marks groups where the deck's reagent is one of the top two ingredients -->
@@ -77,7 +77,7 @@
   </div>
 
   {#if view !== 'checks'}
-    <svg viewBox="0 0 {W} {H}" class="fig-svg" role="img" aria-label="Members of group {g.letter} by odds and new information">
+    <svg viewBox="0 0 {W} {H}" class="fig-svg" role="img" aria-label="Members of cluster {g.letter} by odds and new information">
       {#each [0, 0.25, 0.5, 0.75, 1] as v}
         <line x1={sx(v)} x2={sx(v)} y1={PT} y2={H - PB} class="gl" class:hide={view === 'odds'} />
         {#if view !== 'odds'}<text x={sx(v)} y={H - PB + 14} text-anchor="middle" class="axt">{v * 100}%</text>{/if}
@@ -122,7 +122,7 @@
     </ul>
   {:else}
     <div class="matters">
-      <span class="k">what the model thinks matters in group {g.letter} · from {g.virtualRecipes ?? 160} virtual compositions</span>
+      <span class="k">what the model thinks matters in cluster {g.letter} · from {g.virtualRecipes ?? 160} virtual compositions</span>
       {#each g.ingredients as ing}
         <button type="button" class="brow" class:sel={ing.reagent === reagent}
           title="Show {ing.name} across the deck" onclick={() => setReagent?.(ing.reagent)}>
@@ -141,7 +141,7 @@
       {/if}
     </div>
     {#if axis}
-      <svg viewBox="0 0 {W} 94" class="fig-svg" role="img" aria-label="Group members along {axis.name}">
+      <svg viewBox="0 0 {W} 94" class="fig-svg" role="img" aria-label="Cluster members along {axis.name}">
         <line x1={PL} x2={W - PR} y1="44" y2="44" class="gl" />
         {#each axis.nl as v, k}
           <circle cx={PL + (v / axis.max) * (W - PL - PR)} cy="44" r="5" class="mem" />

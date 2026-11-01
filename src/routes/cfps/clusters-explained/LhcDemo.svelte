@@ -55,7 +55,7 @@
     <p><b class="y">{colsHit}/{N}</b> slices of ingredient 1 covered</p>
     <p><b class="y">{rowsHit}/{N}</b> slices of ingredient 2 covered</p>
     <p class="dim">Red bands are slices no point landed in. The model does this in as many dimensions as
-      the group varies, with 160 or more points, then predicts each point's cost per gram.</p>
+      the cluster varies, with 160 or more points, then predicts each point's cost per gram.</p>
   </div>
 </div>
 
